@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+
+"""Save both a navigation map and a resumable SLAM Toolbox pose graph."""
+
+import argparse
+from pathlib import Path
+import sys
+
+import rclpy
+from rclpy.node import Node
+from slam_toolbox.srv import SaveMap, SerializePoseGraph
+
+
+SERVICE_WAIT_SECONDS = 10.0
+RESPONSE_WAIT_SECONDS = 30.0
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Save .yaml/.pgm navigation files and .posegraph/.data "
+            "SLAM Toolbox files using one output prefix."
+        )
+    )
+    parser.add_argument(
+        "output_prefix",
+        help="Output path without an extension, for example maps/office_01",
+    )
+    return parser.parse_args()
+
+
+def wait_for_response(node: Node, future, description: str):
+    rclpy.spin_until_future_complete(
+        node, future, timeout_sec=RESPONSE_WAIT_SECONDS
+    )
+    if not future.done():
+        raise RuntimeError(f"{description} timed out")
+    exception = future.exception()
+    if exception is not None:
+        raise RuntimeError(f"{description} failed: {exception}")
+    return future.result()
+
+
+def main() -> int:
+    args = parse_arguments()
+    output_prefix = Path(args.output_prefix).expanduser().resolve()
+    output_prefix.parent.mkdir(parents=True, exist_ok=True)
+
+    rclpy.init()
+    node = Node("save_slam_map")
+
+    try:
+        save_map_client = node.create_client(
+            SaveMap, "/slam_toolbox/save_map"
+        )
+        serialize_client = node.create_client(
+            SerializePoseGraph, "/slam_toolbox/serialize_map"
+        )
+
+        for client, service_name in (
+            (save_map_client, "/slam_toolbox/save_map"),
+            (serialize_client, "/slam_toolbox/serialize_map"),
+        ):
+            if not client.wait_for_service(timeout_sec=SERVICE_WAIT_SECONDS):
+                raise RuntimeError(
+                    f"{service_name} is unavailable; start mapping first"
+                )
+
+        save_request = SaveMap.Request()
+        save_request.name.data = str(output_prefix)
+        save_response = wait_for_response(
+            node,
+            save_map_client.call_async(save_request),
+            "occupancy-grid save",
+        )
+        if save_response.result != SaveMap.Response.RESULT_SUCCESS:
+            raise RuntimeError(
+                f"occupancy-grid save returned result {save_response.result}"
+            )
+
+        serialize_request = SerializePoseGraph.Request()
+        serialize_request.filename = str(output_prefix)
+        serialize_response = wait_for_response(
+            node,
+            serialize_client.call_async(serialize_request),
+            "pose-graph save",
+        )
+        if (
+            serialize_response.result
+            != SerializePoseGraph.Response.RESULT_SUCCESS
+        ):
+            raise RuntimeError(
+                f"pose-graph save returned result {serialize_response.result}"
+            )
+
+        print(f"Map saved with prefix: {output_prefix}")
+        print("Created navigation map (.yaml/.pgm) and pose graph "
+              "(.posegraph/.data).")
+        return 0
+    except RuntimeError as error:
+        node.get_logger().error(str(error))
+        return 1
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

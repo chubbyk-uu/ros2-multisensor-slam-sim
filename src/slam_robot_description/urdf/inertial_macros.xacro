@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="box_inertial" params="mass length width height">
+    <inertial>
+      <mass value="${mass}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia
+        ixx="${mass * (width * width + height * height) / 12.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${mass * (length * length + height * height) / 12.0}"
+        iyz="0.0"
+        izz="${mass * (length * length + width * width) / 12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Cylinder axis is the local z axis. -->
+  <xacro:macro name="cylinder_inertial" params="mass radius length">
+    <inertial>
+      <mass value="${mass}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia
+        ixx="${mass * (3.0 * radius * radius + length * length) / 12.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${mass * (3.0 * radius * radius + length * length) / 12.0}"
+        iyz="0.0"
+        izz="${mass * radius * radius / 2.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="sphere_inertial" params="mass radius">
+    <inertial>
+      <mass value="${mass}"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia
+        ixx="${2.0 * mass * radius * radius / 5.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${2.0 * mass * radius * radius / 5.0}"
+        iyz="0.0"
+        izz="${2.0 * mass * radius * radius / 5.0}"/>
+    </inertial>
+  </xacro:macro>
+</robot>

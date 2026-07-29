@@ -1,0 +1,257 @@
+<?xml version="1.0"?>
+<sdf version="1.10">
+  <world name="slam_world">
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+
+    <plugin
+      filename="gz-sim-physics-system"
+      name="gz::sim::systems::Physics"/>
+    <plugin
+      filename="gz-sim-user-commands-system"
+      name="gz::sim::systems::UserCommands"/>
+    <plugin
+      filename="gz-sim-scene-broadcaster-system"
+      name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin
+      filename="gz-sim-sensors-system"
+      name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <gravity>0 0 -9.81</gravity>
+
+    <scene>
+      <ambient>0.45 0.45 0.45 1</ambient>
+      <background>0.75 0.80 0.85 1</background>
+      <shadows>false</shadows>
+      <grid>true</grid>
+    </scene>
+
+    <light name="sun" type="directional">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.4 0.2 -1.0</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="ground_link">
+        <collision name="ground_collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1.0</mu>
+                <mu2>1.0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="ground_visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+            <specular>0.05 0.05 0.05 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!--
+      A deliberately asymmetric indoor layout for 2D SLAM:
+      perimeter walls, several partial partitions, and distinct landmarks.
+      The 2 x 2 m area around the origin is kept clear for spawning.
+    -->
+    <model name="slam_environment">
+      <static>true</static>
+      <link name="walls_and_landmarks">
+        <!-- Perimeter: 12 m x 10 m. -->
+        <collision name="north_wall_collision">
+          <pose>0 5.0 0.6 0 0 0</pose>
+          <geometry><box><size>12.0 0.2 1.2</size></box></geometry>
+        </collision>
+        <visual name="north_wall_visual">
+          <pose>0 5.0 0.6 0 0 0</pose>
+          <geometry><box><size>12.0 0.2 1.2</size></box></geometry>
+          <material>
+            <ambient>0.82 0.84 0.88 1</ambient>
+            <diffuse>0.82 0.84 0.88 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="south_wall_collision">
+          <pose>0 -5.0 0.6 0 0 0</pose>
+          <geometry><box><size>12.0 0.2 1.2</size></box></geometry>
+        </collision>
+        <visual name="south_wall_visual">
+          <pose>0 -5.0 0.6 0 0 0</pose>
+          <geometry><box><size>12.0 0.2 1.2</size></box></geometry>
+          <material>
+            <ambient>0.82 0.84 0.88 1</ambient>
+            <diffuse>0.82 0.84 0.88 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="east_wall_collision">
+          <pose>6.0 0 0.6 0 0 0</pose>
+          <geometry><box><size>0.2 10.0 1.2</size></box></geometry>
+        </collision>
+        <visual name="east_wall_visual">
+          <pose>6.0 0 0.6 0 0 0</pose>
+          <geometry><box><size>0.2 10.0 1.2</size></box></geometry>
+          <material>
+            <ambient>0.82 0.84 0.88 1</ambient>
+            <diffuse>0.82 0.84 0.88 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="west_wall_collision">
+          <pose>-6.0 0 0.6 0 0 0</pose>
+          <geometry><box><size>0.2 10.0 1.2</size></box></geometry>
+        </collision>
+        <visual name="west_wall_visual">
+          <pose>-6.0 0 0.6 0 0 0</pose>
+          <geometry><box><size>0.2 10.0 1.2</size></box></geometry>
+          <material>
+            <ambient>0.82 0.84 0.88 1</ambient>
+            <diffuse>0.82 0.84 0.88 1</diffuse>
+          </material>
+        </visual>
+
+        <!-- Interior partitions create corridors and a traversable loop. -->
+        <collision name="partition_a_collision">
+          <pose>-2.2 1.8 0.6 0 0 0</pose>
+          <geometry><box><size>0.2 3.8 1.2</size></box></geometry>
+        </collision>
+        <visual name="partition_a_visual">
+          <pose>-2.2 1.8 0.6 0 0 0</pose>
+          <geometry><box><size>0.2 3.8 1.2</size></box></geometry>
+          <material>
+            <ambient>0.55 0.67 0.80 1</ambient>
+            <diffuse>0.55 0.67 0.80 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="partition_b_collision">
+          <pose>2.0 -1.8 0.6 0 0 0</pose>
+          <geometry><box><size>0.2 3.6 1.2</size></box></geometry>
+        </collision>
+        <visual name="partition_b_visual">
+          <pose>2.0 -1.8 0.6 0 0 0</pose>
+          <geometry><box><size>0.2 3.6 1.2</size></box></geometry>
+          <material>
+            <ambient>0.55 0.67 0.80 1</ambient>
+            <diffuse>0.55 0.67 0.80 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="partition_c_collision">
+          <pose>3.5 2.3 0.6 0 0 0</pose>
+          <geometry><box><size>3.0 0.2 1.2</size></box></geometry>
+        </collision>
+        <visual name="partition_c_visual">
+          <pose>3.5 2.3 0.6 0 0 0</pose>
+          <geometry><box><size>3.0 0.2 1.2</size></box></geometry>
+          <material>
+            <ambient>0.55 0.67 0.80 1</ambient>
+            <diffuse>0.55 0.67 0.80 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="partition_d_collision">
+          <pose>-3.8 -2.5 0.6 0 0 0</pose>
+          <geometry><box><size>3.6 0.2 1.2</size></box></geometry>
+        </collision>
+        <visual name="partition_d_visual">
+          <pose>-3.8 -2.5 0.6 0 0 0</pose>
+          <geometry><box><size>3.6 0.2 1.2</size></box></geometry>
+          <material>
+            <ambient>0.55 0.67 0.80 1</ambient>
+            <diffuse>0.55 0.67 0.80 1</diffuse>
+          </material>
+        </visual>
+
+        <!-- Unequal landmarks reduce scan-matching symmetry. -->
+        <collision name="large_box_collision">
+          <pose>-0.8 -3.5 0.45 0 0 0.20</pose>
+          <geometry><box><size>0.9 0.7 0.9</size></box></geometry>
+        </collision>
+        <visual name="large_box_visual">
+          <pose>-0.8 -3.5 0.45 0 0 0.20</pose>
+          <geometry><box><size>0.9 0.7 0.9</size></box></geometry>
+          <material>
+            <ambient>0.88 0.48 0.18 1</ambient>
+            <diffuse>0.88 0.48 0.18 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="small_box_collision">
+          <pose>4.7 -3.4 0.30 0 0 -0.35</pose>
+          <geometry><box><size>0.6 0.9 0.6</size></box></geometry>
+        </collision>
+        <visual name="small_box_visual">
+          <pose>4.7 -3.4 0.30 0 0 -0.35</pose>
+          <geometry><box><size>0.6 0.9 0.6</size></box></geometry>
+          <material>
+            <ambient>0.92 0.72 0.18 1</ambient>
+            <diffuse>0.92 0.72 0.18 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="cylinder_collision">
+          <pose>0.6 3.4 0.50 0 0 0</pose>
+          <geometry><cylinder><radius>0.35</radius><length>1.0</length></cylinder></geometry>
+        </collision>
+        <visual name="cylinder_visual">
+          <pose>0.6 3.4 0.50 0 0 0</pose>
+          <geometry><cylinder><radius>0.35</radius><length>1.0</length></cylinder></geometry>
+          <material>
+            <ambient>0.28 0.72 0.40 1</ambient>
+            <diffuse>0.28 0.72 0.40 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <gui fullscreen="false">
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="state" type="string">docked</property>
+        </gz-gui>
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.4 0.4 0.4</ambient_light>
+        <background_color>0.75 0.80 0.85</background_color>
+        <camera_pose>-2.5 -2.5 2.0 0 0.45 0.8</camera_pose>
+      </plugin>
+      <plugin filename="WorldControl" name="World control"/>
+      <plugin filename="WorldStats" name="World stats"/>
+      <plugin filename="EntityTree" name="Entity tree"/>
+    </gui>
+  </world>
+</sdf>

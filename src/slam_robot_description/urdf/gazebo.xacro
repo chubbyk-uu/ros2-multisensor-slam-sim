@@ -1,0 +1,95 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Contact parameters for the two driven wheels. -->
+  <gazebo reference="left_wheel_link">
+    <mu1>1.2</mu1>
+    <mu2>1.2</mu2>
+    <kp>1000000.0</kp>
+    <kd>10.0</kd>
+  </gazebo>
+
+  <gazebo reference="right_wheel_link">
+    <mu1>1.2</mu1>
+    <mu2>1.2</mu2>
+    <kp>1000000.0</kp>
+    <kd>10.0</kd>
+  </gazebo>
+
+  <!-- The spherical caster slides with low friction in this first model. -->
+  <gazebo reference="caster_link">
+    <mu1>0.02</mu1>
+    <mu2>0.02</mu2>
+    <kp>1000000.0</kp>
+    <kd>10.0</kd>
+  </gazebo>
+
+  <gazebo reference="lidar_link">
+    <sensor name="lidar_2d" type="gpu_lidar">
+      <always_on>true</always_on>
+      <!-- RViz displays /scan; Gazebo ray visualization is unnecessary load. -->
+      <visualize>false</visualize>
+      <update_rate>10</update_rate>
+      <topic>/scan</topic>
+      <gz_frame_id>lidar_link</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>1.0</resolution>
+            <min_angle>${-pi}</min_angle>
+            <max_angle>${pi}</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.12</min>
+          <max>12.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.005</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <gazebo>
+    <self_collide>false</self_collide>
+
+    <plugin
+      filename="gz-sim-diff-drive-system"
+      name="gz::sim::systems::DiffDrive">
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <!-- Calibrated kinematic track; physical joint spacing remains 0.34 m. -->
+      <wheel_separation>${effective_wheel_separation}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+
+      <topic>/cmd_vel</topic>
+      <odom_topic>/odom</odom_topic>
+      <tf_topic>/model/slam_robot/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+      <odom_publish_frequency>30</odom_publish_frequency>
+
+      <max_linear_velocity>0.60</max_linear_velocity>
+      <min_linear_velocity>-0.60</min_linear_velocity>
+      <max_angular_velocity>1.80</max_angular_velocity>
+      <min_angular_velocity>-1.80</min_angular_velocity>
+      <max_linear_acceleration>0.80</max_linear_acceleration>
+      <min_linear_acceleration>-0.80</min_linear_acceleration>
+      <max_angular_acceleration>2.00</max_angular_acceleration>
+      <min_angular_acceleration>-2.00</min_angular_acceleration>
+    </plugin>
+
+    <plugin
+      filename="gz-sim-joint-state-publisher-system"
+      name="gz::sim::systems::JointStatePublisher">
+      <joint_name>left_wheel_joint</joint_name>
+      <joint_name>right_wheel_joint</joint_name>
+      <topic>/joint_states</topic>
+      <update_rate>30</update_rate>
+    </plugin>
+  </gazebo>
+</robot>
