@@ -4,6 +4,17 @@
 
 ## 性能优化
 
+自研 C++ SLAM 使用 `RelWithDebInfo` 作为默认构建类型，对应 GCC/Clang
+常用的 `-O2 -g -DNDEBUG`。复现性能数据前应显式执行：
+
+```bash
+colcon build --packages-select slam_robot_slam --symlink-install \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
+```
+
+不要使用 `CMAKE_BUILD_TYPE` 为空的构建结果评估扫描匹配性能；这种情况下
+GCC 默认等同 `-O0`。
+
 2026-07-29 在 WSL2 与 NVIDIA 独立显卡环境完成回归：
 
 | 指标 | 优化前 | 优化后 |

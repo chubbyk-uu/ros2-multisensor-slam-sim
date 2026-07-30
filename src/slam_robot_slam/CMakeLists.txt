@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.8)
 project(slam_robot_slam)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(
+    CMAKE_BUILD_TYPE RelWithDebInfo
+    CACHE STRING "Choose the build type." FORCE
+  )
+  set_property(
+    CACHE CMAKE_BUILD_TYPE
+    PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel
+  )
+endif()
+
 find_package(ament_cmake REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(geometry_msgs REQUIRED)

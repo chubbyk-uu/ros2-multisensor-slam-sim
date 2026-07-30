@@ -196,6 +196,12 @@ ros2 launch slam_robot_slam play_slam_data.launch.py \
 运行测试：
 
 ```bash
+colcon build --packages-select slam_robot_slam --symlink-install \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 colcon test --packages-select slam_robot_slam
 colcon test-result --verbose
 ```
+
+`slam_robot_slam` 在未显式指定构建类型时默认使用 `RelWithDebInfo`
+（`-O2 -g -DNDEBUG`）。扫描匹配和射线积分属于计算密集型代码，不应使用
+无优化的默认编译配置运行性能回归。
