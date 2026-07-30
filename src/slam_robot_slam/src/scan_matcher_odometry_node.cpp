@@ -10,6 +10,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
@@ -664,28 +665,51 @@ private:
     const sensor_msgs::msg::LaserScan & scan,
     const Pose2D & base_from_laser)
   {
-    keyframes_.push_back(
-      Keyframe{
-        stamp,
-        pose,
-        points,
-        Point2D{
-          static_cast<float>(base_from_laser.x),
-          static_cast<float>(base_from_laser.y)},
-        buildMapRayObservations(scan, base_from_laser)});
+    validateKeyframeGraphInvariant();
+    Keyframe keyframe{
+      stamp,
+      pose,
+      points,
+      Point2D{
+        static_cast<float>(base_from_laser.x),
+        static_cast<float>(base_from_laser.y)},
+      buildMapRayObservations(scan, base_from_laser)};
 
+    const std::size_t expected_node_id = keyframes_.size();
     const std::size_t node_id = pose_graph_.addNode(pose);
-    if (node_id > 0U) {
-      const Pose2D & previous_pose =
-        keyframes_[node_id - 1U].pose;
-      pose_graph_.addConstraint(
-        PoseGraphConstraint{
-          node_id - 1U,
-          node_id,
-          relativePose(previous_pose, pose),
-          sequential_translation_weight_,
-          sequential_rotation_weight_,
-          PoseGraphConstraintType::kSequential});
+    if (node_id != expected_node_id) {
+      pose_graph_.removeLastNode();
+      throw std::logic_error(
+              "Pose graph node and keyframe indices diverged");
+    }
+
+    std::optional<std::size_t> sequential_constraint_id;
+    bool keyframe_inserted = false;
+    try {
+      keyframes_.push_back(std::move(keyframe));
+      keyframe_inserted = true;
+      if (node_id > 0U) {
+        const Pose2D & previous_pose =
+          keyframes_[node_id - 1U].pose;
+        sequential_constraint_id = pose_graph_.addConstraint(
+          PoseGraphConstraint{
+            node_id - 1U,
+            node_id,
+            relativePose(previous_pose, pose),
+            sequential_translation_weight_,
+            sequential_rotation_weight_,
+            PoseGraphConstraintType::kSequential});
+      }
+      validateKeyframeGraphInvariant();
+    } catch (...) {
+      if (sequential_constraint_id.has_value()) {
+        pose_graph_.removeConstraint(*sequential_constraint_id);
+      }
+      if (keyframe_inserted) {
+        keyframes_.pop_back();
+      }
+      pose_graph_.removeLastNode();
+      throw;
     }
 
     geometry_msgs::msg::PoseStamped graph_pose;
@@ -714,6 +738,7 @@ private:
     const std::size_t candidate_id,
     const std::size_t current_id) const
   {
+    validateKeyframeGraphInvariant();
     const std::size_t latest_historical_id =
       current_id -
       loop_candidate_parameters_.minimum_keyframe_separation;
@@ -747,6 +772,7 @@ private:
   void rebuildPoseGraphPath(
     const builtin_interfaces::msg::Time & latest_stamp)
   {
+    validateKeyframeGraphInvariant();
     pose_graph_path_.poses.clear();
     pose_graph_path_.poses.reserve(pose_graph_.nodes().size());
     for (std::size_t index = 0U;
@@ -770,6 +796,7 @@ private:
     const std::size_t current_id,
     const builtin_interfaces::msg::Time & stamp)
   {
+    validateKeyframeGraphInvariant();
     if (!loop_closure_enabled_ ||
       current_id <
       loop_candidate_parameters_.minimum_keyframe_separation ||
@@ -820,7 +847,8 @@ private:
       return false;
     }
 
-    pose_graph_.addConstraint(
+    PoseGraph2D optimized_graph = pose_graph_;
+    optimized_graph.addConstraint(
       PoseGraphConstraint{
         best_candidate_id,
         current_id,
@@ -828,9 +856,8 @@ private:
         loop_translation_weight_,
         loop_rotation_weight_,
         PoseGraphConstraintType::kLoopClosure});
-    last_loop_closure_node_ = current_id;
     const auto optimization =
-      pose_graph_.optimize(pose_graph_optimization_options_);
+      optimized_graph.optimize(pose_graph_optimization_options_);
     if (!optimization.success) {
       RCLCPP_ERROR(
         get_logger(),
@@ -840,6 +867,8 @@ private:
       return false;
     }
 
+    pose_graph_ = std::move(optimized_graph);
+    last_loop_closure_node_ = current_id;
     for (std::size_t index = 0U; index < keyframes_.size(); ++index) {
       keyframes_[index].pose = pose_graph_.nodes()[index].pose;
     }
@@ -864,6 +893,7 @@ private:
 
   std::vector<Point2D> buildLocalReferencePoints() const
   {
+    validateKeyframeGraphInvariant();
     std::size_t total_points = 0U;
     const std::size_t first_keyframe =
       keyframes_.size() > maximum_local_keyframes_ ?
@@ -889,6 +919,20 @@ private:
         });
     }
     return reference_points;
+  }
+
+  void validateKeyframeGraphInvariant() const
+  {
+    if (keyframes_.size() != pose_graph_.nodes().size()) {
+      throw std::logic_error(
+              "Keyframe and pose graph node counts diverged");
+    }
+    for (std::size_t index = 0U; index < pose_graph_.nodes().size(); ++index) {
+      if (pose_graph_.nodes()[index].id != index) {
+        throw std::logic_error(
+                "Pose graph node IDs are not contiguous");
+      }
+    }
   }
 
   std::vector<Keyframe::MapRayObservation> buildMapRayObservations(

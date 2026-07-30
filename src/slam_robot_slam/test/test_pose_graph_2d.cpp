@@ -139,5 +139,23 @@ TEST(PoseGraph2D, RejectsDisconnectedGraph)
   EXPECT_THROW(graph.optimize(), std::invalid_argument);
 }
 
+TEST(PoseGraph2D, RollsBackNodesAndConstraints)
+{
+  PoseGraph2D graph;
+  graph.addNode(Pose2D{});
+  graph.addNode(Pose2D{1.0, 0.0, 0.0});
+  const std::size_t constraint_id = graph.addConstraint(
+    sequentialConstraint(0U, 1U, Pose2D{1.0, 0.0, 0.0}));
+
+  EXPECT_THROW(graph.removeLastNode(), std::logic_error);
+
+  graph.removeConstraint(constraint_id);
+  graph.removeLastNode();
+
+  EXPECT_EQ(graph.nodes().size(), 1U);
+  EXPECT_TRUE(graph.constraints().empty());
+  EXPECT_THROW(graph.removeConstraint(0U), std::out_of_range);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam

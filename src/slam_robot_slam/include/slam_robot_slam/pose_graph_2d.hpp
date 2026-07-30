@@ -49,7 +49,9 @@ class PoseGraph2D
 {
 public:
   std::size_t addNode(const Pose2D & initial_pose);
-  void addConstraint(const PoseGraphConstraint & constraint);
+  void removeLastNode();
+  std::size_t addConstraint(const PoseGraphConstraint & constraint);
+  void removeConstraint(std::size_t constraint_id);
 
   PoseGraphOptimizationSummary optimize(
     const PoseGraphOptimizationOptions & options = {});

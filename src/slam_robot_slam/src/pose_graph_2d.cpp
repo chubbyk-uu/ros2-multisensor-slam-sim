@@ -117,7 +117,24 @@ std::size_t PoseGraph2D::addNode(const Pose2D & initial_pose)
   return id;
 }
 
-void PoseGraph2D::addConstraint(
+void PoseGraph2D::removeLastNode()
+{
+  if (nodes_.empty()) {
+    throw std::logic_error("Cannot remove a node from an empty pose graph");
+  }
+  const std::size_t node_id = nodes_.back().id;
+  for (const auto & constraint : constraints_) {
+    if (constraint.source_id == node_id ||
+      constraint.target_id == node_id)
+    {
+      throw std::logic_error(
+              "Cannot remove a pose graph node referenced by a constraint");
+    }
+  }
+  nodes_.pop_back();
+}
+
+std::size_t PoseGraph2D::addConstraint(
   const PoseGraphConstraint & constraint)
 {
   if (constraint.source_id >= nodes_.size() ||
@@ -131,7 +148,19 @@ void PoseGraph2D::addConstraint(
   {
     throw std::invalid_argument("Invalid pose graph constraint");
   }
+  const std::size_t constraint_id = constraints_.size();
   constraints_.push_back(constraint);
+  return constraint_id;
+}
+
+void PoseGraph2D::removeConstraint(const std::size_t constraint_id)
+{
+  if (constraint_id >= constraints_.size()) {
+    throw std::out_of_range("Pose graph constraint does not exist");
+  }
+  constraints_.erase(
+    constraints_.begin() +
+    static_cast<std::ptrdiff_t>(constraint_id));
 }
 
 void PoseGraph2D::validateConnectedGraph() const
