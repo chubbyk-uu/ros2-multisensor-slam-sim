@@ -25,7 +25,9 @@
 | 自研 C++ 2D SLAM | 进行中 | 已完成局部相关匹配、占据栅格、自动回环检测和 Ceres 位姿图优化 |
 | 3D LiDAR / 视觉 / 融合 | 计划中 | 在 2D 基线稳定后逐步接入 |
 
-详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见 [docs/performance.md](docs/performance.md)。
+详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见
+[docs/performance.md](docs/performance.md)，自研 SLAM 工程审查的逐项处理
+状态见 [docs/review_remediation.md](docs/review_remediation.md)。
 
 ## 环境与依赖
 
