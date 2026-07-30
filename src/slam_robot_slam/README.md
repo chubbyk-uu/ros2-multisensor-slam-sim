@@ -179,6 +179,21 @@ base_footprint -> lidar_link  robot_state_publisher
 | `loop_closure.matcher.minimum_support_fraction` | `0.50` | 回环扫描最小子图支撑占比 |
 | `loop_closure.matcher.minimum_matched_points` | `100` | 回环匹配的最少重合点 |
 
+`loop_closure.minimum_candidate_chain_size` 与关键帧间距存在隐式耦合。
+候选链只统计落在 `loop_closure.search_radius` 内的连续历史节点，因此
+需要满足：
+
+```text
+minimum_candidate_chain_size <= 1 + 2 * floor(search_radius / 关键帧间距)
+```
+
+当前取值下关键帧间距必须不超过 `0.12 m`，实测超过该值后全部候选都会被
+链长门限拒绝。关键帧间距约为 `max(minimum_translation_for_update,
+最大线速度 / 激光频率)`，当前为 `0.05～0.06 m`，约有两倍余量。若把
+`minimum_translation_for_update` 提高到 `0.12` 以上，或把机器人限速提高
+到 `1.2 m/s` 以上，回环会在没有警告的情况下停止工作，此时应同步下调
+链长门限或增大搜索半径。
+
 运行固定路线真值测试：
 
 ```bash

@@ -20,10 +20,13 @@ CRITICAL_LOG_FRAGMENTS = (
     'Aborted occupancy grid rebuild',
     'Aborted queued occupancy grid rebuild',
     'Discarded incompatible loop closure result',
+    'Failed to create occupancy grid snapshot',
+    'Failed to start loop closure worker',
     'Fatal SLAM node error',
     'Loop closure committed but occupancy grid rebuild failed to start',
     'Loop closure committed but pose graph path refresh failed',
     'Loop closure worker failed',
+    'Rejected LaserScan after processing error',
 )
 
 
