@@ -1,6 +1,10 @@
 # ROS 2 Multi-Sensor SLAM Simulation
 
-基于 ROS 2 Jazzy 和 Gazebo Sim 的差速轮式机器人多传感器 SLAM 仿真项目。当前已完成 2D LiDAR 仿真、SLAM Toolbox 建图、地图自动保存、AMCL 定位和 Nav2 自主导航；后续将继续实现自研 2D SLAM，并扩展 3D LiDAR、视觉和多传感器融合。
+基于 ROS 2 Jazzy 和 Gazebo Sim 的差速轮式机器人多传感器 SLAM 仿真项目。
+当前已完成 2D LiDAR 仿真、SLAM Toolbox 建图、地图自动保存、AMCL 定位
+和 Nav2 自主导航；自研 C++ 2D SLAM 已具备可运行的前端、位姿图、自动
+回环和地图重建链路，正在进行长路线回归，后续将扩展 3D LiDAR、视觉和
+多传感器融合。
 
 ## 运行效果
 
@@ -22,7 +26,7 @@
 | 2D 激光建图 | 已完成 | SLAM Toolbox `online_async`、回环检测和退出时自动保存 |
 | 定位与导航 | 已完成 | Map Server、AMCL、Nav2 官方完整组件和 RViz |
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
-| 自研 C++ 2D SLAM | 进行中 | 已完成局部相关匹配、占据栅格、自动回环检测和 Ceres 位姿图优化 |
+| 自研 C++ 2D SLAM | 进行中 | 已完成相关匹配、分块占据地图、后台回环、Ceres 位姿图和地图重建，正在进行长路线回归 |
 | 3D LiDAR / 视觉 / 融合 | 计划中 | 在 2D 基线稳定后逐步接入 |
 
 详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见
