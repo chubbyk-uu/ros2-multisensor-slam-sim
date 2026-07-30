@@ -26,14 +26,16 @@ ros2 launch slam_robot_slam mapping.launch.py
 
 ```bash
 ros2 launch slam_robot_slam mapping.launch.py \
-  map_output_prefix:=/home/jerry/robot_ws/slam/maps/room_01
+  map_output_prefix:="${SLAM_WS}/maps/room_01"
 ```
 
 关闭自动保存可传入 `auto_save_map:=false`。原有工具仍可用于运行中手动保存检查点：
 
 ```bash
 ros2 run slam_robot_slam save_slam_map \
-  /home/jerry/robot_ws/slam/maps/slam_map
+  "${SLAM_WS}/maps/slam_map"
 ```
 
 成功时会生成 `.yaml`、`.pgm`、`.posegraph` 和 `.data` 四个文件。自动保存期间不要重复按 `Ctrl+C`，应等待终端显示 `Save completed`。
+
+其中 `SLAM_WS` 应指向仓库根目录。

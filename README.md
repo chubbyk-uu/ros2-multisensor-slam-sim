@@ -1,106 +1,116 @@
-# slam_robot
+# ROS 2 Multi-Sensor SLAM Simulation
 
-基于 ROS 2 Jazzy 和 Gazebo Sim 的轮式机器人多传感器 SLAM 仿真项目。
-当前开发阶段优先完成差速机器人模型和 2D 激光 SLAM。
+基于 ROS 2 Jazzy 和 Gazebo Sim 的差速轮式机器人多传感器 SLAM 仿真项目。当前已完成 2D LiDAR 仿真、SLAM Toolbox 建图、地图自动保存、AMCL 定位和 Nav2 自主导航；后续将继续实现自研 2D SLAM，并扩展 3D LiDAR、视觉和多传感器融合。
 
-## 构建
+## 运行效果
+
+### Gazebo 仿真环境
+
+![Gazebo 中的差速机器人和室内 SLAM 测试环境](docs/images/gazebo-simulation.png)
+
+### AMCL 定位与 Nav2 导航
+
+![RViz 中的地图、激光、代价地图和导航状态](docs/images/nav2-navigation.png)
+
+## 当前进度
+
+| 模块 | 状态 | 说明 |
+| --- | --- | --- |
+| 差速轮式机器人模型 | 已完成 | Xacro、惯性、碰撞体、驱动轮、万向轮和 LiDAR 安装结构 |
+| Gazebo Sim 仿真 | 已完成 | 非对称室内场景、差速驱动和 `ros_gz` 消息桥接 |
+| 2D LiDAR | 已完成 | 360°、720 点、10 Hz、0.12～12 m |
+| 2D 激光建图 | 已完成 | SLAM Toolbox `online_async`、回环检测和退出时自动保存 |
+| 定位与导航 | 已完成 | Map Server、AMCL、Nav2 官方完整组件和 RViz |
+| 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
+| 自研 C++ 2D SLAM | 计划中 | 前端匹配、后端优化、回环与栅格地图 |
+| 3D LiDAR / 视觉 / 融合 | 计划中 | 在 2D 基线稳定后逐步接入 |
+
+详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见 [docs/performance.md](docs/performance.md)。
+
+## 环境与依赖
+
+- Ubuntu 24.04 或对应的 WSL2 环境
+- ROS 2 Jazzy
+- Gazebo Sim 8（ROS 2 Jazzy 对应的 Gazebo Harmonic）
+- `ros_gz`
+- SLAM Toolbox
+- Navigation2
+- Xacro、`robot_state_publisher` 和 RViz
+
+假设 ROS 2 Jazzy 已正确安装，克隆项目后执行：
 
 ```bash
-cd /home/jerry/robot_ws/slam
+git clone https://github.com/chubbyk-uu/ros2-multisensor-slam-sim.git
+cd ros2-multisensor-slam-sim
+
+export SLAM_WS="$PWD"
 source /opt/ros/jazzy/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-## 显示机器人模型
-
-首次使用 GUI 关节调节工具前安装：
+首次使用模型关节 GUI 时，如系统尚未安装，可执行：
 
 ```bash
 sudo apt install ros-jazzy-joint-state-publisher-gui
 ```
 
-然后启动：
+后续命令默认在仓库根目录运行。启动文件会以当前目录为基准查找或保存 `maps/`，因此建议每个新终端先执行：
+
+```bash
+cd "$SLAM_WS"
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+```
+
+## 快速开始
+
+### 1. 查看机器人模型
 
 ```bash
 ros2 launch slam_robot_description display.launch.py
 ```
 
-启动后，RViz 的固定坐标系应为 `base_footprint`，并能看到机器人模型和完整 TF。
-无桌面环境或未安装 GUI 组件时可使用：
+RViz 固定坐标系应为 `base_footprint`，并显示完整机器人和 TF。没有 GUI 关节工具时可用：
 
 ```bash
 ros2 launch slam_robot_description display.launch.py use_gui:=false
 ```
 
-## 模型验证
+模型语法校验：
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
 xacro src/slam_robot_description/urdf/slam_robot.urdf.xacro \
   -o /tmp/slam_robot.urdf
 check_urdf /tmp/slam_robot.urdf
 ```
 
-校验输出应包含 `Successfully Parsed XML`，根坐标系应为 `base_footprint`。
-
-## 启动 Gazebo 仿真
+### 2. 启动基础仿真
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
 ros2 launch slam_robot_gazebo simulation.launch.py
 ```
 
-默认会同时打开 Gazebo 和 RViz。RViz 使用 `odom` 作为固定坐标系，并显示机器人、TF 和 `/scan` 激光点。
-
-无图形界面时：
-
-```bash
-ros2 launch slam_robot_gazebo simulation.launch.py gui:=false rviz:=false
-```
-
-在 WSL2 中，launch 默认设置 Mesa D3D12 渲染后端并选择 NVIDIA 适配器，避免 Gazebo 和 RViz 回退到 `llvmpipe` 软件渲染。AMD 或 Intel 显卡可改为：
+默认同时打开 Gazebo 和 RViz。无图形界面时：
 
 ```bash
 ros2 launch slam_robot_gazebo simulation.launch.py \
-  wsl_gpu_adapter:=AMD
+  gui:=false rviz:=false
 ```
 
-如果本机环境不需要该设置，可传入 `use_wsl_gpu:=false`。只需要 RViz 观察建图、不需要 Gazebo 三维窗口时，推荐关闭 Gazebo GUI：
+基础接口：
 
-```bash
-ros2 launch slam_robot_bringup mapping_simulation.launch.py \
-  gui:=false use_rviz:=true
-```
-
-仿真启动后会生成 `slam_robot`，并建立以下 ROS 2 接口：
-
-- `/clock`：Gazebo 仿真时间。
-- `/cmd_vel`：差速底盘速度指令。
-- `/odom`：轮式里程计，坐标关系为 `odom -> base_footprint`。
-- `/joint_states`：左右驱动轮关节状态。
-- `/scan`：2D 激光扫描。
-- `/tf` 和 `/tf_static`：里程计及机器人内部坐标变换。
-
-默认世界是一个 12 m × 10 m 的非对称室内场景，包含外围墙、分隔墙、箱体和圆柱路标，并保留了可绕行的回环通道。
-
-机器人左右轮的几何中心距为 `0.34 m`。Gazebo ODE 中有限宽圆柱轮的有效接触轮距经原地旋转标定为 `0.306 m`，该数值仅用于差速运动学和里程计，机器人几何及 `base_footprint` 位置不变。
-
-2D LiDAR 初始参数：
-
-| 参数 | 数值 |
+| 名称 | 用途 |
 | --- | --- |
-| 扫描范围 | -π～π（360°） |
-| 样本数 | 720 |
-| 更新频率 | 10 Hz |
-| 最小距离 | 0.12 m |
-| 最大距离 | 12.0 m |
-| 高斯噪声标准差 | 0.005 m |
-| 坐标系 | `lidar_link` |
+| `/clock` | Gazebo 仿真时间 |
+| `/cmd_vel` | 差速底盘速度指令 |
+| `/odom` | 轮式里程计 |
+| `/joint_states` | 轮子关节状态 |
+| `/scan` | 2D 激光扫描 |
+| `/tf`、`/tf_static` | 动态与静态坐标变换 |
 
-检查激光数据：
+检查 LiDAR 和 TF：
 
 ```bash
 ros2 topic hz /scan
@@ -108,42 +118,25 @@ ros2 topic echo /scan --once
 ros2 run tf2_ros tf2_echo base_footprint lidar_link
 ```
 
-## 启动 2D SLAM 建图
+### 3. 建图
 
-一条命令启动 Gazebo、机器人、LiDAR、SLAM Toolbox 和建图 RViz：
+一条命令启动 Gazebo、机器人、SLAM Toolbox 和建图 RViz：
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
 ros2 launch slam_robot_bringup mapping_simulation.launch.py
 ```
 
-无界面验证：
+另开终端遥控：
 
 ```bash
-ros2 launch slam_robot_bringup mapping_simulation.launch.py \
-  gui:=false use_rviz:=false
-```
-
-另开终端使用键盘控制机器人：
-
-```bash
+cd "$SLAM_WS"
 source /opt/ros/jazzy/setup.bash
-source /home/jerry/robot_ws/slam/install/setup.bash
+source install/setup.bash
 ros2 run teleop_twist_keyboard teleop_twist_keyboard \
   --ros-args -r cmd_vel:=/cmd_vel
 ```
 
-同一时间只运行一个 `simulation.launch.py` 或 `mapping_simulation.launch.py`。重复启动会产生多个 `/clock`、`/odom` 和 TF 数据源，导致时间戳错误和激光错位。
-
-建图时应能观察到：
-
-- `/map` 以约 0.5 Hz 更新。
-- `slam_toolbox` 生命周期状态为 `active`。
-- TF 树增加 `map -> odom`。
-- 机器人移动后，地图的已知区域逐渐扩展。
-
-检查命令：
+建议先直行观察地图对齐，再以较低角速度转弯，最后绕场景形成闭环。建图期间可检查：
 
 ```bash
 ros2 lifecycle get /slam_toolbox
@@ -151,48 +144,11 @@ ros2 topic hz /map
 ros2 run tf2_ros tf2_echo map odom
 ```
 
-SLAM 参数位于：
+同一时间只能运行一个仿真或建图入口。多个 `/clock`、`/odom` 或 TF 发布源会导致时间戳异常和激光错位。
 
-```text
-src/slam_robot_slam/config/mapper_params_online_async.yaml
-```
+### 4. 保存地图
 
-当前性能配置使用 250 Hz 物理循环、10 Hz 激光、约 28 Hz 里程计和 2 s 地图更新周期。Gazebo 内不绘制激光射线，激光仍可在 RViz 中查看；RViz 的 TF 显示默认关闭，需要排查坐标系时可手动打开。
-
-为减小起转和停转时激光相对地图的瞬时偏移，旋转关键帧阈值使用 `0.05 rad`。小角度转弯时仍可能看到几厘米的短暂偏差；如果停稳后能够重新对齐且地图没有持续重影，属于 10 Hz 激光和 0.05 m 栅格分辨率下的正常范围。
-
-### 性能与旋转回归记录
-
-2026-07-29 在 WSL2、RTX 5080 环境实测：
-
-| 指标 | 优化前 | 优化后 |
-| --- | ---: | ---: |
-| Gazebo GUI CPU | 约 529% | 约 132% |
-| Gazebo Server CPU | 约 58% | 约 31% |
-| RViz CPU | 约 93% | 约 10% |
-| 仿真实时率 | 约 1.0 | 稳定 1.0 |
-
-Linux 中单个进程的 CPU 百分比可以超过 100%，表示占用了多个逻辑核心。以上数值只用于同机前后对比，不代表其他机器的固定性能。
-
-优化后进行约 127° 原地旋转：轮式里程计和 SLAM 相对 Gazebo 真值的航向误差分别约为 0.31° 和 0.29°，SLAM 平移偏差约 1.5 mm。
-
-短时发送直行指令：
-
-```bash
-ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.20}, angular: {z: 0.0}}" -r 10
-```
-
-结束速度发布后，应再发送一次零速度：
-
-```bash
-ros2 topic pub /cmd_vel geometry_msgs/msg/Twist \
-  "{linear: {x: 0.0}, angular: {z: 0.0}}" --once
-```
-
-## 保存地图
-
-`mapping_simulation.launch.py` 默认启用自动保存。建图完成后，在运行 launch 的终端按一次 `Ctrl+C`，系统会先保存地图，再关闭 SLAM 和仿真。终端应显示：
+建图完成后，在运行 launch 的终端按一次 `Ctrl+C`。默认会先保存地图和位姿图，再关闭节点。请等待终端出现：
 
 ```text
 [auto_save_map] Saving map to: .../maps/slam_map
@@ -200,100 +156,118 @@ Map saved with prefix: .../maps/slam_map
 [auto_save_map] Save completed; shutting down.
 ```
 
-默认以启动命令所在目录下的 `maps/slam_map` 为文件前缀，生成：
+默认生成：
 
-- `slam_map.yaml` 和 `slam_map.pgm`：供 Nav2 Map Server 和 AMCL 使用。
-- `slam_map.posegraph` 和 `slam_map.data`：供 SLAM Toolbox 恢复位姿图和继续建图。
+- `maps/slam_map.yaml` 和 `maps/slam_map.pgm`：供 Map Server 和 AMCL 使用。
+- `maps/slam_map.posegraph` 和 `maps/slam_map.data`：用于恢复 SLAM Toolbox 位姿图。
 
-等待看到 `Save completed` 后 launch 才会继续退出。不要连续多次按 `Ctrl+C`，否则可能中断正在进行的写盘。
-
-使用自定义保存位置：
+不要连续按多次 `Ctrl+C`，否则可能在写盘完成前中断进程。自定义保存位置：
 
 ```bash
 ros2 launch slam_robot_bringup mapping_simulation.launch.py \
-  map_output_prefix:=/home/jerry/robot_ws/slam/maps/room_01
+  map_output_prefix:="${SLAM_WS}/maps/room_01"
 ```
 
-确认默认地图文件：
+运行中也可以手动保存检查点：
 
 ```bash
-ls -lh /home/jerry/robot_ws/slam/maps/slam_map.*
+ros2 run slam_robot_slam save_slam_map \
+  "${SLAM_WS}/maps/checkpoint"
 ```
 
-如果临时不希望退出时保存：
+临时关闭自动保存：
 
 ```bash
 ros2 launch slam_robot_bringup mapping_simulation.launch.py \
   auto_save_map:=false
 ```
 
-原来的手动命令仍可在建图过程中用于保存检查点：
+### 5. 定位与导航
+
+确认 `maps/slam_map.yaml` 和 `maps/slam_map.pgm` 存在，然后启动：
 
 ```bash
-ros2 run slam_robot_slam save_slam_map \
-  /home/jerry/robot_ws/slam/maps/checkpoint
-```
-
-## 使用保存地图进行定位与导航
-
-确认 `maps/slam_map.yaml` 和 `maps/slam_map.pgm` 已存在，然后用一条命令启动 Gazebo、机器人、Map Server、AMCL、完整 Nav2 和官方 Nav2 RViz：
-
-```bash
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
 ros2 launch slam_robot_bringup navigation_simulation.launch.py
 ```
 
-机器人默认出生在建图原点，因此 AMCL 会自动使用 `(x, y, yaw) = (0, 0, 0)` 初始化。RViz 中激光应与保存地图重合；点击顶部的 `Nav2 Goal`（或 `2D Goal Pose`），再在地图空闲区域拖出目标朝向，机器人即可自主规划和行驶。
+机器人默认从建图原点出生，AMCL 自动使用 `(x, y, yaw) = (0, 0, 0)` 初始化。在 RViz 点击 `Nav2 Goal`，在空闲区域拖出目标朝向即可规划并行驶。
 
-如果出生点不是地图原点，可以在 RViz 点击 `2D Pose Estimate` 重新给定位姿，也可以在启动时指定：
+出生点改变时，可使用 RViz 的 `2D Pose Estimate`，或在启动时指定：
 
 ```bash
 ros2 launch slam_robot_bringup navigation_simulation.launch.py \
   initial_pose_x:=1.0 initial_pose_y:=-0.5 initial_pose_yaw:=1.57
 ```
 
-无界面验证：
+无界面运行：
 
 ```bash
 ros2 launch slam_robot_bringup navigation_simulation.launch.py \
   gui:=false use_rviz:=false
 ```
 
-导航基于 ROS 2 Jazzy 安装的 Nav2 官方参数，保留 MPPI Controller、Navfn Planner、Simple Smoother、Behavior Server、Velocity Smoother、Collision Monitor、Waypoint Follower、Route Server 和 Docking Server。项目只覆盖机器人相关的坐标系、真实多边形 footprint、激光量程、初始位姿和运动约束。
+导航前请关闭键盘遥控节点，避免多个节点同时向 `/cmd_vel` 发布速度。
 
-开始导航前请退出键盘遥控节点，并且不要同时运行建图 launch。多个节点直接向 `/cmd_vel` 发布速度会互相覆盖，造成导航轨迹异常。
+### 6. 导航回归测试
 
-检查定位与导航状态：
-
-```bash
-ros2 lifecycle get /map_server
-ros2 lifecycle get /amcl
-ros2 lifecycle get /controller_server
-ros2 lifecycle get /planner_server
-ros2 lifecycle get /bt_navigator
-ros2 run tf2_ros tf2_echo map base_footprint
-```
-
-以上生命周期节点应全部为 `active [3]`。官方默认的到点位置容差为 `0.25 m`，因此机器人进入目标附近后返回成功是正常行为。
-
-完整仿真启动后，可以分别执行多目标和动态障碍物自动回归：
+完整导航仿真启动后，另开终端执行多目标测试：
 
 ```bash
 ros2 run slam_robot_navigation navigation_regression.py
+```
+
+动态障碍物重规划测试：
+
+```bash
 ros2 run slam_robot_navigation navigation_regression.py \
   --scenario dynamic-obstacle
 ```
 
-动态测试会在机器人行驶后生成地图中不存在的箱体，检查局部、全局代价
-地图是否正确标记障碍，并在测试结束时自动移除箱体。
+测试会检查导航结果、耗时、恢复次数、AMCL 终点误差和代价地图标记；动态场景结束后会自动移除测试箱体。
 
-## 当前包
+## 系统结构
 
-- `slam_robot_description`：机器人 Xacro、RViz 配置和模型显示。
-- `slam_robot_gazebo`：Gazebo 世界、系统插件和消息桥接。
-- `slam_robot_bringup`：统一启动入口。
-- `slam_robot_slam`：2D SLAM 配置以及后续 C++ 算法节点。
-- `slam_robot_navigation`：官方 Nav2 基线、Map Server、AMCL 定位和自主导航入口。
+数据流：
 
-详细实施路线见 [plan.md](plan.md)。
+```text
+teleop / Nav2 -> /cmd_vel -> Gazebo diff drive -> /odom
+Gazebo 2D LiDAR -> /scan
+robot_state_publisher -> /tf、/tf_static
+/scan + TF + /odom -> SLAM Toolbox -> /map、map -> odom
+saved map + /scan + TF -> AMCL / Nav2
+```
+
+TF 树：
+
+```text
+map
+└── odom
+    └── base_footprint
+        └── base_link
+            ├── left_wheel_link
+            ├── right_wheel_link
+            ├── caster_link
+            └── lidar_mount_link
+                └── lidar_link
+```
+
+`base_footprint` 位于驱动轮轴线中点的地面投影，是差速运动学旋转中心。几何轮距为 `0.34 m`；Gazebo 中按原地旋转标定的有效运动学轮距为 `0.306 m`，仅用于驱动和里程计参数。
+
+## 包结构
+
+- `slam_robot_description`：Xacro、模型资源和模型显示。
+- `slam_robot_gazebo`：Gazebo 世界、系统插件和 ROS-Gazebo 桥接。
+- `slam_robot_bringup`：建图与导航的统一启动入口。
+- `slam_robot_slam`：SLAM Toolbox 配置、地图保存和后续 C++ SLAM 节点。
+- `slam_robot_navigation`：Map Server、AMCL、Nav2 配置和自动回归工具。
+
+## WSL2 与已知现象
+
+- 在 WSL2 中，launch 默认使用 Mesa D3D12，并选择名称包含 `NVIDIA` 的适配器。AMD 或 Intel 显卡可传入 `wsl_gpu_adapter:=AMD` 或对应名称；非 WSL 环境默认不启用该设置。
+- `Anti-aliasing level ... is not supported` 是 Ogre2 将不支持的 FSAA 级别回退到可用值的警告，不影响仿真、传感器或 SLAM。
+- 10 Hz LiDAR 在机器人转弯时可能出现几厘米的短暂点云偏移；停稳后能够重新对齐且地图没有持续重影，通常属于扫描周期和 0.05 m 地图分辨率的正常表现。
+- Nav2 和 Gazebo 的组合进程在 `Ctrl+C` 退出时可能打印生命周期或强制终止日志；如果运行过程正常且地图保存已完成，不代表导航失败。
+
+## License
+
+本项目采用 [Apache License 2.0](LICENSE)。

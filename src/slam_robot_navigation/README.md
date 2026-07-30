@@ -23,8 +23,10 @@ ros2 launch slam_robot_bringup navigation_simulation.launch.py
 
 ```bash
 ros2 launch slam_robot_navigation navigation.launch.py \
-  map:=/home/jerry/robot_ws/slam/maps/slam_map.yaml
+  map:="${SLAM_WS}/maps/slam_map.yaml"
 ```
+
+其中 `SLAM_WS` 应指向仓库根目录。
 
 如果机器人不是从保存地图时的原点出生，可通过 RViz 的 `2D Pose Estimate` 重新设置初始位姿。
 
