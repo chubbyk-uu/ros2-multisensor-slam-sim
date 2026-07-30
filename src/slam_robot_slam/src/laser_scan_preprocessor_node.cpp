@@ -65,10 +65,7 @@ private:
   void laserScanCallback(
     const sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
   {
-    if (!std::isfinite(scan->angle_min) ||
-      !std::isfinite(scan->angle_increment) ||
-      scan->angle_increment == 0.0F)
-    {
+    if (!hasValidLaserScanMetadata(*scan)) {
       RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),

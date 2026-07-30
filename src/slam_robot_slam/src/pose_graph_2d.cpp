@@ -99,13 +99,6 @@ struct OptimizedPose
   double yaw;
 };
 
-bool isFinitePose(const Pose2D & pose)
-{
-  return std::isfinite(pose.x) &&
-         std::isfinite(pose.y) &&
-         std::isfinite(pose.yaw);
-}
-
 }  // namespace
 
 std::size_t PoseGraph2D::addNode(const Pose2D & initial_pose)

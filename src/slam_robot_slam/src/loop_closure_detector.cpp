@@ -6,18 +6,6 @@
 
 namespace slam_robot_slam
 {
-namespace
-{
-
-bool isFinitePose(const Pose2D & pose)
-{
-  return std::isfinite(pose.x) &&
-         std::isfinite(pose.y) &&
-         std::isfinite(pose.yaw);
-}
-
-}  // namespace
-
 std::vector<LoopClosureCandidate> findLoopClosureCandidates(
   const std::vector<Pose2D> & poses,
   const std::size_t current_keyframe_id,

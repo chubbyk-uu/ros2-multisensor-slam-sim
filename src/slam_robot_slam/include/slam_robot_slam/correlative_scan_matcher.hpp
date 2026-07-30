@@ -34,6 +34,9 @@ struct CorrelativeScanMatcherResult
   std::size_t evaluated_candidates{0U};
 };
 
+void validateCorrelativeScanMatcherParameters(
+  const CorrelativeScanMatcherParameters & parameters);
+
 CorrelativeScanMatcherResult matchCorrelative(
   const std::vector<Point2D> & reference_points,
   const std::vector<Point2D> & current_points,

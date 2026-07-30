@@ -15,6 +15,9 @@ struct Point2D
   float y;
 };
 
+bool hasValidLaserScanMetadata(
+  const sensor_msgs::msg::LaserScan & scan);
+
 std::vector<Point2D> projectLaserScan(
   const sensor_msgs::msg::LaserScan & scan,
   double minimum_range,

@@ -71,4 +71,19 @@ TEST(LaserScanPreprocessor, RejectsZeroStride)
     std::invalid_argument);
 }
 
+TEST(LaserScanPreprocessor, RejectsInvalidScanMetadata)
+{
+  auto scan = makeScan();
+  scan.angle_increment = std::numeric_limits<float>::quiet_NaN();
+  scan.ranges = {1.0F};
+
+  EXPECT_FALSE(slam_robot_slam::hasValidLaserScanMetadata(scan));
+  EXPECT_TRUE(
+    slam_robot_slam::projectLaserScan(scan, 0.10, 12.0, 1U).empty());
+
+  scan = makeScan();
+  scan.range_max = std::numeric_limits<float>::infinity();
+  EXPECT_FALSE(slam_robot_slam::hasValidLaserScanMetadata(scan));
+}
+
 }  // namespace

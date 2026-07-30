@@ -28,6 +28,10 @@ OccupancyGridMap::OccupancyGridMap(
   maximum_log_odds_(probabilityToLogOdds(parameters.maximum_probability))
 {
   if (!std::isfinite(parameters_.resolution) ||
+    !std::isfinite(parameters_.hit_probability) ||
+    !std::isfinite(parameters_.miss_probability) ||
+    !std::isfinite(parameters_.minimum_probability) ||
+    !std::isfinite(parameters_.maximum_probability) ||
     parameters_.resolution <= 0.0 ||
     parameters_.hit_probability <= 0.5 ||
     parameters_.hit_probability >= 1.0 ||
@@ -56,11 +60,21 @@ std::size_t OccupancyGridMap::GridIndexHash::operator()(
 OccupancyGridMap::GridIndex OccupancyGridMap::worldToGrid(
   const Point2D & point) const
 {
+  const double grid_x =
+    std::floor(static_cast<double>(point.x) / parameters_.resolution);
+  const double grid_y =
+    std::floor(static_cast<double>(point.y) / parameters_.resolution);
+  if (grid_x < std::numeric_limits<int>::min() ||
+    grid_x > std::numeric_limits<int>::max() ||
+    grid_y < std::numeric_limits<int>::min() ||
+    grid_y > std::numeric_limits<int>::max())
+  {
+    throw std::overflow_error(
+            "Occupancy grid coordinate exceeds integer range");
+  }
   return GridIndex{
-    static_cast<int>(
-      std::floor(static_cast<double>(point.x) / parameters_.resolution)),
-    static_cast<int>(
-      std::floor(static_cast<double>(point.y) / parameters_.resolution))};
+    static_cast<int>(grid_x),
+    static_cast<int>(grid_y)};
 }
 
 void OccupancyGridMap::updateCell(
@@ -140,14 +154,27 @@ OccupancyGridSnapshot OccupancyGridMap::snapshot() const
     return result;
   }
 
-  result.origin_cell_x = minimum_x_ - parameters_.padding_cells;
-  result.origin_cell_y = minimum_y_ - parameters_.padding_cells;
-  const int padded_maximum_x = maximum_x_ + parameters_.padding_cells;
-  const int padded_maximum_y = maximum_y_ + parameters_.padding_cells;
+  const int64_t origin_x =
+    static_cast<int64_t>(minimum_x_) - parameters_.padding_cells;
+  const int64_t origin_y =
+    static_cast<int64_t>(minimum_y_) - parameters_.padding_cells;
+  const int64_t padded_maximum_x =
+    static_cast<int64_t>(maximum_x_) + parameters_.padding_cells;
+  const int64_t padded_maximum_y =
+    static_cast<int64_t>(maximum_y_) + parameters_.padding_cells;
+  if (origin_x < std::numeric_limits<int>::min() ||
+    origin_x > std::numeric_limits<int>::max() ||
+    origin_y < std::numeric_limits<int>::min() ||
+    origin_y > std::numeric_limits<int>::max())
+  {
+    throw std::overflow_error("Occupancy grid origin exceeds integer range");
+  }
+  result.origin_cell_x = static_cast<int>(origin_x);
+  result.origin_cell_y = static_cast<int>(origin_y);
   result.width = static_cast<std::size_t>(
-    padded_maximum_x - result.origin_cell_x + 1);
+    padded_maximum_x - origin_x + 1);
   result.height = static_cast<std::size_t>(
-    padded_maximum_y - result.origin_cell_y + 1);
+    padded_maximum_y - origin_y + 1);
 
   if (result.width >
     std::numeric_limits<std::size_t>::max() / result.height)

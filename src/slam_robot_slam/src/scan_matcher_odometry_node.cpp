@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "builtin_interfaces/msg/time.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
@@ -39,6 +40,34 @@ int64_t stampToNanoseconds(const builtin_interfaces::msg::Time & stamp)
 {
   return static_cast<int64_t>(stamp.sec) * 1000000000LL +
          static_cast<int64_t>(stamp.nanosec);
+}
+
+bool isFinitePositive(const double value)
+{
+  return std::isfinite(value) && value > 0.0;
+}
+
+bool isFiniteNonNegative(const double value)
+{
+  return std::isfinite(value) && value >= 0.0;
+}
+
+bool hasValidQuaternion(
+  const geometry_msgs::msg::Quaternion & orientation)
+{
+  if (!std::isfinite(orientation.x) ||
+    !std::isfinite(orientation.y) ||
+    !std::isfinite(orientation.z) ||
+    !std::isfinite(orientation.w))
+  {
+    return false;
+  }
+  const double squared_norm =
+    orientation.x * orientation.x +
+    orientation.y * orientation.y +
+    orientation.z * orientation.z +
+    orientation.w * orientation.w;
+  return squared_norm > 1.0e-12;
 }
 
 double quaternionToYaw(const geometry_msgs::msg::Quaternion & orientation)
@@ -230,27 +259,34 @@ public:
       declare_parameter<int64_t>(
       "loop_closure.matcher.minimum_matched_points", 100);
 
-    if (minimum_range_ < 0.0 || maximum_range_ <= minimum_range_ ||
-      point_stride < 1 || maximum_odom_age_ <= 0.0 ||
-      minimum_translation_for_update_ < 0.0 ||
-      minimum_rotation_for_update_ < 0.0 ||
+    if (!isFiniteNonNegative(minimum_range_) ||
+      !isFinitePositive(maximum_range_) ||
+      maximum_range_ <= minimum_range_ ||
+      point_stride < 1 || !isFinitePositive(maximum_odom_age_) ||
+      !isFiniteNonNegative(minimum_translation_for_update_) ||
+      !isFiniteNonNegative(minimum_rotation_for_update_) ||
       maximum_local_keyframes < 1 || maximum_path_poses_ < 1 ||
       minimum_matched_points < 1 || map_ray_stride < 1 ||
-      map_publish_period <= 0.0 ||
+      !isFinitePositive(map_publish_period) ||
       map_rebuild_keyframes_per_cycle < 1 ||
-      map_rebuild_period <= 0.0 ||
+      !isFinitePositive(map_rebuild_period) ||
       map_padding_cells < 0 ||
       map_padding_cells > std::numeric_limits<int>::max() ||
-      sequential_translation_stddev <= 0.0 ||
-      sequential_rotation_stddev <= 0.0 ||
+      !isFinitePositive(sequential_translation_stddev) ||
+      !isFinitePositive(sequential_rotation_stddev) ||
       minimum_keyframe_separation < 1 ||
       loop_closure_check_interval < 1 ||
       minimum_loop_closure_interval < 1 ||
+      !isFinitePositive(loop_candidate_parameters_.search_radius) ||
       maximum_loop_candidates < 1 ||
       candidate_submap_half_width < 0 ||
-      loop_translation_stddev <= 0.0 ||
-      loop_rotation_stddev <= 0.0 ||
+      !isFinitePositive(loop_translation_stddev) ||
+      !isFinitePositive(loop_rotation_stddev) ||
       optimization_maximum_iterations < 1 ||
+      optimization_maximum_iterations >
+      std::numeric_limits<int>::max() ||
+      !isFinitePositive(
+        pose_graph_optimization_options_.loop_closure_huber_scale) ||
       minimum_loop_matched_points < 1)
     {
       throw std::invalid_argument("Invalid scan matcher node parameters");
@@ -272,6 +308,8 @@ public:
       static_cast<std::size_t>(candidate_submap_half_width);
     loop_matcher_parameters_.minimum_matched_points =
       static_cast<std::size_t>(minimum_loop_matched_points);
+    validateCorrelativeScanMatcherParameters(matcher_parameters_);
+    validateCorrelativeScanMatcherParameters(loop_matcher_parameters_);
     pose_graph_optimization_options_.maximum_iterations =
       static_cast<int>(optimization_maximum_iterations);
     map_ray_stride_ = static_cast<std::size_t>(map_ray_stride);
@@ -387,13 +425,34 @@ private:
   void odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr odometry)
   {
     const auto & position = odometry->pose.pose.position;
+    const auto & orientation = odometry->pose.pose.orientation;
+    if (!std::isfinite(position.x) ||
+      !std::isfinite(position.y) ||
+      !hasValidQuaternion(orientation))
+    {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Ignoring odometry with non-finite pose or invalid quaternion");
+      return;
+    }
+    const Pose2D pose{
+      position.x,
+      position.y,
+      quaternionToYaw(orientation)};
+    if (!isFinitePose(pose)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Ignoring odometry that produced a non-finite planar pose");
+      return;
+    }
     odom_samples_.push_back(
       OdomSample{
         stampToNanoseconds(odometry->header.stamp),
-        Pose2D{
-          position.x,
-          position.y,
-          quaternionToYaw(odometry->pose.pose.orientation)}});
+        pose});
 
     constexpr std::size_t kMaximumSamples = 300U;
     while (odom_samples_.size() > kMaximumSamples) {
@@ -437,6 +496,19 @@ private:
     try {
       const auto transform = tf_buffer_->lookupTransform(
         base_frame_, laser_frame, tf2::TimePointZero);
+      if (!std::isfinite(transform.transform.translation.x) ||
+        !std::isfinite(transform.transform.translation.y) ||
+        !hasValidQuaternion(transform.transform.rotation))
+      {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          5000,
+          "Ignoring non-finite %s -> %s transform",
+          laser_frame.c_str(),
+          base_frame_.c_str());
+        return false;
+      }
       base_from_laser = Pose2D{
         transform.transform.translation.x,
         transform.transform.translation.y,
@@ -458,6 +530,30 @@ private:
   void laserScanCallback(
     const sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
   {
+    try {
+      processLaserScan(scan);
+    } catch (const std::exception & error) {
+      RCLCPP_ERROR_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Rejected LaserScan after processing error: %s",
+        error.what());
+    }
+  }
+
+  void processLaserScan(
+    const sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
+  {
+    if (!hasValidLaserScanMetadata(*scan)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Ignoring LaserScan with invalid angular or range metadata");
+      return;
+    }
+
     Pose2D odometry_pose;
     if (!findNearestOdometry(scan->header.stamp, odometry_pose)) {
       RCLCPP_WARN_THROTTLE(
@@ -890,15 +986,24 @@ private:
       return;
     }
 
-    const std::size_t final_keyframe = std::min(
-      next_rebuild_keyframe_ + map_rebuild_keyframes_per_cycle_,
-      keyframes_.size());
-    for (; next_rebuild_keyframe_ < final_keyframe;
-      ++next_rebuild_keyframe_)
-    {
-      integrateKeyframeIntoMap(
-        keyframes_[next_rebuild_keyframe_],
-        *pending_rebuild_map_);
+    try {
+      const std::size_t final_keyframe = std::min(
+        next_rebuild_keyframe_ + map_rebuild_keyframes_per_cycle_,
+        keyframes_.size());
+      for (; next_rebuild_keyframe_ < final_keyframe;
+        ++next_rebuild_keyframe_)
+      {
+        integrateKeyframeIntoMap(
+          keyframes_[next_rebuild_keyframe_],
+          *pending_rebuild_map_);
+      }
+    } catch (const std::exception & error) {
+      pending_rebuild_map_.reset();
+      RCLCPP_ERROR(
+        get_logger(),
+        "Aborted occupancy grid rebuild: %s",
+        error.what());
+      return;
     }
     if (next_rebuild_keyframe_ < keyframes_.size()) {
       return;
@@ -926,7 +1031,17 @@ private:
       return;
     }
 
-    const auto snapshot = occupancy_grid_map_->snapshot();
+    OccupancyGridSnapshot snapshot;
+    try {
+      snapshot = occupancy_grid_map_->snapshot();
+    } catch (const std::exception & error) {
+      map_dirty_ = false;
+      RCLCPP_ERROR(
+        get_logger(),
+        "Failed to create occupancy grid snapshot: %s",
+        error.what());
+      return;
+    }
     if (snapshot.data.empty()) {
       return;
     }
@@ -1086,8 +1201,17 @@ private:
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(
-    std::make_shared<slam_robot_slam::ScanMatcherOdometryNode>());
-  rclcpp::shutdown();
-  return 0;
+  try {
+    rclcpp::spin(
+      std::make_shared<slam_robot_slam::ScanMatcherOdometryNode>());
+    rclcpp::shutdown();
+    return 0;
+  } catch (const std::exception & error) {
+    RCLCPP_FATAL(
+      rclcpp::get_logger("scan_matcher_odometry"),
+      "Fatal SLAM node error: %s",
+      error.what());
+    rclcpp::shutdown();
+    return 1;
+  }
 }

@@ -5,17 +5,16 @@
 namespace slam_robot_slam
 {
 
+bool isFinitePose(const Pose2D & pose)
+{
+  return std::isfinite(pose.x) &&
+         std::isfinite(pose.y) &&
+         std::isfinite(pose.yaw);
+}
+
 double normalizeAngle(double angle)
 {
-  constexpr double kPi = 3.14159265358979323846;
-  constexpr double kTwoPi = 2.0 * kPi;
-  while (angle > kPi) {
-    angle -= kTwoPi;
-  }
-  while (angle < -kPi) {
-    angle += kTwoPi;
-  }
-  return angle;
+  return std::atan2(std::sin(angle), std::cos(angle));
 }
 
 Point2D transformPoint(const Pose2D & pose, const Point2D & point)

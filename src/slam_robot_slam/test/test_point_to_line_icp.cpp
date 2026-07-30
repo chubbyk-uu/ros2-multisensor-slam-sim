@@ -78,32 +78,4 @@ TEST(PointToLineIcp, RejectsInsufficientGeometry)
   EXPECT_EQ(result.iterations, 0U);
 }
 
-TEST(PointToLineIcp, PoseCompositionAndRelativePoseAreConsistent)
-{
-  const slam_robot_slam::Pose2D first{1.0, -0.5, 0.4};
-  const slam_robot_slam::Pose2D increment{0.3, 0.1, -0.2};
-  const auto second = slam_robot_slam::composePoses(first, increment);
-  const auto recovered = slam_robot_slam::relativePose(first, second);
-
-  EXPECT_NEAR(recovered.x, increment.x, 1.0e-6);
-  EXPECT_NEAR(recovered.y, increment.y, 1.0e-6);
-  EXPECT_NEAR(recovered.yaw, increment.yaw, 1.0e-6);
-}
-
-TEST(PointToLineIcp, MapToOdomCorrectionRecoversMatchedBasePose)
-{
-  const slam_robot_slam::Pose2D odom_from_base{2.4, -0.7, 0.35};
-  const slam_robot_slam::Pose2D map_from_base{2.1, -0.5, 0.28};
-  const auto map_from_odom = slam_robot_slam::composePoses(
-    map_from_base,
-    slam_robot_slam::inversePose(odom_from_base));
-  const auto recovered_map_from_base = slam_robot_slam::composePoses(
-    map_from_odom,
-    odom_from_base);
-
-  EXPECT_NEAR(recovered_map_from_base.x, map_from_base.x, 1.0e-9);
-  EXPECT_NEAR(recovered_map_from_base.y, map_from_base.y, 1.0e-9);
-  EXPECT_NEAR(recovered_map_from_base.yaw, map_from_base.yaw, 1.0e-9);
-}
-
 }  // namespace

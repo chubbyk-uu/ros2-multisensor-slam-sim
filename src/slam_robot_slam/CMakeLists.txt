@@ -13,6 +13,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -140,6 +141,7 @@ target_link_libraries(
 )
 ament_target_dependencies(
   scan_matcher_odometry_node
+  builtin_interfaces
   geometry_msgs
   nav_msgs
   rclcpp
@@ -207,6 +209,12 @@ if(BUILD_TESTING)
     laser_scan_preprocessor
     point_to_line_icp
   )
+
+  ament_add_gtest(
+    test_pose2d
+    test/test_pose2d.cpp
+  )
+  target_link_libraries(test_pose2d pose2d)
 
   ament_add_gtest(
     test_correlative_scan_matcher

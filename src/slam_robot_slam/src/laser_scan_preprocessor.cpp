@@ -7,14 +7,35 @@
 namespace slam_robot_slam
 {
 
+bool hasValidLaserScanMetadata(
+  const sensor_msgs::msg::LaserScan & scan)
+{
+  return std::isfinite(scan.angle_min) &&
+         std::isfinite(scan.angle_max) &&
+         std::isfinite(scan.angle_increment) &&
+         scan.angle_increment != 0.0F &&
+         std::isfinite(scan.range_min) &&
+         std::isfinite(scan.range_max) &&
+         scan.range_min >= 0.0F &&
+         scan.range_max > scan.range_min;
+}
+
 std::vector<Point2D> projectLaserScan(
   const sensor_msgs::msg::LaserScan & scan,
   const double minimum_range,
   const double maximum_range,
   const std::size_t point_stride)
 {
-  if (point_stride == 0U) {
-    throw std::invalid_argument("point_stride must be greater than zero");
+  if (!std::isfinite(minimum_range) ||
+    !std::isfinite(maximum_range) ||
+    minimum_range < 0.0 ||
+    maximum_range <= minimum_range ||
+    point_stride == 0U)
+  {
+    throw std::invalid_argument("Invalid laser projection parameters");
+  }
+  if (!hasValidLaserScanMetadata(scan)) {
+    return {};
   }
 
   const double effective_minimum =

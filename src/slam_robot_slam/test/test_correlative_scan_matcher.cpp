@@ -1,4 +1,5 @@
 #include <cmath>
+#include <limits>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -98,6 +99,27 @@ TEST(CorrelativeScanMatcher, RejectsInvalidParameters)
       makeRoomCorner(),
       slam_robot_slam::Pose2D{},
       parameters),
+    std::invalid_argument);
+
+  parameters = slam_robot_slam::CorrelativeScanMatcherParameters{};
+  parameters.minimum_score =
+    std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW(
+    slam_robot_slam::validateCorrelativeScanMatcherParameters(parameters),
+    std::invalid_argument);
+}
+
+TEST(CorrelativeScanMatcher, RejectsNonFinitePoints)
+{
+  auto current = makeRoomCorner();
+  current.front().x = std::numeric_limits<float>::quiet_NaN();
+
+  EXPECT_THROW(
+    slam_robot_slam::matchCorrelative(
+      makeRoomCorner(),
+      current,
+      slam_robot_slam::Pose2D{},
+      slam_robot_slam::CorrelativeScanMatcherParameters{}),
     std::invalid_argument);
 }
 

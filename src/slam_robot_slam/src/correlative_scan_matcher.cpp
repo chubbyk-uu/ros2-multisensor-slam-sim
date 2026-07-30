@@ -151,28 +151,6 @@ struct CandidateScore
   std::size_t matched_points{0U};
 };
 
-void validateParameters(
-  const CorrelativeScanMatcherParameters & parameters)
-{
-  if (parameters.grid_resolution <= 0.0 ||
-    parameters.smear_deviation <= 0.0 ||
-    parameters.linear_search_window < 0.0 ||
-    parameters.angular_search_window < 0.0 ||
-    parameters.coarse_linear_resolution <= 0.0 ||
-    parameters.coarse_angular_resolution <= 0.0 ||
-    parameters.fine_linear_resolution <= 0.0 ||
-    parameters.fine_angular_resolution <= 0.0 ||
-    parameters.translation_penalty_weight < 0.0 ||
-    parameters.rotation_penalty_weight < 0.0 ||
-    parameters.minimum_score < 0.0 ||
-    parameters.minimum_score > 1.0 ||
-    parameters.minimum_matched_points == 0U)
-  {
-    throw std::invalid_argument(
-            "Invalid correlative scan matcher parameters");
-  }
-}
-
 CandidateScore scoreCandidate(
   const CorrelationGrid & grid,
   const std::vector<Point2D> & current_points,
@@ -267,13 +245,61 @@ CandidateScore searchWindow(
 
 }  // namespace
 
+void validateCorrelativeScanMatcherParameters(
+  const CorrelativeScanMatcherParameters & parameters)
+{
+  if (!std::isfinite(parameters.grid_resolution) ||
+    !std::isfinite(parameters.smear_deviation) ||
+    !std::isfinite(parameters.linear_search_window) ||
+    !std::isfinite(parameters.angular_search_window) ||
+    !std::isfinite(parameters.coarse_linear_resolution) ||
+    !std::isfinite(parameters.coarse_angular_resolution) ||
+    !std::isfinite(parameters.fine_linear_resolution) ||
+    !std::isfinite(parameters.fine_angular_resolution) ||
+    !std::isfinite(parameters.translation_penalty_weight) ||
+    !std::isfinite(parameters.rotation_penalty_weight) ||
+    !std::isfinite(parameters.minimum_score) ||
+    parameters.grid_resolution <= 0.0 ||
+    parameters.smear_deviation <= 0.0 ||
+    parameters.linear_search_window < 0.0 ||
+    parameters.angular_search_window < 0.0 ||
+    parameters.coarse_linear_resolution <= 0.0 ||
+    parameters.coarse_angular_resolution <= 0.0 ||
+    parameters.fine_linear_resolution <= 0.0 ||
+    parameters.fine_angular_resolution <= 0.0 ||
+    parameters.translation_penalty_weight < 0.0 ||
+    parameters.rotation_penalty_weight < 0.0 ||
+    parameters.minimum_score < 0.0 ||
+    parameters.minimum_score > 1.0 ||
+    parameters.minimum_matched_points == 0U)
+  {
+    throw std::invalid_argument(
+            "Invalid correlative scan matcher parameters");
+  }
+}
+
 CorrelativeScanMatcherResult matchCorrelative(
   const std::vector<Point2D> & reference_points,
   const std::vector<Point2D> & current_points,
   const Pose2D & predicted_pose,
   const CorrelativeScanMatcherParameters & parameters)
 {
-  validateParameters(parameters);
+  validateCorrelativeScanMatcherParameters(parameters);
+  if (!isFinitePose(predicted_pose) ||
+    std::any_of(
+      reference_points.begin(), reference_points.end(),
+      [](const Point2D & point) {
+        return !std::isfinite(point.x) || !std::isfinite(point.y);
+      }) ||
+    std::any_of(
+      current_points.begin(), current_points.end(),
+      [](const Point2D & point) {
+        return !std::isfinite(point.x) || !std::isfinite(point.y);
+      }))
+  {
+    throw std::invalid_argument(
+            "Correlative scan matcher inputs must be finite");
+  }
   CorrelativeScanMatcherResult result;
   result.pose = predicted_pose;
   if (reference_points.empty() ||
