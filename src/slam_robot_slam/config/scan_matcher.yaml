@@ -1,0 +1,31 @@
+scan_matcher_odometry:
+  ros__parameters:
+    use_sim_time: true
+    scan_topic: /scan
+    odom_topic: /odom
+    laser_odom_topic: /custom_slam/laser_odom
+    laser_path_topic: /custom_slam/laser_path
+    aligned_points_topic: /custom_slam/aligned_scan_points
+    odom_frame: odom
+    base_frame: base_footprint
+    minimum_range: 0.12
+    maximum_range: 12.0
+    point_stride: 2
+    maximum_odom_age: 0.10
+    minimum_translation_for_update: 0.05
+    minimum_rotation_for_update: 0.05
+    maximum_local_keyframes: 20
+    maximum_path_poses: 10000
+    matcher:
+      grid_resolution: 0.02
+      smear_deviation: 0.10
+      linear_search_window: 0.15
+      angular_search_window: 0.20
+      coarse_linear_resolution: 0.02
+      coarse_angular_resolution: 0.02
+      fine_linear_resolution: 0.005
+      fine_angular_resolution: 0.005
+      translation_penalty_weight: 0.10
+      rotation_penalty_weight: 0.10
+      minimum_score: 0.35
+      minimum_matched_points: 40

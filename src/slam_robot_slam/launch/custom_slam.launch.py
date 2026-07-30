@@ -13,8 +13,16 @@ def generate_launch_description():
             "laser_preprocessor.yaml",
         ]
     )
+    default_scan_matcher_params_file = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_slam"),
+            "config",
+            "scan_matcher.yaml",
+        ]
+    )
 
     params_file = LaunchConfiguration("params_file")
+    scan_matcher_params_file = LaunchConfiguration("scan_matcher_params_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
 
     return LaunchDescription(
@@ -29,6 +37,11 @@ def generate_launch_description():
                 default_value="true",
                 description="Use simulation time.",
             ),
+            DeclareLaunchArgument(
+                "scan_matcher_params_file",
+                default_value=default_scan_matcher_params_file,
+                description="Correlative scan matcher parameter file.",
+            ),
             Node(
                 package="slam_robot_slam",
                 executable="laser_scan_preprocessor_node",
@@ -36,6 +49,16 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     params_file,
+                    {"use_sim_time": use_sim_time},
+                ],
+            ),
+            Node(
+                package="slam_robot_slam",
+                executable="scan_matcher_odometry_node",
+                name="scan_matcher_odometry",
+                output="screen",
+                parameters=[
+                    scan_matcher_params_file,
                     {"use_sim_time": use_sim_time},
                 ],
             ),

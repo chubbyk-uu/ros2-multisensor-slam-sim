@@ -22,7 +22,7 @@
 | 2D 激光建图 | 已完成 | SLAM Toolbox `online_async`、回环检测和退出时自动保存 |
 | 定位与导航 | 已完成 | Map Server、AMCL、Nav2 官方完整组件和 RViz |
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
-| 自研 C++ 2D SLAM | 进行中 | 已完成真值基准、rosbag 数据集和激光预处理 |
+| 自研 C++ 2D SLAM | 进行中 | 已完成真值基准、数据集、预处理和局部相关扫描匹配前端 |
 | 3D LiDAR / 视觉 / 融合 | 计划中 | 在 2D 基线稳定后逐步接入 |
 
 详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见 [docs/performance.md](docs/performance.md)。
@@ -234,12 +234,13 @@ ros2 run slam_robot_navigation navigation_regression.py \
 ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
-这个入口不会启动 SLAM Toolbox，也不会发布 `/map` 或 `map -> odom`。RViz 中红色点为原始 `/scan`，绿色点为自研节点输出的 `/custom_slam/scan_points`，两者应完全重合。
+这个入口不会启动 SLAM Toolbox，也不会发布 `/map` 或 `map -> odom`。RViz 中红色点为原始 `/scan`，绿色点为预处理后的 `/custom_slam/scan_points`，青色点为局部子图匹配后的扫描，黄色线为自研匹配轨迹。
 
 检查数据：
 
 ```bash
 ros2 topic hz /custom_slam/scan_points
+ros2 topic hz /custom_slam/laser_odom
 ros2 topic echo /custom_slam/scan_points --once --field header
 ros2 topic echo /ground_truth/odom --once
 ```
@@ -250,6 +251,26 @@ ros2 topic echo /ground_truth/odom --once
 - 按参数执行可选角度降采样。
 - 将极坐标 LaserScan 转换为 `lidar_link` 下的二维笛卡尔点集。
 - 发布标准 `sensor_msgs/PointCloud2`，供扫描匹配和 RViz 使用。
+
+当前扫描匹配前端参考 slam_toolbox/Karto 与 Cartographer 的成熟结构：
+
+- 使用轮式里程计作为搜索中心，不使用 Gazebo 真值。
+- 机器人至少移动 `0.05 m` 或转动 `0.05 rad` 后才建立新关键帧。
+- 将当前扫描与最近 20 个关键帧组成的局部相关栅格匹配。
+- 先在平移和转角窗口内粗搜索，再做小范围精搜索。
+- 根据相关分数和重合点数接受或拒绝匹配，失败时回退到里程计预测。
+- 发布 `/custom_slam/laser_odom`、`/custom_slam/laser_path` 和
+  `/custom_slam/aligned_scan_points`。
+
+自动执行固定路线并对比真值、轮式里程计和匹配轨迹：
+
+```bash
+ros2 run slam_robot_slam scan_matcher_benchmark
+```
+
+点到线 ICP 作为独立的算法对照和单元测试保留，不是默认运行前端。
+当前实现还没有发布占据栅格，也没有位姿图与回环，因此尚不是完整
+SLAM。
 
 录制可重复使用的 SLAM 数据集：
 
@@ -292,6 +313,8 @@ Gazebo world pose -> /ground_truth/odom（仅评估）
 robot_state_publisher -> /tf、/tf_static
 /scan + TF + /odom -> SLAM Toolbox -> /map、map -> odom
 /scan -> custom C++ preprocessing -> /custom_slam/scan_points
+/scan + /odom + TF -> local correlative matcher
+  -> /custom_slam/laser_odom、/custom_slam/laser_path
 saved map + /scan + TF -> AMCL / Nav2
 ```
 

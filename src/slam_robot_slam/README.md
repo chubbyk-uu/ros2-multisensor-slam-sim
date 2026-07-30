@@ -42,7 +42,7 @@ ros2 run slam_robot_slam save_slam_map \
 
 ## 自研 C++ SLAM
 
-当前第一阶段已实现：
+当前已实现激光预处理和局部扫描匹配前端：
 
 - LaserScan 有效量程、`NaN` 和 `Inf` 过滤。
 - 可配置的点间隔降采样。
@@ -50,7 +50,12 @@ ros2 run slam_robot_slam save_slam_map \
 - `/custom_slam/scan_points` PointCloud2 发布。
 - Gazebo `/ground_truth/odom` 真值评估基准。
 - MCAP rosbag 数据集录制入口。
-- 激光预处理单元测试。
+- 独立点到线 ICP 对照实现及单元测试。
+- 轮式里程计位姿预测和移动阈值过滤。
+- Karto 风格的相关栅格粗到细搜索。
+- 当前扫描到最近 20 个关键帧局部子图的匹配。
+- 匹配分数、最少重合点和失败回退机制。
+- 真值、轮式里程计和匹配轨迹自动对比工具。
 
 仿真已经运行时，可独立启动预处理节点：
 
@@ -64,7 +69,7 @@ ros2 launch slam_robot_slam custom_slam.launch.py
 ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
-专用 RViz 使用 `odom` 固定坐标系，以红色显示原始 `/scan`，以绿色显示过滤后的 `/custom_slam/scan_points`。当前阶段不会发布 `/map` 或 `map -> odom`，不会与 SLAM Toolbox 抢占 TF。
+专用 RViz 使用 `odom` 固定坐标系：红色为原始 `/scan`，绿色为预处理点集，青色为局部子图匹配后的扫描，黄色为匹配轨迹。当前阶段不会发布 `/map` 或 `map -> odom`，不会与 SLAM Toolbox 抢占 TF。
 
 参数位于 `config/laser_preprocessor.yaml`：
 
@@ -75,6 +80,36 @@ ros2 launch slam_robot_bringup custom_slam_development.launch.py
 | `minimum_range` | `0.12` | 最小有效距离，单位 m |
 | `maximum_range` | `12.0` | 最大有效距离，单位 m |
 | `point_stride` | `1` | 每隔多少个测量点取一个 |
+
+扫描匹配参数位于 `config/scan_matcher.yaml`。默认前端不是逐帧
+ICP，而是参考 slam_toolbox/Karto 和 Cartographer 的成熟结构：
+
+```text
+轮式里程计预测
+  -> 最小移动距离/转角过滤
+  -> 当前扫描与局部关键帧相关栅格粗匹配
+  -> 小范围精匹配
+  -> 分数与重合点检查
+  -> 激光轨迹
+```
+
+核心输出：
+
+| 话题 | 类型 | 说明 |
+| --- | --- | --- |
+| `/custom_slam/laser_odom` | `nav_msgs/Odometry` | 匹配前端估计位姿 |
+| `/custom_slam/laser_path` | `nav_msgs/Path` | 匹配轨迹 |
+| `/custom_slam/aligned_scan_points` | `sensor_msgs/PointCloud2` | 对齐到 `odom` 的当前扫描 |
+
+运行固定路线真值测试：
+
+```bash
+ros2 run slam_robot_slam scan_matcher_benchmark
+```
+
+测试工具只读取 `/ground_truth/odom` 计算误差，不会把真值反馈给匹配器。
+目前仍缺少全局占据栅格、位姿图优化和回环检测，因此这是 SLAM
+前端，不是完整的自研 SLAM。
 
 录制算法输入和真值：
 

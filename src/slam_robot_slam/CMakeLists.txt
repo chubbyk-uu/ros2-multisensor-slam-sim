@@ -2,8 +2,11 @@ cmake_minimum_required(VERSION 3.8)
 project(slam_robot_slam)
 
 find_package(ament_cmake REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,6 +22,46 @@ target_include_directories(laser_scan_preprocessor
 ament_target_dependencies(laser_scan_preprocessor sensor_msgs)
 target_compile_options(laser_scan_preprocessor PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(point_to_line_icp
+  src/point_to_line_icp.cpp
+)
+target_include_directories(point_to_line_icp
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+add_library(pose2d
+  src/pose2d.cpp
+)
+target_include_directories(pose2d
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(pose2d laser_scan_preprocessor)
+target_compile_options(pose2d PRIVATE -Wall -Wextra -Wpedantic)
+
+target_link_libraries(point_to_line_icp laser_scan_preprocessor pose2d)
+target_compile_options(point_to_line_icp PRIVATE -Wall -Wextra -Wpedantic)
+
+add_library(correlative_scan_matcher
+  src/correlative_scan_matcher.cpp
+)
+target_include_directories(correlative_scan_matcher
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(
+  correlative_scan_matcher
+  laser_scan_preprocessor
+  pose2d
+)
+target_compile_options(
+  correlative_scan_matcher
+  PRIVATE -Wall -Wextra -Wpedantic
+)
+
 add_executable(laser_scan_preprocessor_node
   src/laser_scan_preprocessor_node.cpp
 )
@@ -26,6 +69,28 @@ target_link_libraries(laser_scan_preprocessor_node laser_scan_preprocessor)
 ament_target_dependencies(laser_scan_preprocessor_node rclcpp sensor_msgs)
 target_compile_options(
   laser_scan_preprocessor_node
+  PRIVATE -Wall -Wextra -Wpedantic
+)
+
+add_executable(scan_matcher_odometry_node
+  src/scan_matcher_odometry_node.cpp
+)
+target_link_libraries(
+  scan_matcher_odometry_node
+  correlative_scan_matcher
+  laser_scan_preprocessor
+  pose2d
+)
+ament_target_dependencies(
+  scan_matcher_odometry_node
+  geometry_msgs
+  nav_msgs
+  rclcpp
+  sensor_msgs
+  tf2_ros
+)
+target_compile_options(
+  scan_matcher_odometry_node
   PRIVATE -Wall -Wextra -Wpedantic
 )
 
@@ -40,7 +105,13 @@ install(
 )
 
 install(
-  TARGETS laser_scan_preprocessor laser_scan_preprocessor_node
+  TARGETS
+    laser_scan_preprocessor
+    laser_scan_preprocessor_node
+    correlative_scan_matcher
+    point_to_line_icp
+    pose2d
+    scan_matcher_odometry_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -48,7 +119,9 @@ install(
 )
 
 install(
-  PROGRAMS scripts/save_slam_map
+  PROGRAMS
+    scripts/save_slam_map
+    scripts/scan_matcher_benchmark
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -64,6 +137,27 @@ if(BUILD_TESTING)
     laser_scan_preprocessor
   )
   ament_target_dependencies(test_laser_scan_preprocessor sensor_msgs)
+
+  ament_add_gtest(
+    test_point_to_line_icp
+    test/test_point_to_line_icp.cpp
+  )
+  target_link_libraries(
+    test_point_to_line_icp
+    laser_scan_preprocessor
+    point_to_line_icp
+  )
+
+  ament_add_gtest(
+    test_correlative_scan_matcher
+    test/test_correlative_scan_matcher.cpp
+  )
+  target_link_libraries(
+    test_correlative_scan_matcher
+    correlative_scan_matcher
+    laser_scan_preprocessor
+    pose2d
+  )
 endif()
 
 ament_package()
