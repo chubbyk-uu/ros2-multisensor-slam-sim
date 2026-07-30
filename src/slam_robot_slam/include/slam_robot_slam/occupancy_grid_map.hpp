@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "slam_robot_slam/laser_scan_preprocessor.hpp"
+#include "slam_robot_slam/point2d.hpp"
 
 namespace slam_robot_slam
 {

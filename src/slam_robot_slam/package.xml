@@ -6,7 +6,7 @@
   <version>0.1.0</version>
   <description>SLAM Toolbox configuration and custom C++ SLAM nodes.</description>
 
-  <maintainer email="jerry@example.com">Jerry</maintainer>
+  <maintainer email="dk.illidan@gmail.com">Jerry</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
@@ -30,6 +30,8 @@
   <exec_depend>libceres-dev</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

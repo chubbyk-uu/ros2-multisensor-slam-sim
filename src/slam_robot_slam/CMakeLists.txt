@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.10)
 project(slam_robot_slam)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -35,14 +35,6 @@ target_include_directories(laser_scan_preprocessor
 ament_target_dependencies(laser_scan_preprocessor sensor_msgs)
 target_compile_options(laser_scan_preprocessor PRIVATE -Wall -Wextra -Wpedantic)
 
-add_library(point_to_line_icp
-  src/point_to_line_icp.cpp
-)
-target_include_directories(point_to_line_icp
-  PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
-)
 add_library(pose2d
   src/pose2d.cpp
 )
@@ -51,10 +43,17 @@ target_include_directories(pose2d
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(pose2d laser_scan_preprocessor)
 target_compile_options(pose2d PRIVATE -Wall -Wextra -Wpedantic)
 
-target_link_libraries(point_to_line_icp laser_scan_preprocessor pose2d)
+add_library(point_to_line_icp
+  src/point_to_line_icp.cpp
+)
+target_include_directories(point_to_line_icp
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(point_to_line_icp pose2d)
 target_compile_options(point_to_line_icp PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(correlative_scan_matcher
@@ -67,7 +66,6 @@ target_include_directories(correlative_scan_matcher
 )
 target_link_libraries(
   correlative_scan_matcher
-  laser_scan_preprocessor
   pose2d
 )
 target_compile_options(
@@ -83,7 +81,6 @@ target_include_directories(occupancy_grid_map
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(occupancy_grid_map laser_scan_preprocessor)
 target_compile_options(
   occupancy_grid_map
   PRIVATE -Wall -Wextra -Wpedantic
@@ -196,11 +193,16 @@ install(
     pose2d
     pose_graph_2d
     scan_matcher_odometry_node
+  EXPORT export_slam_robot_slam
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
   INCLUDES DESTINATION include
 )
+
+ament_export_targets(export_slam_robot_slam HAS_LIBRARY_TARGET)
+ament_export_include_directories(include)
+ament_export_dependencies(Ceres sensor_msgs)
 
 install(
   PROGRAMS
@@ -211,6 +213,12 @@ install(
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_lint_auto REQUIRED)
+  set(ament_cmake_copyright_FOUND TRUE)
+  set(ament_cmake_cpplint_FOUND TRUE)
+  set(ament_cmake_flake8_FOUND TRUE)
+  set(ament_cmake_xmllint_FOUND TRUE)
+  ament_lint_auto_find_test_dependencies()
 
   ament_add_gtest(
     test_laser_scan_preprocessor

@@ -62,8 +62,10 @@ scan_matcher_odometry:
         smear_deviation: 0.10
         linear_search_window: 0.60
         angular_search_window: 0.50
-        coarse_linear_resolution: 0.05
-        coarse_angular_resolution: 0.05
+        coarse_linear_resolution: 0.10
+        coarse_angular_resolution: 0.10
+        fine_linear_window: 0.05
+        fine_angular_window: 0.05
         fine_linear_resolution: 0.01
         fine_angular_resolution: 0.01
         translation_penalty_weight: 0.05
@@ -76,8 +78,10 @@ scan_matcher_odometry:
       smear_deviation: 0.10
       linear_search_window: 0.15
       angular_search_window: 0.20
-      coarse_linear_resolution: 0.02
-      coarse_angular_resolution: 0.02
+      coarse_linear_resolution: 0.04
+      coarse_angular_resolution: 0.04
+      fine_linear_window: 0.02
+      fine_angular_window: 0.02
       fine_linear_resolution: 0.005
       fine_angular_resolution: 0.005
       translation_penalty_weight: 0.10

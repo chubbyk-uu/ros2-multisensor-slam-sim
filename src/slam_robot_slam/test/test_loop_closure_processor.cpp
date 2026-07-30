@@ -18,14 +18,14 @@ std::vector<Point2D> makeCornerScan()
   for (int index = 0; index <= 80; ++index) {
     points.push_back(
       Point2D{
-        3.0F,
-        static_cast<float>(-2.0 + 0.05 * index)});
+          3.0F,
+          static_cast<float>(-2.0 + 0.05 * index)});
   }
   for (int index = 1; index <= 100; ++index) {
     points.push_back(
       Point2D{
-        static_cast<float>(3.0 - 0.05 * index),
-        2.0F});
+          static_cast<float>(3.0 - 0.05 * index),
+          2.0F});
   }
   return points;
 }
@@ -39,12 +39,12 @@ PoseGraph2D makeLoopGraph(const std::vector<Pose2D> & poses)
   for (std::size_t index = 1U; index < poses.size(); ++index) {
     graph.addConstraint(
       PoseGraphConstraint{
-        index - 1U,
-        index,
-        relativePose(poses[index - 1U], poses[index]),
-        20.0,
-        20.0,
-        PoseGraphConstraintType::kSequential});
+          index - 1U,
+          index,
+          relativePose(poses[index - 1U], poses[index]),
+          20.0,
+          20.0,
+          PoseGraphConstraintType::kSequential});
   }
   return graph;
 }
@@ -67,9 +67,9 @@ TEST(LoopClosureProcessor, MatchesAndOptimizesGraphCopy)
     }
     keyframes.push_back(
       LoopClosureKeyframe2D{
-        poses[index],
-        accumulated_distance,
-        std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
+          poses[index],
+          accumulated_distance,
+          std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
   }
   PoseGraph2D graph = makeLoopGraph(poses);
   const std::size_t original_constraint_count = graph.constraints().size();
@@ -128,9 +128,9 @@ TEST(LoopClosureProcessor, RejectsImplausiblyLargeCorrection)
   for (std::size_t index = 0U; index < poses.size(); ++index) {
     keyframes.push_back(
       LoopClosureKeyframe2D{
-        poses[index],
-        static_cast<double>(index),
-        std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
+          poses[index],
+          static_cast<double>(index),
+          std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
   }
   LoopClosureProcessorParameters parameters;
   parameters.candidate.minimum_keyframe_separation = 2U;

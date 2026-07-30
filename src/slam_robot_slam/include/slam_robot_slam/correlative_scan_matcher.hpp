@@ -15,8 +15,10 @@ struct CorrelativeScanMatcherParameters
   double smear_deviation{0.10};
   double linear_search_window{0.15};
   double angular_search_window{0.20};
-  double coarse_linear_resolution{0.02};
-  double coarse_angular_resolution{0.02};
+  double coarse_linear_resolution{0.04};
+  double coarse_angular_resolution{0.04};
+  double fine_linear_window{0.02};
+  double fine_angular_window{0.02};
   double fine_linear_resolution{0.005};
   double fine_angular_resolution{0.005};
   double translation_penalty_weight{0.10};

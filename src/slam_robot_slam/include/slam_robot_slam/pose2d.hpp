@@ -1,7 +1,7 @@
 #ifndef SLAM_ROBOT_SLAM__POSE2D_HPP_
 #define SLAM_ROBOT_SLAM__POSE2D_HPP_
 
-#include "slam_robot_slam/laser_scan_preprocessor.hpp"
+#include "slam_robot_slam/point2d.hpp"
 
 namespace slam_robot_slam
 {

@@ -5,15 +5,10 @@
 #include <vector>
 
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "slam_robot_slam/point2d.hpp"
 
 namespace slam_robot_slam
 {
-
-struct Point2D
-{
-  float x;
-  float y;
-};
 
 bool hasValidLaserScanMetadata(
   const sensor_msgs::msg::LaserScan & scan);

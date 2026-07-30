@@ -6,10 +6,13 @@
   <version>0.1.0</version>
   <description>Top-level launch and configuration package for the SLAM simulation robot.</description>
 
-  <maintainer email="jerry@example.com">Jerry</maintainer>
+  <maintainer email="dk.illidan@gmail.com">Jerry</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

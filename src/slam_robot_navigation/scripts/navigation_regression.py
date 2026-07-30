@@ -5,6 +5,8 @@ import math
 import time
 
 import rclpy
+from lifecycle_msgs.srv import GetState
+from rclpy.parameter import Parameter
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav2_msgs.msg import CollisionMonitorState
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
@@ -156,16 +158,53 @@ class NavigationRegression:
         pose.pose.orientation.w = math.cos(yaw / 2.0)
         return pose
 
+    def simulation_time(self):
+        return self.navigator.get_clock().now().nanoseconds * 1.0e-9
+
+    def wait_until_nav2_active(self, timeout):
+        deadline = time.monotonic() + timeout
+        for node_name in ("amcl", "bt_navigator"):
+            client = self.navigator.create_client(
+                GetState,
+                f"/{node_name}/get_state",
+            )
+            state = "unknown"
+            while state != "active":
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                if not client.wait_for_service(
+                    timeout_sec=min(0.5, remaining)
+                ):
+                    continue
+                future = client.call_async(GetState.Request())
+                while not future.done() and time.monotonic() < deadline:
+                    rclpy.spin_once(self.navigator, timeout_sec=0.1)
+                if future.done() and future.result() is not None:
+                    state = future.result().current_state.label
+
+            if node_name == "amcl":
+                while (
+                    not self.navigator.initial_pose_received
+                    and time.monotonic() < deadline
+                ):
+                    self.navigator._setInitialPose()
+                    rclpy.spin_once(self.navigator, timeout_sec=0.5)
+                if not self.navigator.initial_pose_received:
+                    return False
+        return True
+
     def run(self, route, timeout):
         poses = [self.make_pose(*waypoint) for waypoint in route]
         goal = poses[-1].pose
-        start_time = time.monotonic()
+        start_simulation_time = self.simulation_time()
+        start_wall_time = time.monotonic()
         max_recoveries = 0
         last_distance = math.nan
 
         for index, pose in enumerate(poses, start=1):
-            segment_start = time.monotonic()
-            last_report_time = segment_start - 5.0
+            segment_start = self.simulation_time()
+            last_report_time = time.monotonic() - 5.0
             print(
                 f"waypoint {index}/{len(poses)}: "
                 f"goal=({pose.pose.position.x:.2f}, "
@@ -175,7 +214,8 @@ class NavigationRegression:
             if not self.navigator.goToPose(pose):
                 return {
                     "result": "REJECTED",
-                    "elapsed": time.monotonic() - start_time,
+                    "elapsed": self.simulation_time()
+                    - start_simulation_time,
                     "remaining": last_distance,
                     "recoveries": max_recoveries,
                     "goal_error": math.nan,
@@ -184,6 +224,9 @@ class NavigationRegression:
 
             while not self.navigator.isTaskComplete():
                 now = time.monotonic()
+                simulation_elapsed = (
+                    self.simulation_time() - start_simulation_time
+                )
                 feedback = self.navigator.getFeedback()
                 if feedback is not None:
                     max_recoveries = max(
@@ -202,11 +245,21 @@ class NavigationRegression:
                         )
                         last_report_time = now
 
-                if now - start_time > timeout:
+                if simulation_elapsed > timeout:
                     self.navigator.cancelTask()
                     return {
                         "result": "TIMEOUT",
-                        "elapsed": now - start_time,
+                        "elapsed": simulation_elapsed,
+                        "remaining": last_distance,
+                        "recoveries": max_recoveries,
+                        "goal_error": math.nan,
+                        "failed_waypoint": index,
+                    }
+                if now - start_wall_time > max(timeout * 5.0, timeout + 120.0):
+                    self.navigator.cancelTask()
+                    return {
+                        "result": "WALL_WATCHDOG_TIMEOUT",
+                        "elapsed": simulation_elapsed,
                         "remaining": last_distance,
                         "recoveries": max_recoveries,
                         "goal_error": math.nan,
@@ -221,7 +274,8 @@ class NavigationRegression:
                 }.get(segment_result, "UNKNOWN")
                 return {
                     "result": result_name,
-                    "elapsed": time.monotonic() - start_time,
+                    "elapsed": self.simulation_time()
+                    - start_simulation_time,
                     "remaining": last_distance,
                     "recoveries": max_recoveries,
                     "goal_error": math.nan,
@@ -229,11 +283,12 @@ class NavigationRegression:
                 }
 
             print(
-                f"  reached in {time.monotonic() - segment_start:.1f} s",
+                f"  reached in "
+                f"{self.simulation_time() - segment_start:.1f} sim s",
                 flush=True,
             )
 
-        elapsed = time.monotonic() - start_time
+        elapsed = self.simulation_time() - start_simulation_time
         rclpy.spin_once(self.navigator, timeout_sec=0.2)
         goal_error = math.nan
         if self.latest_amcl_pose is not None:
@@ -308,8 +363,9 @@ class NavigationRegression:
         # Remove an entity left behind by an interrupted previous test.
         self.delete_obstacle()
         goal_pose = self.make_pose(*DYNAMIC_GOAL)
-        start_time = time.monotonic()
-        last_report_time = start_time - 5.0
+        start_simulation_time = self.simulation_time()
+        start_wall_time = time.monotonic()
+        last_report_time = start_wall_time - 5.0
         max_recoveries = 0
         last_distance = math.nan
 
@@ -330,6 +386,9 @@ class NavigationRegression:
 
         while not self.navigator.isTaskComplete():
             now = time.monotonic()
+            simulation_elapsed = (
+                self.simulation_time() - start_simulation_time
+            )
             feedback = self.navigator.getFeedback()
             if feedback is not None:
                 position = feedback.current_pose.pose.position
@@ -344,7 +403,7 @@ class NavigationRegression:
                         self.navigator.cancelTask()
                         return {
                             "result": "SPAWN_FAILED",
-                            "elapsed": now - start_time,
+                            "elapsed": simulation_elapsed,
                             "remaining": last_distance,
                             "recoveries": max_recoveries,
                             "goal_error": math.nan,
@@ -385,17 +444,26 @@ class NavigationRegression:
                     )
                     last_report_time = now
 
-            if now - start_time > timeout:
+            if simulation_elapsed > timeout:
                 self.navigator.cancelTask()
                 return {
                     "result": "TIMEOUT",
-                    "elapsed": now - start_time,
+                    "elapsed": simulation_elapsed,
+                    "remaining": last_distance,
+                    "recoveries": max_recoveries,
+                    "goal_error": math.nan,
+                }
+            if now - start_wall_time > max(timeout * 5.0, timeout + 120.0):
+                self.navigator.cancelTask()
+                return {
+                    "result": "WALL_WATCHDOG_TIMEOUT",
+                    "elapsed": simulation_elapsed,
                     "remaining": last_distance,
                     "recoveries": max_recoveries,
                     "goal_error": math.nan,
                 }
 
-        elapsed = time.monotonic() - start_time
+        elapsed = self.simulation_time() - start_simulation_time
         task_result = self.navigator.getResult()
         result_name = {
             TaskResult.SUCCEEDED: "SUCCEEDED",
@@ -441,7 +509,13 @@ def parse_arguments():
         "--timeout",
         type=float,
         default=300.0,
-        help="Wall-clock timeout in seconds (default: 300).",
+        help="Simulation-time timeout in seconds (default: 300).",
+    )
+    parser.add_argument(
+        "--activation-timeout",
+        type=float,
+        default=120.0,
+        help="Wall-clock timeout while waiting for Nav2 (default: 120).",
     )
     return parser.parse_args()
 
@@ -450,11 +524,17 @@ def main():
     args = parse_arguments()
     rclpy.init()
     navigator = BasicNavigator("navigation_regression")
+    navigator.set_parameters(
+        [Parameter("use_sim_time", Parameter.Type.BOOL, True)]
+    )
     regression = NavigationRegression(navigator)
 
     try:
         print("waiting for Nav2 and the AMCL initial pose...", flush=True)
-        navigator.waitUntilNav2Active()
+        if not regression.wait_until_nav2_active(args.activation_timeout):
+            raise RuntimeError(
+                "Nav2 did not become active before the activation timeout"
+            )
         if args.scenario == "multi-goal":
             print(f"sending {len(DEFAULT_ROUTE)} navigation poses", flush=True)
             result = regression.run(DEFAULT_ROUTE, args.timeout)

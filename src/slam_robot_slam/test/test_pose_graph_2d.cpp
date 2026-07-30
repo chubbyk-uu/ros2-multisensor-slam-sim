@@ -59,12 +59,12 @@ TEST(PoseGraph2D, LoopClosureReducesAccumulatedDrift)
     sequentialConstraint(2U, 3U, Pose2D{1.1, 0.0, 0.0}));
   graph.addConstraint(
     PoseGraphConstraint{
-      3U,
-      0U,
-      Pose2D{-3.0, 0.0, 0.0},
-      30.0,
-      30.0,
-      PoseGraphConstraintType::kLoopClosure});
+        3U,
+        0U,
+        Pose2D{-3.0, 0.0, 0.0},
+        30.0,
+        30.0,
+        PoseGraphConstraintType::kLoopClosure});
 
   const double error_before =
     std::abs(relativePose(
@@ -116,12 +116,12 @@ TEST(PoseGraph2D, RobustLoopKernelLimitsOutlierInfluence)
     sequentialConstraint(1U, 2U, Pose2D{1.0, 0.0, 0.0}));
   graph.addConstraint(
     PoseGraphConstraint{
-      2U,
-      0U,
-      Pose2D{-20.0, 0.0, 0.0},
-      20.0,
-      20.0,
-      PoseGraphConstraintType::kLoopClosure});
+        2U,
+        0U,
+        Pose2D{-20.0, 0.0, 0.0},
+        20.0,
+        20.0,
+        PoseGraphConstraintType::kLoopClosure});
 
   PoseGraphOptimizationOptions options;
   options.loop_closure_huber_scale = 0.5;
@@ -166,8 +166,8 @@ TEST(PoseGraph2D, ReplacesNodePosesAtomically)
 
   graph.setNodePoses(
     std::vector<Pose2D>{
-      Pose2D{0.0, 0.0, 0.0},
-      Pose2D{2.0, 1.0, 7.0}});
+        Pose2D{0.0, 0.0, 0.0},
+        Pose2D{2.0, 1.0, 7.0}});
   EXPECT_NEAR(graph.nodes()[1].pose.x, 2.0, 1.0e-12);
   EXPECT_NEAR(graph.nodes()[1].pose.yaw, normalizeAngle(7.0), 1.0e-12);
 

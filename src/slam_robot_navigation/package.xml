@@ -11,9 +11,13 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>nav2_simple_commander</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>

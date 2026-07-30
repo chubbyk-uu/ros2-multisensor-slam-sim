@@ -50,6 +50,8 @@ TEST(CorrelativeScanMatcher, RecoversPoseAgainstLocalMap)
   parameters.smear_deviation = 0.04;
   parameters.coarse_linear_resolution = 0.02;
   parameters.coarse_angular_resolution = 0.02;
+  parameters.fine_linear_window = 0.02;
+  parameters.fine_angular_window = 0.02;
   parameters.fine_linear_resolution = 0.005;
   parameters.fine_angular_resolution = 0.005;
   parameters.minimum_score = 0.50;

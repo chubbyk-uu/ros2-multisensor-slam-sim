@@ -266,6 +266,8 @@ void validateCorrelativeScanMatcherParameters(
     !std::isfinite(parameters.angular_search_window) ||
     !std::isfinite(parameters.coarse_linear_resolution) ||
     !std::isfinite(parameters.coarse_angular_resolution) ||
+    !std::isfinite(parameters.fine_linear_window) ||
+    !std::isfinite(parameters.fine_angular_window) ||
     !std::isfinite(parameters.fine_linear_resolution) ||
     !std::isfinite(parameters.fine_angular_resolution) ||
     !std::isfinite(parameters.translation_penalty_weight) ||
@@ -278,6 +280,8 @@ void validateCorrelativeScanMatcherParameters(
     parameters.angular_search_window < 0.0 ||
     parameters.coarse_linear_resolution <= 0.0 ||
     parameters.coarse_angular_resolution <= 0.0 ||
+    parameters.fine_linear_window < 0.0 ||
+    parameters.fine_angular_window < 0.0 ||
     parameters.fine_linear_resolution <= 0.0 ||
     parameters.fine_angular_resolution <= 0.0 ||
     parameters.translation_penalty_weight < 0.0 ||
@@ -343,8 +347,8 @@ CorrelativeScanMatcherResult matchCorrelative(
     current_points,
     best.pose,
     predicted_pose,
-    parameters.coarse_linear_resolution,
-    parameters.coarse_angular_resolution,
+    parameters.fine_linear_window,
+    parameters.fine_angular_window,
     parameters.fine_linear_resolution,
     parameters.fine_angular_resolution,
     parameters,

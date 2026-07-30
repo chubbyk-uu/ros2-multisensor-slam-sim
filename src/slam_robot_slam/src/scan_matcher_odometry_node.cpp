@@ -236,9 +236,13 @@ public:
     matcher_parameters_.angular_search_window =
       declare_parameter<double>("matcher.angular_search_window", 0.20);
     matcher_parameters_.coarse_linear_resolution =
-      declare_parameter<double>("matcher.coarse_linear_resolution", 0.02);
+      declare_parameter<double>("matcher.coarse_linear_resolution", 0.04);
     matcher_parameters_.coarse_angular_resolution =
-      declare_parameter<double>("matcher.coarse_angular_resolution", 0.02);
+      declare_parameter<double>("matcher.coarse_angular_resolution", 0.04);
+    matcher_parameters_.fine_linear_window =
+      declare_parameter<double>("matcher.fine_linear_window", 0.02);
+    matcher_parameters_.fine_angular_window =
+      declare_parameter<double>("matcher.fine_angular_window", 0.02);
     matcher_parameters_.fine_linear_resolution =
       declare_parameter<double>("matcher.fine_linear_resolution", 0.005);
     matcher_parameters_.fine_angular_resolution =
@@ -269,10 +273,16 @@ public:
       "loop_closure.matcher.angular_search_window", 0.50);
     loop_matcher_parameters_.coarse_linear_resolution =
       declare_parameter<double>(
-      "loop_closure.matcher.coarse_linear_resolution", 0.05);
+      "loop_closure.matcher.coarse_linear_resolution", 0.10);
     loop_matcher_parameters_.coarse_angular_resolution =
       declare_parameter<double>(
-      "loop_closure.matcher.coarse_angular_resolution", 0.05);
+      "loop_closure.matcher.coarse_angular_resolution", 0.10);
+    loop_matcher_parameters_.fine_linear_window =
+      declare_parameter<double>(
+      "loop_closure.matcher.fine_linear_window", 0.05);
+    loop_matcher_parameters_.fine_angular_window =
+      declare_parameter<double>(
+      "loop_closure.matcher.fine_angular_window", 0.05);
     loop_matcher_parameters_.fine_linear_resolution =
       declare_parameter<double>(
       "loop_closure.matcher.fine_linear_resolution", 0.01);
