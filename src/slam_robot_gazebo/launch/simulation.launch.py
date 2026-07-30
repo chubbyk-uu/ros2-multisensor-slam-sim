@@ -134,6 +134,16 @@ def generate_launch_description():
                 executable="parameter_bridge",
                 name="ros_gz_bridge",
                 output="screen",
+                arguments=[
+                    (
+                        "/world/slam_world/create@"
+                        "ros_gz_interfaces/srv/SpawnEntity"
+                    ),
+                    (
+                        "/world/slam_world/remove@"
+                        "ros_gz_interfaces/srv/DeleteEntity"
+                    ),
+                ],
                 parameters=[{"config_file": bridge_config_path}],
             ),
             Node(

@@ -39,6 +39,8 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
     use_wsl_gpu = LaunchConfiguration("use_wsl_gpu")
     wsl_gpu_adapter = LaunchConfiguration("wsl_gpu_adapter")
+    auto_save_map = LaunchConfiguration("auto_save_map")
+    map_output_prefix = LaunchConfiguration("map_output_prefix")
 
     return LaunchDescription(
         [
@@ -69,6 +71,18 @@ def generate_launch_description():
                 default_value="NVIDIA",
                 description="GPU adapter name selected by Mesa D3D12 in WSL.",
             ),
+            DeclareLaunchArgument(
+                "auto_save_map",
+                default_value="true",
+                description="Save the map and pose graph before shutdown.",
+            ),
+            DeclareLaunchArgument(
+                "map_output_prefix",
+                default_value=str(Path.cwd() / "maps" / "slam_map"),
+                description=(
+                    "Auto-save output path without a file extension."
+                ),
+            ),
             SetEnvironmentVariable(
                 "GALLIUM_DRIVER",
                 "d3d12",
@@ -91,7 +105,11 @@ def generate_launch_description():
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(mapping_launch),
-                launch_arguments={"use_sim_time": "true"}.items(),
+                launch_arguments={
+                    "use_sim_time": "true",
+                    "auto_save_map": auto_save_map,
+                    "map_output_prefix": map_output_prefix,
+                }.items(),
             ),
             Node(
                 package="rviz2",

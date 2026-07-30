@@ -1,6 +1,6 @@
 # slam_robot_bringup
 
-本包提供机器人仿真与 SLAM 的统一启动入口。
+本包提供机器人仿真、SLAM 和导航的统一启动入口。
 
 启动完整 2D 建图系统：
 
@@ -16,3 +16,11 @@ ros2 launch slam_robot_bringup mapping_simulation.launch.py
 ros2 launch slam_robot_bringup mapping_simulation.launch.py \
   gui:=false use_rviz:=false
 ```
+
+使用已保存地图启动 AMCL 和完整 Nav2：
+
+```bash
+ros2 launch slam_robot_bringup navigation_simulation.launch.py
+```
+
+默认地图为启动目录下的 `maps/slam_map.yaml`。该入口会自动在地图原点初始化 AMCL，并打开官方 Nav2 RViz；发送导航目标前应退出键盘遥控节点。

@@ -16,6 +16,7 @@
   <exec_depend>rviz2</exec_depend>
   <exec_depend>slam_robot_description</exec_depend>
   <exec_depend>slam_robot_gazebo</exec_depend>
+  <exec_depend>slam_robot_navigation</exec_depend>
   <exec_depend>slam_robot_slam</exec_depend>
   <exec_depend>teleop_twist_keyboard</exec_depend>
 

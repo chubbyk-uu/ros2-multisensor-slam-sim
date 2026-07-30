@@ -38,7 +38,9 @@ slam_toolbox:
     use_scan_matching: true
     use_scan_barycenter: true
     minimum_travel_distance: 0.15
-    minimum_travel_heading: 0.10
+    # At 0.5 rad/s with a 10 Hz LiDAR, 0.05 rad allows a scan match on
+    # each meaningful turn update and reduces transient scan-to-map offset.
+    minimum_travel_heading: 0.05
     check_min_dist_and_heading_precisely: true
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 12.0
