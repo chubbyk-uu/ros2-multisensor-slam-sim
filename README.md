@@ -235,6 +235,8 @@ ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
 这个入口不会启动 SLAM Toolbox，也不会发布 `/map` 或 `map -> odom`。RViz 中红色点为原始 `/scan`，绿色点为预处理后的 `/custom_slam/scan_points`，青色点为局部子图匹配后的扫描，黄色线为自研匹配轨迹。
+启动时会先等待 Gazebo 建立仿真时钟和 TF，再依次启动 RViz 与自研节点，
+避免点云在 RViz 的 TF 缓存尚未就绪时触发间歇性 `Message Filter` 错误。
 
 检查数据：
 

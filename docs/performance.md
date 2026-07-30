@@ -19,10 +19,16 @@ Linux 中单个进程的 CPU 百分比可以超过 100%，表示它同时占用�
 
 - Gazebo 物理循环：250 Hz。
 - 2D LiDAR：10 Hz。
-- 轮式里程计：约 28 Hz。
+- 轮式里程计与 `odom -> base_footprint`：50 Hz。
 - SLAM 地图更新周期：2 s。
 - Gazebo 不绘制 LiDAR 射线，激光仍通过 `/scan` 在 RViz 中显示。
 - RViz 默认关闭 TF 可视化，需要排查坐标系时可手动启用。
+
+里程计频率使用 50 Hz，是因为它既能整除 250 Hz 物理循环，也能与
+10 Hz LiDAR 周期对齐。此前请求 30 Hz 时，Gazebo 实际按 36 ms 周期发布
+TF，部分激光帧会比最新 TF 提前最多约 28 ms，导致 RViz 的
+`Message Filter` 状态在 `OK` 和 `Error` 之间闪烁。调整后实测 TF 周期
+稳定为 20 ms，连续 201 帧激光中没有出现时间戳领先 TF。
 
 Gazebo 的物理、传感器和场景管理仍主要运行在 CPU 上；GPU 负责 GUI 的三维渲染，因此启用 D3D12 不会让 Gazebo Server 的物理计算转移到 GPU。
 

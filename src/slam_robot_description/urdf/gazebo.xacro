@@ -71,7 +71,12 @@
       <tf_topic>/model/slam_robot/tf</tf_topic>
       <frame_id>odom</frame_id>
       <child_frame_id>base_footprint</child_frame_id>
-      <odom_publish_frequency>30</odom_publish_frequency>
+      <!--
+        50 Hz is an integer divisor of the 250 Hz physics update rate and
+        aligns with the 10 Hz LiDAR cadence. This prevents scans from
+        repeatedly arriving ahead of the odom TF sample needed by RViz.
+      -->
+      <odom_publish_frequency>50</odom_publish_frequency>
 
       <max_linear_velocity>0.60</max_linear_velocity>
       <min_linear_velocity>-0.60</min_linear_velocity>
@@ -102,7 +107,7 @@
       <odom_frame>world</odom_frame>
       <robot_base_frame>base_footprint</robot_base_frame>
       <odom_topic>/ground_truth/odom</odom_topic>
-      <odom_publish_frequency>30</odom_publish_frequency>
+      <odom_publish_frequency>50</odom_publish_frequency>
       <dimensions>2</dimensions>
     </plugin>
   </gazebo>

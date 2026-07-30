@@ -5,6 +5,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     SetEnvironmentVariable,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -39,6 +40,20 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
     use_wsl_gpu = LaunchConfiguration("use_wsl_gpu")
     wsl_gpu_adapter = LaunchConfiguration("wsl_gpu_adapter")
+
+    custom_slam = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(custom_slam_launch),
+        launch_arguments={"use_sim_time": "true"}.items(),
+    )
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        output="screen",
+        condition=IfCondition(use_rviz),
+        arguments=["-d", rviz_config],
+        parameters=[{"use_sim_time": True}],
+    )
 
     return LaunchDescription(
         [
@@ -87,18 +102,12 @@ def generate_launch_description():
                     "wsl_gpu_adapter": wsl_gpu_adapter,
                 }.items(),
             ),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(custom_slam_launch),
-                launch_arguments={"use_sim_time": "true"}.items(),
-            ),
-            Node(
-                package="rviz2",
-                executable="rviz2",
-                name="rviz2",
-                output="screen",
-                condition=IfCondition(use_rviz),
-                arguments=["-d", rviz_config],
-                parameters=[{"use_sim_time": True}],
+            # Let Gazebo spawn the robot and begin publishing TF first.
+            # RViz then fills its TF cache before filtered clouds are emitted.
+            TimerAction(period=2.0, actions=[rviz]),
+            TimerAction(
+                period=2.5,
+                actions=[custom_slam],
             ),
         ]
     )
