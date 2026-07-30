@@ -118,6 +118,11 @@ public:
       static_cast<std::size_t>(grid_x)];
   }
 
+  bool supports(const Point2D & point) const
+  {
+    return contains(worldToGridX(point.x), worldToGridY(point.y));
+  }
+
 private:
   int worldToGridX(const double x) const
   {
@@ -149,6 +154,7 @@ struct CandidateScore
   Pose2D pose;
   double score{-std::numeric_limits<double>::infinity()};
   std::size_t matched_points{0U};
+  std::size_t supported_points{0U};
 };
 
 CandidateScore scoreCandidate(
@@ -160,6 +166,7 @@ CandidateScore scoreCandidate(
 {
   double likelihood_sum = 0.0;
   std::size_t matched_points = 0U;
+  std::size_t supported_points = 0U;
   const double cosine = std::cos(candidate.yaw);
   const double sine = std::sin(candidate.yaw);
   for (const auto & point : current_points) {
@@ -171,6 +178,9 @@ CandidateScore scoreCandidate(
         sine * static_cast<double>(point.x) +
         cosine * static_cast<double>(point.y) + candidate.y)};
     const float likelihood = grid.likelihood(transformed);
+    if (grid.supports(transformed)) {
+      ++supported_points;
+    }
     likelihood_sum += static_cast<double>(likelihood);
     if (likelihood > 0.01F) {
       ++matched_points;
@@ -178,7 +188,8 @@ CandidateScore scoreCandidate(
   }
 
   const double raw_score =
-    likelihood_sum / static_cast<double>(current_points.size());
+    supported_points > 0U ?
+    likelihood_sum / static_cast<double>(supported_points) : 0.0;
   const double translation_offset =
     std::hypot(
     candidate.x - predicted_pose.x,
@@ -199,7 +210,8 @@ CandidateScore scoreCandidate(
   return CandidateScore{
     candidate,
     raw_score * penalty,
-    matched_points};
+    matched_points,
+    supported_points};
 }
 
 CandidateScore searchWindow(
@@ -259,6 +271,7 @@ void validateCorrelativeScanMatcherParameters(
     !std::isfinite(parameters.translation_penalty_weight) ||
     !std::isfinite(parameters.rotation_penalty_weight) ||
     !std::isfinite(parameters.minimum_score) ||
+    !std::isfinite(parameters.minimum_support_fraction) ||
     parameters.grid_resolution <= 0.0 ||
     parameters.smear_deviation <= 0.0 ||
     parameters.linear_search_window < 0.0 ||
@@ -271,6 +284,8 @@ void validateCorrelativeScanMatcherParameters(
     parameters.rotation_penalty_weight < 0.0 ||
     parameters.minimum_score < 0.0 ||
     parameters.minimum_score > 1.0 ||
+    parameters.minimum_support_fraction <= 0.0 ||
+    parameters.minimum_support_fraction > 1.0 ||
     parameters.minimum_matched_points == 0U)
   {
     throw std::invalid_argument(
@@ -338,8 +353,13 @@ CorrelativeScanMatcherResult matchCorrelative(
   result.pose = best.pose;
   result.score = best.score;
   result.matched_points = best.matched_points;
+  result.supported_points = best.supported_points;
+  result.support_fraction =
+    static_cast<double>(best.supported_points) /
+    static_cast<double>(current_points.size());
   result.success =
     best.score >= parameters.minimum_score &&
+    result.support_fraction >= parameters.minimum_support_fraction &&
     best.matched_points >= parameters.minimum_matched_points;
   return result;
 }

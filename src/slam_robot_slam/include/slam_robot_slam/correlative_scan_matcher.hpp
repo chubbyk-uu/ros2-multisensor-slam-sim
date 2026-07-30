@@ -22,6 +22,7 @@ struct CorrelativeScanMatcherParameters
   double translation_penalty_weight{0.10};
   double rotation_penalty_weight{0.10};
   double minimum_score{0.35};
+  double minimum_support_fraction{0.25};
   std::size_t minimum_matched_points{40U};
 };
 
@@ -31,6 +32,8 @@ struct CorrelativeScanMatcherResult
   bool success{false};
   double score{0.0};
   std::size_t matched_points{0U};
+  std::size_t supported_points{0U};
+  double support_fraction{0.0};
   std::size_t evaluated_candidates{0U};
 };
 

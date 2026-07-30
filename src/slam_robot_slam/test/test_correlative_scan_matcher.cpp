@@ -65,6 +65,7 @@ TEST(CorrelativeScanMatcher, RecoversPoseAgainstLocalMap)
   EXPECT_NEAR(result.pose.y, expected.y, 0.011);
   EXPECT_NEAR(result.pose.yaw, expected.yaw, 0.011);
   EXPECT_GT(result.score, 0.80);
+  EXPECT_GT(result.support_fraction, 0.90);
   EXPECT_GT(result.evaluated_candidates, 1000U);
 }
 
@@ -88,6 +89,33 @@ TEST(CorrelativeScanMatcher, RejectsScanWithoutOverlap)
   EXPECT_EQ(result.matched_points, 0U);
 }
 
+TEST(CorrelativeScanMatcher, ScoresSupportedOverlapSeparately)
+{
+  const auto reference = makeRoomCorner();
+  std::vector<slam_robot_slam::Point2D> current = reference;
+  for (int index = 0; index < 200; ++index) {
+    current.push_back(
+      slam_robot_slam::Point2D{
+        20.0F + static_cast<float>(index) * 0.01F,
+        20.0F});
+  }
+
+  slam_robot_slam::CorrelativeScanMatcherParameters parameters;
+  parameters.minimum_score = 0.8;
+  parameters.minimum_support_fraction = 0.4;
+  parameters.minimum_matched_points = 100U;
+  const auto result = slam_robot_slam::matchCorrelative(
+    reference,
+    current,
+    slam_robot_slam::Pose2D{},
+    parameters);
+
+  EXPECT_TRUE(result.success);
+  EXPECT_GT(result.score, 0.9);
+  EXPECT_GT(result.support_fraction, 0.4);
+  EXPECT_LT(result.support_fraction, 0.6);
+}
+
 TEST(CorrelativeScanMatcher, RejectsInvalidParameters)
 {
   slam_robot_slam::CorrelativeScanMatcherParameters parameters;
@@ -104,6 +132,12 @@ TEST(CorrelativeScanMatcher, RejectsInvalidParameters)
   parameters = slam_robot_slam::CorrelativeScanMatcherParameters{};
   parameters.minimum_score =
     std::numeric_limits<double>::quiet_NaN();
+  EXPECT_THROW(
+    slam_robot_slam::validateCorrelativeScanMatcherParameters(parameters),
+    std::invalid_argument);
+
+  parameters = slam_robot_slam::CorrelativeScanMatcherParameters{};
+  parameters.minimum_support_fraction = 0.0;
   EXPECT_THROW(
     slam_robot_slam::validateCorrelativeScanMatcherParameters(parameters),
     std::invalid_argument);

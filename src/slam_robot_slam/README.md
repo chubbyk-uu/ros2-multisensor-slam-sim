@@ -55,6 +55,7 @@ ros2 run slam_robot_slam save_slam_map \
 - Karto 风格的相关栅格粗到细搜索。
 - 当前扫描到最近 20 个关键帧局部子图的匹配。
 - 匹配分数、最少重合点和失败回退机制。
+- 将相关分数限定在有局部子图支撑的点上，并独立检查支撑点占比。
 - 基于关键帧的射线清空、末端占用和 log-odds 概率更新。
 - 自动扩展的 0.05 m 分辨率占据栅格。
 - 保存全部成功关键帧，最近 20 帧只用于局部匹配。
@@ -159,13 +160,18 @@ base_footprint -> lidar_link  robot_state_publisher
 | `map.maximum_probability` | `0.97` | log-odds 累积上限 |
 | `pose_graph.sequential_translation_stddev` | `0.05` | 顺序边平移标准差，单位 m |
 | `pose_graph.sequential_rotation_stddev` | `0.05` | 顺序边旋转标准差，单位 rad |
-| `loop_closure.minimum_keyframe_separation` | `80` | 当前帧与候选的最小关键帧间隔 |
+| `loop_closure.minimum_keyframe_separation` | `30` | 当前帧与候选的最小关键帧间隔 |
+| `loop_closure.minimum_travel_distance` | `3.0` | 当前帧与候选间的最小累计行程，单位 m |
 | `loop_closure.check_interval` | `10` | 每隔多少个关键帧检查一次回环 |
 | `loop_closure.minimum_loop_closure_interval` | `30` | 两次已接受回环的最小关键帧间隔 |
-| `loop_closure.search_radius` | `0.8` | 历史候选搜索半径，单位 m |
+| `loop_closure.search_radius` | `0.6` | 历史候选搜索半径，单位 m |
 | `loop_closure.maximum_candidates` | `3` | 每次最多验证的最近候选数 |
 | `loop_closure.candidate_submap_half_width` | `5` | 候选前后用于子地图的关键帧数 |
+| `loop_closure.minimum_candidate_chain_size` | `3` | 候选附近要求的连续历史节点数 |
+| `loop_closure.maximum_correction_translation` | `0.50` | 回环最大平移修正，单位 m |
+| `loop_closure.maximum_correction_rotation` | `0.50` | 回环最大旋转修正，单位 rad |
 | `loop_closure.matcher.minimum_score` | `0.55` | 回环匹配的最小相关分数 |
+| `loop_closure.matcher.minimum_support_fraction` | `0.50` | 回环扫描最小子图支撑占比 |
 | `loop_closure.matcher.minimum_matched_points` | `100` | 回环匹配的最少重合点 |
 
 运行固定路线真值测试：

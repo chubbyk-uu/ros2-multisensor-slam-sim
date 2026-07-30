@@ -15,6 +15,7 @@ namespace slam_robot_slam
 struct LoopClosureKeyframe2D
 {
   Pose2D pose;
+  double accumulated_distance{0.0};
   std::shared_ptr<const std::vector<Point2D>> points;
 };
 
@@ -23,6 +24,9 @@ struct LoopClosureProcessorParameters
   LoopClosureCandidateParameters candidate;
   std::size_t candidate_submap_half_width{5U};
   CorrelativeScanMatcherParameters matcher;
+  std::size_t minimum_candidate_chain_size{3U};
+  double maximum_correction_translation{0.50};
+  double maximum_correction_rotation{0.50};
   double translation_weight{20.0};
   double rotation_weight{20.0};
   PoseGraphOptimizationOptions optimization;

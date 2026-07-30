@@ -8,10 +8,13 @@ namespace slam_robot_slam
 {
 std::vector<LoopClosureCandidate> findLoopClosureCandidates(
   const std::vector<Pose2D> & poses,
+  const std::vector<double> & accumulated_distances,
   const std::size_t current_keyframe_id,
   const LoopClosureCandidateParameters & parameters)
 {
   if (parameters.minimum_keyframe_separation == 0U ||
+    !std::isfinite(parameters.minimum_travel_distance) ||
+    parameters.minimum_travel_distance <= 0.0 ||
     !std::isfinite(parameters.search_radius) ||
     parameters.search_radius <= 0.0 ||
     parameters.maximum_candidates == 0U)
@@ -20,6 +23,23 @@ std::vector<LoopClosureCandidate> findLoopClosureCandidates(
   }
   if (current_keyframe_id >= poses.size()) {
     throw std::out_of_range("Current loop closure keyframe does not exist");
+  }
+  if (accumulated_distances.size() != poses.size()) {
+    throw std::invalid_argument(
+            "Loop closure distances must match pose count");
+  }
+  double previous_distance = 0.0;
+  for (std::size_t index = 0U;
+    index < accumulated_distances.size(); ++index)
+  {
+    const double distance = accumulated_distances[index];
+    if (!std::isfinite(distance) || distance < 0.0 ||
+      (index > 0U && distance < previous_distance))
+    {
+      throw std::invalid_argument(
+              "Loop closure distances must be finite and nondecreasing");
+    }
+    previous_distance = distance;
   }
   for (const auto & pose : poses) {
     if (!isFinitePose(pose)) {
@@ -45,7 +65,12 @@ std::vector<LoopClosureCandidate> findLoopClosureCandidates(
     const double delta_y = poses[candidate_id].y - current_pose.y;
     const double squared_distance =
       delta_x * delta_x + delta_y * delta_y;
-    if (squared_distance <= squared_search_radius) {
+    const double travel_separation =
+      accumulated_distances[current_keyframe_id] -
+      accumulated_distances[candidate_id];
+    if (squared_distance <= squared_search_radius &&
+      travel_separation >= parameters.minimum_travel_distance)
+    {
       candidates.push_back(
         LoopClosureCandidate{
           candidate_id,

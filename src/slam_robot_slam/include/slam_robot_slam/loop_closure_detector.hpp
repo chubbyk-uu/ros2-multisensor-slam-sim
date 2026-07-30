@@ -12,6 +12,7 @@ namespace slam_robot_slam
 struct LoopClosureCandidateParameters
 {
   std::size_t minimum_keyframe_separation{80U};
+  double minimum_travel_distance{3.0};
   double search_radius{0.8};
   std::size_t maximum_candidates{3U};
 };
@@ -24,6 +25,7 @@ struct LoopClosureCandidate
 
 std::vector<LoopClosureCandidate> findLoopClosureCandidates(
   const std::vector<Pose2D> & poses,
+  const std::vector<double> & accumulated_distances,
   std::size_t current_keyframe_id,
   const LoopClosureCandidateParameters & parameters);
 

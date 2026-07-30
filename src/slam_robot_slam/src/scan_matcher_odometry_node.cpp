@@ -171,6 +171,9 @@ public:
     const auto minimum_keyframe_separation =
       declare_parameter<int64_t>(
       "loop_closure.minimum_keyframe_separation", 80);
+    loop_candidate_parameters_.minimum_travel_distance =
+      declare_parameter<double>(
+      "loop_closure.minimum_travel_distance", 3.0);
     const auto loop_closure_check_interval =
       declare_parameter<int64_t>(
       "loop_closure.check_interval", 10);
@@ -185,6 +188,15 @@ public:
     const auto candidate_submap_half_width =
       declare_parameter<int64_t>(
       "loop_closure.candidate_submap_half_width", 5);
+    const auto minimum_candidate_chain_size =
+      declare_parameter<int64_t>(
+      "loop_closure.minimum_candidate_chain_size", 3);
+    maximum_loop_correction_translation_ =
+      declare_parameter<double>(
+      "loop_closure.maximum_correction_translation", 0.50);
+    maximum_loop_correction_rotation_ =
+      declare_parameter<double>(
+      "loop_closure.maximum_correction_rotation", 0.50);
     const double loop_translation_stddev =
       declare_parameter<double>(
       "loop_closure.translation_stddev", 0.05);
@@ -231,6 +243,9 @@ public:
       declare_parameter<double>("matcher.rotation_penalty_weight", 0.10);
     matcher_parameters_.minimum_score =
       declare_parameter<double>("matcher.minimum_score", 0.35);
+    matcher_parameters_.minimum_support_fraction =
+      declare_parameter<double>(
+      "matcher.minimum_support_fraction", 0.25);
     const auto minimum_matched_points =
       declare_parameter<int64_t>("matcher.minimum_matched_points", 40);
 
@@ -267,6 +282,9 @@ public:
     loop_matcher_parameters_.minimum_score =
       declare_parameter<double>(
       "loop_closure.matcher.minimum_score", 0.55);
+    loop_matcher_parameters_.minimum_support_fraction =
+      declare_parameter<double>(
+      "loop_closure.matcher.minimum_support_fraction", 0.50);
     const auto minimum_loop_matched_points =
       declare_parameter<int64_t>(
       "loop_closure.matcher.minimum_matched_points", 100);
@@ -294,8 +312,13 @@ public:
       loop_closure_check_interval < 1 ||
       minimum_loop_closure_interval < 1 ||
       !isFinitePositive(loop_candidate_parameters_.search_radius) ||
+      !isFinitePositive(
+        loop_candidate_parameters_.minimum_travel_distance) ||
       maximum_loop_candidates < 1 ||
       candidate_submap_half_width < 0 ||
+      minimum_candidate_chain_size < 1 ||
+      !isFinitePositive(maximum_loop_correction_translation_) ||
+      !isFinitePositive(maximum_loop_correction_rotation_) ||
       !isFinitePositive(loop_translation_stddev) ||
       !isFinitePositive(loop_rotation_stddev) ||
       optimization_maximum_iterations < 1 ||
@@ -322,6 +345,8 @@ public:
       static_cast<std::size_t>(minimum_loop_closure_interval);
     candidate_submap_half_width_ =
       static_cast<std::size_t>(candidate_submap_half_width);
+    minimum_candidate_chain_size_ =
+      static_cast<std::size_t>(minimum_candidate_chain_size);
     loop_matcher_parameters_.minimum_matched_points =
       static_cast<std::size_t>(minimum_loop_matched_points);
     validateCorrelativeScanMatcherParameters(matcher_parameters_);
@@ -433,6 +458,7 @@ private:
   {
     builtin_interfaces::msg::Time stamp;
     Pose2D pose;
+    double accumulated_distance;
     std::shared_ptr<const std::vector<Point2D>> points;
     Point2D sensor_origin;
     struct MapRayObservation
@@ -657,10 +683,12 @@ private:
         get_logger(),
         *get_clock(),
         5000,
-        "Correlative match score=%.3f points=%zu candidates=%zu "
+        "Correlative match score=%.3f points=%zu support=%.1f%% "
+        "candidates=%zu "
         "correction=(%.4f m, %.3f deg)",
         result.score,
         result.matched_points,
+        result.support_fraction * 100.0,
         result.evaluated_candidates,
         std::hypot(correction.x, correction.y),
         correction.yaw * 180.0 / 3.14159265358979323846);
@@ -670,10 +698,12 @@ private:
         get_logger(),
         *get_clock(),
         5000,
-        "Correlative match rejected (score=%.3f, points=%zu); "
+        "Correlative match rejected (score=%.3f, points=%zu, "
+        "support=%.1f%%); "
         "using wheel odometry prediction",
         result.score,
-        result.matched_points);
+        result.matched_points,
+        result.support_fraction * 100.0);
     }
 
     publishEstimate(scan->header.stamp, odometry_pose, base_points);
@@ -687,9 +717,16 @@ private:
     const Pose2D & base_from_laser)
   {
     validateKeyframeGraphInvariant();
+    const double accumulated_distance =
+      keyframes_.empty() ? 0.0 :
+      keyframes_.back().accumulated_distance +
+      std::hypot(
+      pose.x - keyframes_.back().pose.x,
+      pose.y - keyframes_.back().pose.y);
     Keyframe keyframe{
       stamp,
       pose,
+      accumulated_distance,
       std::make_shared<const std::vector<Point2D>>(points),
       Point2D{
         static_cast<float>(base_from_laser.x),
@@ -807,7 +844,10 @@ private:
     loop_keyframes.reserve(keyframes_.size());
     for (const auto & keyframe : keyframes_) {
       loop_keyframes.push_back(
-        LoopClosureKeyframe2D{keyframe.pose, keyframe.points});
+        LoopClosureKeyframe2D{
+          keyframe.pose,
+          keyframe.accumulated_distance,
+          keyframe.points});
     }
 
     LoopClosureProcessorParameters parameters;
@@ -815,6 +855,12 @@ private:
     parameters.candidate_submap_half_width =
       candidate_submap_half_width_;
     parameters.matcher = loop_matcher_parameters_;
+    parameters.minimum_candidate_chain_size =
+      minimum_candidate_chain_size_;
+    parameters.maximum_correction_translation =
+      maximum_loop_correction_translation_;
+    parameters.maximum_correction_rotation =
+      maximum_loop_correction_rotation_;
     parameters.translation_weight = loop_translation_weight_;
     parameters.rotation_weight = loop_rotation_weight_;
     parameters.optimization = pose_graph_optimization_options_;
@@ -939,12 +985,14 @@ private:
       loop_closure_job_started_).count();
     RCLCPP_INFO(
       get_logger(),
-      "Accepted loop closure %zu -> %zu: score=%.3f points=%zu, "
+      "Accepted loop closure %zu -> %zu: score=%.3f points=%zu "
+      "support=%.1f%%, "
       "Ceres cost %.6f -> %.6f in %d iterations (worker %.1f ms)",
       result.candidate_id,
       result.current_id,
       result.match.score,
       result.match.matched_points,
+      result.match.support_fraction * 100.0,
       result.optimization.initial_cost,
       result.optimization.final_cost,
       result.optimization.iterations,
@@ -1362,6 +1410,9 @@ private:
   std::size_t loop_closure_check_interval_;
   std::size_t minimum_loop_closure_interval_;
   std::size_t candidate_submap_half_width_;
+  std::size_t minimum_candidate_chain_size_;
+  double maximum_loop_correction_translation_;
+  double maximum_loop_correction_rotation_;
   double loop_translation_weight_;
   double loop_rotation_weight_;
   PoseGraphOptimizationOptions pose_graph_optimization_options_;

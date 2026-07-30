@@ -20,11 +20,16 @@ TEST(LoopClosureDetector, ExcludesRecentKeyframesAndSortsByDistance)
     Pose2D{0.02, 0.00, 0.0}};
   LoopClosureCandidateParameters parameters;
   parameters.minimum_keyframe_separation = 2U;
+  parameters.minimum_travel_distance = 2.0;
   parameters.search_radius = 0.2;
   parameters.maximum_candidates = 3U;
 
   const auto candidates =
-    findLoopClosureCandidates(poses, 4U, parameters);
+    findLoopClosureCandidates(
+    poses,
+    std::vector<double>{0.0, 1.0, 2.0, 3.0, 4.0},
+    4U,
+    parameters);
 
   ASSERT_EQ(candidates.size(), 2U);
   EXPECT_EQ(candidates[0].keyframe_id, 0U);
@@ -42,11 +47,16 @@ TEST(LoopClosureDetector, LimitsCandidateCount)
     Pose2D{0.15, 0.00, 0.0}};
   LoopClosureCandidateParameters parameters;
   parameters.minimum_keyframe_separation = 1U;
+  parameters.minimum_travel_distance = 1.0;
   parameters.search_radius = 1.0;
   parameters.maximum_candidates = 2U;
 
   const auto candidates =
-    findLoopClosureCandidates(poses, 3U, parameters);
+    findLoopClosureCandidates(
+    poses,
+    std::vector<double>{0.0, 1.0, 2.0, 3.0},
+    3U,
+    parameters);
 
   ASSERT_EQ(candidates.size(), 2U);
   EXPECT_EQ(candidates[0].keyframe_id, 1U);
@@ -62,7 +72,11 @@ TEST(LoopClosureDetector, WaitsForMinimumHistory)
   parameters.minimum_keyframe_separation = 3U;
 
   EXPECT_TRUE(
-    findLoopClosureCandidates(poses, 1U, parameters).empty());
+    findLoopClosureCandidates(
+      poses,
+      std::vector<double>{0.0, 0.0},
+      1U,
+      parameters).empty());
 }
 
 TEST(LoopClosureDetector, RejectsInvalidInput)
@@ -72,12 +86,35 @@ TEST(LoopClosureDetector, RejectsInvalidInput)
   parameters.search_radius = 0.0;
 
   EXPECT_THROW(
-    findLoopClosureCandidates(poses, 0U, parameters),
+    findLoopClosureCandidates(
+      poses, std::vector<double>{0.0}, 0U, parameters),
     std::invalid_argument);
   EXPECT_THROW(
     findLoopClosureCandidates(
-      poses, 1U, LoopClosureCandidateParameters{}),
+      poses,
+      std::vector<double>{0.0},
+      1U,
+      LoopClosureCandidateParameters{}),
     std::out_of_range);
+}
+
+TEST(LoopClosureDetector, RejectsPureRotationWithoutTravel)
+{
+  const std::vector<Pose2D> poses{
+    Pose2D{0.0, 0.0, 0.0},
+    Pose2D{0.0, 0.0, 1.0},
+    Pose2D{0.0, 0.0, 2.0},
+    Pose2D{0.0, 0.0, 3.0}};
+  LoopClosureCandidateParameters parameters;
+  parameters.minimum_keyframe_separation = 2U;
+  parameters.minimum_travel_distance = 2.0;
+
+  EXPECT_TRUE(
+    findLoopClosureCandidates(
+      poses,
+      std::vector<double>{0.0, 0.0, 0.0, 0.0},
+      3U,
+      parameters).empty());
 }
 
 }  // namespace

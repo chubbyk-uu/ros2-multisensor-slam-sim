@@ -58,10 +58,17 @@ TEST(LoopClosureProcessor, MatchesAndOptimizesGraphCopy)
     Pose2D{0.0, 1.0, 3.14},
     Pose2D{0.10, 0.0, 0.0}};
   std::vector<LoopClosureKeyframe2D> keyframes;
-  for (const auto & pose : poses) {
+  double accumulated_distance = 0.0;
+  for (std::size_t index = 0U; index < poses.size(); ++index) {
+    if (index > 0U) {
+      accumulated_distance += std::hypot(
+        poses[index].x - poses[index - 1U].x,
+        poses[index].y - poses[index - 1U].y);
+    }
     keyframes.push_back(
       LoopClosureKeyframe2D{
-        pose,
+        poses[index],
+        accumulated_distance,
         std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
   }
   PoseGraph2D graph = makeLoopGraph(poses);
@@ -69,9 +76,11 @@ TEST(LoopClosureProcessor, MatchesAndOptimizesGraphCopy)
 
   LoopClosureProcessorParameters parameters;
   parameters.candidate.minimum_keyframe_separation = 2U;
+  parameters.candidate.minimum_travel_distance = 2.0;
   parameters.candidate.search_radius = 0.3;
   parameters.candidate.maximum_candidates = 2U;
   parameters.candidate_submap_half_width = 0U;
+  parameters.minimum_candidate_chain_size = 1U;
   parameters.matcher.grid_resolution = 0.02;
   parameters.matcher.smear_deviation = 0.04;
   parameters.matcher.linear_search_window = 0.20;
@@ -107,6 +116,40 @@ TEST(LoopClosureProcessor, RejectsMismatchedState)
       0U,
       LoopClosureProcessorParameters{}),
     std::invalid_argument);
+}
+
+TEST(LoopClosureProcessor, RejectsImplausiblyLargeCorrection)
+{
+  const std::vector<Pose2D> poses{
+    Pose2D{0.0, 0.0, 0.0},
+    Pose2D{1.0, 0.0, 0.0},
+    Pose2D{0.15, 0.0, 0.0}};
+  std::vector<LoopClosureKeyframe2D> keyframes;
+  for (std::size_t index = 0U; index < poses.size(); ++index) {
+    keyframes.push_back(
+      LoopClosureKeyframe2D{
+        poses[index],
+        static_cast<double>(index),
+        std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
+  }
+  LoopClosureProcessorParameters parameters;
+  parameters.candidate.minimum_keyframe_separation = 2U;
+  parameters.candidate.minimum_travel_distance = 2.0;
+  parameters.candidate.search_radius = 0.3;
+  parameters.candidate_submap_half_width = 0U;
+  parameters.minimum_candidate_chain_size = 1U;
+  parameters.maximum_correction_translation = 0.05;
+  parameters.matcher.linear_search_window = 0.2;
+  parameters.matcher.minimum_score = 0.5;
+  parameters.matcher.minimum_matched_points = 80U;
+
+  const auto result = processLoopClosure(
+    keyframes,
+    makeLoopGraph(poses),
+    2U,
+    parameters);
+
+  EXPECT_FALSE(result.accepted);
 }
 
 }  // namespace
