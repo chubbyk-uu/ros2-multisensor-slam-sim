@@ -24,3 +24,11 @@ ros2 launch slam_robot_bringup navigation_simulation.launch.py
 ```
 
 默认地图为启动目录下的 `maps/slam_map.yaml`。该入口会自动在地图原点初始化 AMCL，并打开官方 Nav2 RViz；发送导航目标前应退出键盘遥控节点。
+
+启动自研 2D SLAM 开发环境：
+
+```bash
+ros2 launch slam_robot_bringup custom_slam_development.launch.py
+```
+
+当前入口启动 Gazebo、C++ 激光预处理节点和专用 RViz，不启动 SLAM Toolbox，也不发布 `/map` 或 `map -> odom`。

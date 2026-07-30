@@ -1,6 +1,6 @@
 # slam_robot_slam
 
-本包保存 `slam_toolbox` 的在线异步建图配置和启动文件，之后逐步加入自研 C++ 2D SLAM 节点。
+本包同时保存 `slam_toolbox` 官方基线和自研 C++ 2D SLAM。两条链路彼此独立，便于使用相同仿真数据比较结果。
 
 独立启动 SLAM Toolbox：
 
@@ -39,3 +39,63 @@ ros2 run slam_robot_slam save_slam_map \
 成功时会生成 `.yaml`、`.pgm`、`.posegraph` 和 `.data` 四个文件。自动保存期间不要重复按 `Ctrl+C`，应等待终端显示 `Save completed`。
 
 其中 `SLAM_WS` 应指向仓库根目录。
+
+## 自研 C++ SLAM
+
+当前第一阶段已实现：
+
+- LaserScan 有效量程、`NaN` 和 `Inf` 过滤。
+- 可配置的点间隔降采样。
+- 极坐标到二维笛卡尔点集转换。
+- `/custom_slam/scan_points` PointCloud2 发布。
+- Gazebo `/ground_truth/odom` 真值评估基准。
+- MCAP rosbag 数据集录制入口。
+- 激光预处理单元测试。
+
+仿真已经运行时，可独立启动预处理节点：
+
+```bash
+ros2 launch slam_robot_slam custom_slam.launch.py
+```
+
+一条命令启动完整开发环境：
+
+```bash
+ros2 launch slam_robot_bringup custom_slam_development.launch.py
+```
+
+专用 RViz 使用 `odom` 固定坐标系，以红色显示原始 `/scan`，以绿色显示过滤后的 `/custom_slam/scan_points`。当前阶段不会发布 `/map` 或 `map -> odom`，不会与 SLAM Toolbox 抢占 TF。
+
+参数位于 `config/laser_preprocessor.yaml`：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `input_topic` | `/scan` | 原始 LaserScan |
+| `output_topic` | `/custom_slam/scan_points` | 处理后的 PointCloud2 |
+| `minimum_range` | `0.12` | 最小有效距离，单位 m |
+| `maximum_range` | `12.0` | 最大有效距离，单位 m |
+| `point_stride` | `1` | 每隔多少个测量点取一个 |
+
+录制算法输入和真值：
+
+```bash
+ros2 launch slam_robot_slam record_slam_data.launch.py
+```
+
+默认记录 `/clock`、`/scan`、`/odom`、`/ground_truth/odom`、`/tf`、`/tf_static` 和 `/robot_description`。`/ground_truth/odom` 只用于评估，禁止反馈给估计器。
+
+离线回放并同时启动预处理节点和 RViz：
+
+```bash
+ros2 launch slam_robot_slam play_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/first_run"
+```
+
+不需要 RViz 时传入 `use_rviz:=false`；`rate` 控制播放倍率，`loop:=true` 可以循环播放。
+
+运行测试：
+
+```bash
+colcon test --packages-select slam_robot_slam
+colcon test-result --verbose
+```

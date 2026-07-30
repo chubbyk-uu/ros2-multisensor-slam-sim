@@ -1,0 +1,8 @@
+laser_scan_preprocessor:
+  ros__parameters:
+    use_sim_time: true
+    input_topic: /scan
+    output_topic: /custom_slam/scan_points
+    minimum_range: 0.12
+    maximum_range: 12.0
+    point_stride: 1

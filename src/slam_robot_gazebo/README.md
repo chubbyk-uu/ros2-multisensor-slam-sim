@@ -14,9 +14,11 @@ ros2 launch slam_robot_gazebo simulation.launch.py
 ros2 launch slam_robot_gazebo simulation.launch.py gui:=false
 ```
 
-当前已桥接 `/clock`、`/cmd_vel`、`/odom`、`/joint_states`、`/scan` 和 `/tf`。
+当前已桥接 `/clock`、`/cmd_vel`、`/odom`、`/ground_truth/odom`、`/joint_states`、`/scan` 和 `/tf`。
 默认加载 `worlds/slam_world.sdf`，其中包含外围墙、非对称隔墙、箱体、圆柱路标和回环通道。
 2D LiDAR 通过 `/scan` 发布 720 点、10 Hz 的 360° `sensor_msgs/LaserScan`，坐标系为 `lidar_link`。
+
+`/ground_truth/odom` 由 Gazebo OdometryPublisher 根据世界位姿生成，父坐标系为 `world`，子坐标系为 `base_footprint`。它只用于算法误差评估，不能作为 SLAM 或导航输入。
 
 默认会打开 RViz；仅运行 Gazebo 时可传入 `rviz:=false`。
 

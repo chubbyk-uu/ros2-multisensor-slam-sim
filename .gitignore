@@ -2,6 +2,7 @@
 build/
 install/
 log/
+bags/
 
 # Editor and operating-system files
 .vscode/

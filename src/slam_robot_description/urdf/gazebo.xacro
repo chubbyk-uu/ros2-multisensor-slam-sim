@@ -91,5 +91,19 @@
       <topic>/joint_states</topic>
       <update_rate>30</update_rate>
     </plugin>
+
+    <!--
+      Noise-free Gazebo world pose for algorithm evaluation only. This topic
+      must never be used as an input to the SLAM estimator.
+    -->
+    <plugin
+      filename="gz-sim-odometry-publisher-system"
+      name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>world</odom_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odom_topic>/ground_truth/odom</odom_topic>
+      <odom_publish_frequency>30</odom_publish_frequency>
+      <dimensions>2</dimensions>
+    </plugin>
   </gazebo>
 </robot>

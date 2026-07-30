@@ -22,7 +22,7 @@
 | 2D 激光建图 | 已完成 | SLAM Toolbox `online_async`、回环检测和退出时自动保存 |
 | 定位与导航 | 已完成 | Map Server、AMCL、Nav2 官方完整组件和 RViz |
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
-| 自研 C++ 2D SLAM | 计划中 | 前端匹配、后端优化、回环与栅格地图 |
+| 自研 C++ 2D SLAM | 进行中 | 已完成真值基准、rosbag 数据集和激光预处理 |
 | 3D LiDAR / 视觉 / 融合 | 计划中 | 在 2D 基线稳定后逐步接入 |
 
 详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见 [docs/performance.md](docs/performance.md)。
@@ -106,6 +106,7 @@ ros2 launch slam_robot_gazebo simulation.launch.py \
 | `/clock` | Gazebo 仿真时间 |
 | `/cmd_vel` | 差速底盘速度指令 |
 | `/odom` | 轮式里程计 |
+| `/ground_truth/odom` | Gazebo 无噪声真值，仅用于算法评估 |
 | `/joint_states` | 轮子关节状态 |
 | `/scan` | 2D 激光扫描 |
 | `/tf`、`/tf_static` | 动态与静态坐标变换 |
@@ -225,6 +226,61 @@ ros2 run slam_robot_navigation navigation_regression.py \
 
 测试会检查导航结果、耗时、恢复次数、AMCL 终点误差和代价地图标记；动态场景结束后会自动移除测试箱体。
 
+### 7. 自研 SLAM 开发入口
+
+启动 Gazebo、C++ 激光预处理节点和专用 RViz：
+
+```bash
+ros2 launch slam_robot_bringup custom_slam_development.launch.py
+```
+
+这个入口不会启动 SLAM Toolbox，也不会发布 `/map` 或 `map -> odom`。RViz 中红色点为原始 `/scan`，绿色点为自研节点输出的 `/custom_slam/scan_points`，两者应完全重合。
+
+检查数据：
+
+```bash
+ros2 topic hz /custom_slam/scan_points
+ros2 topic echo /custom_slam/scan_points --once --field header
+ros2 topic echo /ground_truth/odom --once
+```
+
+当前预处理节点会：
+
+- 去除 `NaN`、`Inf` 和量程外数据。
+- 按参数执行可选角度降采样。
+- 将极坐标 LaserScan 转换为 `lidar_link` 下的二维笛卡尔点集。
+- 发布标准 `sensor_msgs/PointCloud2`，供扫描匹配和 RViz 使用。
+
+录制可重复使用的 SLAM 数据集：
+
+```bash
+ros2 launch slam_robot_slam record_slam_data.launch.py
+```
+
+默认以 MCAP 格式保存到当前仓库的 `bags/slam_data_YYYYMMDD_HHMMSS/`，包括 `/clock`、`/scan`、`/odom`、`/ground_truth/odom`、`/tf`、`/tf_static` 和 `/robot_description`。录制结束时按一次 `Ctrl+C`，然后可用以下命令查看：
+
+```bash
+ros2 bag info bags/slam_data_YYYYMMDD_HHMMSS
+```
+
+指定输出目录：
+
+```bash
+ros2 launch slam_robot_slam record_slam_data.launch.py \
+  output:="${SLAM_WS}/bags/first_run"
+```
+
+`/ground_truth/odom` 只能用于离线评估，禁止作为自研 SLAM 的输入，否则得到的轨迹误差没有意义。数据集默认被 Git 忽略。
+
+不启动 Gazebo，直接回放数据并运行预处理节点：
+
+```bash
+ros2 launch slam_robot_slam play_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/first_run"
+```
+
+回放入口默认打开专用 RViz，并在发布数据前等待 2 秒，让节点和订阅关系完成初始化。可通过 `rate:=0.5` 慢速播放，或通过 `loop:=true` 循环播放。
+
 ## 系统结构
 
 数据流：
@@ -232,8 +288,10 @@ ros2 run slam_robot_navigation navigation_regression.py \
 ```text
 teleop / Nav2 -> /cmd_vel -> Gazebo diff drive -> /odom
 Gazebo 2D LiDAR -> /scan
+Gazebo world pose -> /ground_truth/odom（仅评估）
 robot_state_publisher -> /tf、/tf_static
 /scan + TF + /odom -> SLAM Toolbox -> /map、map -> odom
+/scan -> custom C++ preprocessing -> /custom_slam/scan_points
 saved map + /scan + TF -> AMCL / Nav2
 ```
 
@@ -258,7 +316,7 @@ map
 - `slam_robot_description`：Xacro、模型资源和模型显示。
 - `slam_robot_gazebo`：Gazebo 世界、系统插件和 ROS-Gazebo 桥接。
 - `slam_robot_bringup`：建图与导航的统一启动入口。
-- `slam_robot_slam`：SLAM Toolbox 配置、地图保存和后续 C++ SLAM 节点。
+- `slam_robot_slam`：SLAM Toolbox、自研 C++ SLAM、数据录制和算法测试。
 - `slam_robot_navigation`：Map Server、AMCL、Nav2 配置和自动回归工具。
 
 ## WSL2 与已知现象
