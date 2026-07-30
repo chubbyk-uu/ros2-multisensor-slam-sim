@@ -95,5 +95,45 @@ TEST(OccupancyGridMap, ClearRemovesCellsAndDynamicBounds)
   EXPECT_EQ(rebuilt.height, 1U);
 }
 
+TEST(OccupancyGridMap, HandlesNegativeBlockBoundaries)
+{
+  OccupancyGridMapParameters parameters;
+  parameters.resolution = 1.0;
+  parameters.padding_cells = 0;
+  OccupancyGridMap map(parameters);
+
+  map.updateRay(Point2D{-17.0F, -17.0F}, Point2D{-16.0F, -16.0F}, true);
+  map.updateRay(Point2D{15.0F, 15.0F}, Point2D{16.0F, 16.0F}, true);
+  const auto snapshot = map.snapshot();
+
+  EXPECT_EQ(snapshot.origin_cell_x, -17);
+  EXPECT_EQ(snapshot.origin_cell_y, -17);
+  EXPECT_EQ(snapshot.width, 34U);
+  EXPECT_EQ(snapshot.height, 34U);
+  EXPECT_LT(cellAt(snapshot, -17, -17), 50);
+  EXPECT_GT(cellAt(snapshot, -16, -16), 50);
+  EXPECT_GT(cellAt(snapshot, 16, 16), 50);
+  EXPECT_EQ(map.observedCellCount(), 4U);
+  EXPECT_EQ(map.allocatedBlockCount(), 4U);
+}
+
+TEST(OccupancyGridMap, PacksDenseCellsIntoBlocks)
+{
+  OccupancyGridMapParameters parameters;
+  parameters.resolution = 1.0;
+  parameters.padding_cells = 0;
+  OccupancyGridMap map(parameters);
+
+  for (int row = 0; row < 16; ++row) {
+    map.updateRay(
+      Point2D{0.0F, static_cast<float>(row)},
+      Point2D{15.0F, static_cast<float>(row)},
+      false);
+  }
+
+  EXPECT_EQ(map.observedCellCount(), 256U);
+  EXPECT_EQ(map.allocatedBlockCount(), 1U);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam

@@ -1,6 +1,8 @@
 #ifndef SLAM_ROBOT_SLAM__OCCUPANCY_GRID_MAP_HPP_
 #define SLAM_ROBOT_SLAM__OCCUPANCY_GRID_MAP_HPP_
 
+#include <array>
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
@@ -47,8 +49,13 @@ public:
   OccupancyGridSnapshot snapshot() const;
 
   std::size_t observedCellCount() const;
+  std::size_t allocatedBlockCount() const;
 
 private:
+  static constexpr int kBlockSize = 16;
+  static constexpr std::size_t kCellsPerBlock =
+    static_cast<std::size_t>(kBlockSize * kBlockSize);
+
   struct GridIndex
   {
     int x;
@@ -60,12 +67,22 @@ private:
     }
   };
 
+  struct CellBlock
+  {
+    std::array<float, kCellsPerBlock> log_odds{};
+    std::bitset<kCellsPerBlock> observed;
+  };
+
   struct GridIndexHash
   {
     std::size_t operator()(const GridIndex & index) const;
   };
 
   GridIndex worldToGrid(const Point2D & point) const;
+  static GridIndex blockIndex(const GridIndex & cell);
+  static std::size_t localCellOffset(
+    const GridIndex & cell,
+    const GridIndex & block);
   void updateCell(const GridIndex & index, double log_odds_increment);
 
   OccupancyGridMapParameters parameters_;
@@ -73,7 +90,8 @@ private:
   double miss_log_odds_;
   double minimum_log_odds_;
   double maximum_log_odds_;
-  std::unordered_map<GridIndex, double, GridIndexHash> cells_;
+  std::unordered_map<GridIndex, CellBlock, GridIndexHash> blocks_;
+  std::size_t observed_cell_count_{0U};
   bool has_bounds_{false};
   int minimum_x_{0};
   int maximum_x_{0};
