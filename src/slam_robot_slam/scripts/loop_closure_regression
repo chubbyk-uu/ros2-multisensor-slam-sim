@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+
+"""Run a repeatable long loop-closure regression for the custom 2D SLAM."""
+
+import argparse
+import math
+import re
+import sys
+import time
+
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import OccupancyGrid, Odometry, Path
+from rcl_interfaces.msg import Log
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+
+
+LOOP_CLOSURE_PATTERN = re.compile(
+    r"Accepted loop closure (\d+) -> (\d+): "
+    r"score=([\d.]+).*worker ([\d.]+) ms"
+)
+MAP_REBUILD_PATTERN = re.compile(
+    r"Completed occupancy grid rebuild from (\d+) "
+    r"optimized keyframes in ([\d.]+) ms"
+)
+CRITICAL_LOG_FRAGMENTS = (
+    "Aborted occupancy grid rebuild",
+    "Aborted queued occupancy grid rebuild",
+    "Discarded incompatible loop closure result",
+    "Fatal SLAM node error",
+    "Loop closure committed but occupancy grid rebuild failed to start",
+    "Loop closure committed but pose graph path refresh failed",
+    "Loop closure worker failed",
+)
+
+
+def yaw_from_quaternion(orientation):
+    sin_yaw = 2.0 * (
+        orientation.w * orientation.z
+        + orientation.x * orientation.y
+    )
+    cos_yaw = 1.0 - 2.0 * (
+        orientation.y * orientation.y
+        + orientation.z * orientation.z
+    )
+    return math.atan2(sin_yaw, cos_yaw)
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def pose_from_odometry(message):
+    position = message.pose.pose.position
+    return (
+        position.x,
+        position.y,
+        yaw_from_quaternion(message.pose.pose.orientation),
+    )
+
+
+def relative_pose(start, finish):
+    dx = finish[0] - start[0]
+    dy = finish[1] - start[1]
+    cosine = math.cos(start[2])
+    sine = math.sin(start[2])
+    return (
+        cosine * dx + sine * dy,
+        -sine * dx + cosine * dy,
+        normalize_angle(finish[2] - start[2]),
+    )
+
+
+def stamp_to_seconds(stamp):
+    return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
+
+
+class LoopClosureRegression(Node):
+    def __init__(self):
+        super().__init__(
+            "loop_closure_regression",
+            parameter_overrides=[
+                Parameter("use_sim_time", value=True),
+            ],
+        )
+        self.poses = {}
+        self.matcher_stamp = None
+        self.maximum_matcher_gap = 0.0
+        self.map_messages = 0
+        self.latest_map_cells = 0
+        self.maximum_pose_graph_nodes = 0
+        self.loop_closures = []
+        self.map_rebuilds = []
+        self.critical_logs = []
+        self.publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.create_subscription(
+            Odometry,
+            "/ground_truth/odom",
+            lambda message: self.store_pose("truth", message),
+            20,
+        )
+        self.create_subscription(
+            Odometry,
+            "/odom",
+            lambda message: self.store_pose("wheel", message),
+            20,
+        )
+        self.create_subscription(
+            Odometry,
+            "/custom_slam/laser_odom",
+            self.matcher_callback,
+            20,
+        )
+        self.create_subscription(
+            OccupancyGrid,
+            "/custom_slam/map",
+            self.map_callback,
+            10,
+        )
+        self.create_subscription(
+            Path,
+            "/custom_slam/pose_graph_path",
+            self.pose_graph_path_callback,
+            10,
+        )
+        self.create_subscription(Log, "/rosout", self.log_callback, 100)
+
+    def store_pose(self, name, message):
+        self.poses[name] = pose_from_odometry(message)
+
+    def matcher_callback(self, message):
+        self.store_pose("matcher", message)
+        stamp = stamp_to_seconds(message.header.stamp)
+        if self.matcher_stamp is not None and stamp > self.matcher_stamp:
+            self.maximum_matcher_gap = max(
+                self.maximum_matcher_gap,
+                stamp - self.matcher_stamp,
+            )
+        self.matcher_stamp = stamp
+
+    def map_callback(self, message):
+        self.map_messages += 1
+        self.latest_map_cells = message.info.width * message.info.height
+
+    def pose_graph_path_callback(self, message):
+        self.maximum_pose_graph_nodes = max(
+            self.maximum_pose_graph_nodes,
+            len(message.poses),
+        )
+
+    def log_callback(self, message):
+        if message.name != "scan_matcher_odometry":
+            return
+        loop_match = LOOP_CLOSURE_PATTERN.search(message.msg)
+        if loop_match:
+            event = {
+                "candidate": int(loop_match.group(1)),
+                "current": int(loop_match.group(2)),
+                "score": float(loop_match.group(3)),
+                "worker_ms": float(loop_match.group(4)),
+            }
+            self.loop_closures.append(event)
+            print(
+                "  loop closure: "
+                f"{event['candidate']} -> {event['current']} "
+                f"score={event['score']:.3f} "
+                f"worker={event['worker_ms']:.1f} ms",
+                flush=True,
+            )
+        rebuild_match = MAP_REBUILD_PATTERN.search(message.msg)
+        if rebuild_match:
+            event = {
+                "keyframes": int(rebuild_match.group(1)),
+                "elapsed_ms": float(rebuild_match.group(2)),
+            }
+            self.map_rebuilds.append(event)
+            print(
+                "  map rebuild: "
+                f"{event['keyframes']} keyframes in "
+                f"{event['elapsed_ms']:.1f} ms",
+                flush=True,
+            )
+        if any(
+            fragment in message.msg
+            for fragment in CRITICAL_LOG_FRAGMENTS
+        ):
+            self.critical_logs.append(message.msg)
+
+    def simulation_time(self):
+        return self.get_clock().now().nanoseconds * 1.0e-9
+
+    def wait_for_inputs(self, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if len(self.poses) == 3:
+                return
+        raise RuntimeError(
+            "Timed out waiting for truth, wheel and matcher odometry"
+        )
+
+    def publish_command(self, linear, angular):
+        command = Twist()
+        command.linear.x = linear
+        command.angular.z = angular
+        self.publisher.publish(command)
+
+    def drive_circles(self, linear, angular, circles):
+        duration = circles * 2.0 * math.pi / abs(angular)
+        started = self.simulation_time()
+        wall_started = time.monotonic()
+        wall_timeout = duration * 5.0 + 30.0
+        next_report = 0.0
+        while rclpy.ok():
+            elapsed = self.simulation_time() - started
+            if elapsed >= duration:
+                break
+            if time.monotonic() - wall_started > wall_timeout:
+                raise RuntimeError(
+                    "Circular route timed out while simulation time stalled"
+                )
+            self.publish_command(linear, angular)
+            rclpy.spin_once(self, timeout_sec=0.025)
+            if elapsed >= next_report:
+                print(
+                    f"  route progress: {elapsed:.1f}/{duration:.1f} s, "
+                    f"pose-graph nodes={self.maximum_pose_graph_nodes}, "
+                    f"loops={len(self.loop_closures)}",
+                    flush=True,
+                )
+                next_report += 10.0
+        self.publish_command(0.0, 0.0)
+
+    def settle(self, seconds):
+        started = self.simulation_time()
+        wall_started = time.monotonic()
+        wall_timeout = seconds * 5.0 + 10.0
+        while rclpy.ok() and self.simulation_time() - started < seconds:
+            if time.monotonic() - wall_started > wall_timeout:
+                raise RuntimeError(
+                    "Settle phase timed out while simulation time stalled"
+                )
+            self.publish_command(0.0, 0.0)
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+    def evaluate(self, starts, arguments):
+        motions = {
+            name: relative_pose(starts[name], self.poses[name])
+            for name in starts
+        }
+        truth = motions["truth"]
+        matcher = motions["matcher"]
+        wheel = motions["wheel"]
+        matcher_translation_error = math.hypot(
+            matcher[0] - truth[0],
+            matcher[1] - truth[1],
+        )
+        matcher_yaw_error = abs(
+            normalize_angle(matcher[2] - truth[2])
+        )
+        wheel_translation_error = math.hypot(
+            wheel[0] - truth[0],
+            wheel[1] - truth[1],
+        )
+        wheel_yaw_error = abs(normalize_angle(wheel[2] - truth[2]))
+        truth_closure_error = math.hypot(truth[0], truth[1])
+
+        checks = {
+            "loop_closure_accepted": len(self.loop_closures) >= 1,
+            "map_rebuild_completed": len(self.map_rebuilds) >= 1,
+            "map_published": self.map_messages >= 3
+            and self.latest_map_cells > 0,
+            "pose_graph_long_enough": self.maximum_pose_graph_nodes >= 100,
+            "matcher_gap_bounded": (
+                self.maximum_matcher_gap
+                <= arguments.maximum_matcher_gap
+            ),
+            "truth_route_closed": (
+                truth_closure_error
+                <= arguments.maximum_truth_closure_error
+            ),
+            "matcher_translation_accurate": (
+                matcher_translation_error
+                <= arguments.maximum_translation_error
+            ),
+            "matcher_yaw_accurate": (
+                matcher_yaw_error
+                <= math.radians(arguments.maximum_yaw_error_degrees)
+            ),
+            "no_critical_slam_logs": not self.critical_logs,
+        }
+
+        print("\nlong loop-closure regression")
+        print(
+            f"truth motion  : x={truth[0]:.4f} y={truth[1]:.4f} "
+            f"yaw={math.degrees(truth[2]):.3f} deg"
+        )
+        print(
+            f"wheel error  : translation={wheel_translation_error:.4f} m "
+            f"yaw={math.degrees(wheel_yaw_error):.3f} deg"
+        )
+        print(
+            "matcher error: "
+            f"translation={matcher_translation_error:.4f} m "
+            f"yaw={math.degrees(matcher_yaw_error):.3f} deg"
+        )
+        print(
+            f"events       : loops={len(self.loop_closures)} "
+            f"rebuilds={len(self.map_rebuilds)} "
+            f"maps={self.map_messages} "
+            f"nodes={self.maximum_pose_graph_nodes}"
+        )
+        print(
+            f"front-end gap: maximum={self.maximum_matcher_gap:.3f} s"
+        )
+        for name, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
+        return all(checks.values())
+
+    def run(self, arguments):
+        self.wait_for_inputs(arguments.startup_timeout)
+        starts = dict(self.poses)
+        radius = arguments.linear_speed / abs(arguments.angular_speed)
+        print(
+            "starting open-loop circular route: "
+            f"circles={arguments.circles:.1f}, radius={radius:.2f} m, "
+            f"distance={arguments.circles * 2.0 * math.pi * radius:.2f} m",
+            flush=True,
+        )
+        self.drive_circles(
+            arguments.linear_speed,
+            arguments.angular_speed,
+            arguments.circles,
+        )
+        self.settle(arguments.settle_time)
+        return self.evaluate(starts, arguments)
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Run a repeatable custom-SLAM loop-closure regression."
+    )
+    parser.add_argument("--circles", type=float, default=2.0)
+    parser.add_argument("--linear-speed", type=float, default=0.20)
+    parser.add_argument("--angular-speed", type=float, default=0.20)
+    parser.add_argument("--settle-time", type=float, default=5.0)
+    parser.add_argument("--startup-timeout", type=float, default=15.0)
+    parser.add_argument("--maximum-matcher-gap", type=float, default=0.35)
+    parser.add_argument(
+        "--maximum-truth-closure-error",
+        type=float,
+        default=0.20,
+    )
+    parser.add_argument(
+        "--maximum-translation-error",
+        type=float,
+        default=0.15,
+    )
+    parser.add_argument(
+        "--maximum-yaw-error-degrees",
+        type=float,
+        default=3.0,
+    )
+    arguments, ros_arguments = parser.parse_known_args()
+    if ros_arguments:
+        sys.argv = [sys.argv[0], *ros_arguments]
+    if (
+        arguments.circles <= 0.0
+        or arguments.linear_speed <= 0.0
+        or arguments.angular_speed == 0.0
+        or arguments.settle_time < 0.0
+    ):
+        parser.error("Route speeds and circle count must be positive")
+    return arguments
+
+
+def main():
+    arguments = parse_arguments()
+    rclpy.init()
+    node = LoopClosureRegression()
+    exit_code = 1
+    try:
+        exit_code = 0 if node.run(arguments) else 1
+    except (KeyboardInterrupt, RuntimeError) as error:
+        print(f"loop-closure regression failed: {error}", file=sys.stderr)
+    finally:
+        node.publish_command(0.0, 0.0)
+        node.destroy_node()
+        rclpy.shutdown()
+    raise SystemExit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

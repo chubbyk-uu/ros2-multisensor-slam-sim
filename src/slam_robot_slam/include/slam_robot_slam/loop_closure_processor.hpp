@@ -24,9 +24,9 @@ struct LoopClosureProcessorParameters
   LoopClosureCandidateParameters candidate;
   std::size_t candidate_submap_half_width{5U};
   CorrelativeScanMatcherParameters matcher;
-  std::size_t minimum_candidate_chain_size{3U};
+  std::size_t minimum_candidate_chain_size{10U};
   double maximum_correction_translation{0.50};
-  double maximum_correction_rotation{0.50};
+  double maximum_correction_rotation{0.25};
   double translation_weight{20.0};
   double rotation_weight{20.0};
   PoseGraphOptimizationOptions optimization;

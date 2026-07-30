@@ -50,9 +50,9 @@ scan_matcher_odometry:
       search_radius: 0.6
       maximum_candidates: 3
       candidate_submap_half_width: 5
-      minimum_candidate_chain_size: 3
+      minimum_candidate_chain_size: 10
       maximum_correction_translation: 0.50
-      maximum_correction_rotation: 0.50
+      maximum_correction_rotation: 0.25
       translation_stddev: 0.05
       rotation_stddev: 0.05
       optimization_maximum_iterations: 50

@@ -198,13 +198,13 @@ public:
       "loop_closure.candidate_submap_half_width", 5);
     const auto minimum_candidate_chain_size =
       declare_parameter<int64_t>(
-      "loop_closure.minimum_candidate_chain_size", 3);
+      "loop_closure.minimum_candidate_chain_size", 10);
     maximum_loop_correction_translation_ =
       declare_parameter<double>(
       "loop_closure.maximum_correction_translation", 0.50);
     maximum_loop_correction_rotation_ =
       declare_parameter<double>(
-      "loop_closure.maximum_correction_rotation", 0.50);
+      "loop_closure.maximum_correction_rotation", 0.25);
     const double loop_translation_stddev =
       declare_parameter<double>(
       "loop_closure.translation_stddev", 0.05);
@@ -865,13 +865,13 @@ private:
     const builtin_interfaces::msg::Time & latest_stamp)
   {
     validateKeyframeGraphInvariant();
-    pose_graph_path_.poses.clear();
+    nav_msgs::msg::Path rebuilt_path;
     const std::size_t maximum_poses =
       static_cast<std::size_t>(maximum_pose_graph_path_poses_);
     const std::size_t first_node =
       pose_graph_.nodes().size() > maximum_poses ?
       pose_graph_.nodes().size() - maximum_poses : 0U;
-    pose_graph_path_.poses.reserve(
+    rebuilt_path.poses.reserve(
       pose_graph_.nodes().size() - first_node);
     for (std::size_t index = first_node;
       index < pose_graph_.nodes().size(); ++index)
@@ -883,10 +883,11 @@ private:
       graph_pose.pose.position.y = pose_graph_.nodes()[index].pose.y;
       graph_pose.pose.orientation =
         yawToQuaternion(pose_graph_.nodes()[index].pose.yaw);
-      pose_graph_path_.poses.push_back(graph_pose);
+      rebuilt_path.poses.push_back(graph_pose);
     }
-    pose_graph_path_.header.stamp = latest_stamp;
-    pose_graph_path_.header.frame_id = map_frame_;
+    rebuilt_path.header.stamp = latest_stamp;
+    rebuilt_path.header.frame_id = map_frame_;
+    pose_graph_path_ = std::move(rebuilt_path);
     pose_graph_path_dirty_ = true;
   }
 
@@ -1034,14 +1035,29 @@ private:
       last_matched_pose_ =
         composePoses(keyframes_.back().pose, latest_to_last_match);
       last_loop_closure_node_ = result.current_id;
-      rebuildPoseGraphPath(keyframes_.back().stamp);
-      startMapRebuild();
     } catch (const std::exception & error) {
       RCLCPP_ERROR(
         get_logger(),
         "Discarded incompatible loop closure result: %s",
         error.what());
       return;
+    }
+
+    try {
+      rebuildPoseGraphPath(keyframes_.back().stamp);
+    } catch (const std::exception & error) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "Loop closure committed but pose graph path refresh failed: %s",
+        error.what());
+    }
+    try {
+      startMapRebuild();
+    } catch (const std::exception & error) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "Loop closure committed but occupancy grid rebuild failed to start: %s",
+        error.what());
     }
 
     const double elapsed_milliseconds =
@@ -1187,22 +1203,27 @@ private:
 
   void startMapRebuild()
   {
-    std::vector<Keyframe> rebuild_snapshot = keyframes_;
-    if (pending_rebuild_map_) {
-      map_rebuild_queue_.request(std::move(rebuild_snapshot));
-      if (!rebuild_tail_frozen_) {
-        appendLiveKeyframesToRebuildSnapshot();
-        rebuild_tail_frozen_ = true;
+    try {
+      std::vector<Keyframe> rebuild_snapshot = keyframes_;
+      if (pending_rebuild_map_) {
+        map_rebuild_queue_.request(std::move(rebuild_snapshot));
+        if (!rebuild_tail_frozen_) {
+          appendLiveKeyframesToRebuildSnapshot();
+          rebuild_tail_frozen_ = true;
+        }
+        RCLCPP_INFO(
+          get_logger(),
+          "Queued latest occupancy grid rebuild for %zu keyframes; "
+          "current rebuild will finish first",
+          map_rebuild_queue_.queued().size());
+        return;
       }
-      RCLCPP_INFO(
-        get_logger(),
-        "Queued latest occupancy grid rebuild for %zu keyframes; "
-        "current rebuild will finish first",
-        map_rebuild_queue_.queued().size());
-      return;
+      map_rebuild_queue_.request(std::move(rebuild_snapshot));
+      beginMapRebuild();
+    } catch (...) {
+      clearMapRebuildState();
+      throw;
     }
-    map_rebuild_queue_.request(std::move(rebuild_snapshot));
-    beginMapRebuild();
   }
 
   void beginMapRebuild()
@@ -1249,6 +1270,14 @@ private:
     }
   }
 
+  void clearMapRebuildState()
+  {
+    pending_rebuild_map_.reset();
+    map_rebuild_queue_.clear();
+    next_rebuild_keyframe_ = 0U;
+    rebuild_tail_frozen_ = false;
+  }
+
   void processMapRebuildBatch()
   {
     if (!pending_rebuild_map_) {
@@ -1271,8 +1300,7 @@ private:
           *pending_rebuild_map_);
       }
     } catch (const std::exception & error) {
-      pending_rebuild_map_.reset();
-      map_rebuild_queue_.clear();
+      clearMapRebuildState();
       RCLCPP_ERROR(
         get_logger(),
         "Aborted occupancy grid rebuild: %s",
@@ -1300,7 +1328,15 @@ private:
     const bool has_queued_rebuild = map_rebuild_queue_.completeActive();
     publishMapIfDirty();
     if (has_queued_rebuild) {
-      beginMapRebuild();
+      try {
+        beginMapRebuild();
+      } catch (const std::exception & error) {
+        clearMapRebuildState();
+        RCLCPP_ERROR(
+          get_logger(),
+          "Aborted queued occupancy grid rebuild: %s",
+          error.what());
+      }
     }
   }
 

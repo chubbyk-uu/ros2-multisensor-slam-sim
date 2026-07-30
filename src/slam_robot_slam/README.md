@@ -172,9 +172,9 @@ base_footprint -> lidar_link  robot_state_publisher
 | `loop_closure.search_radius` | `0.6` | 历史候选搜索半径，单位 m |
 | `loop_closure.maximum_candidates` | `3` | 每次最多验证的最近候选数 |
 | `loop_closure.candidate_submap_half_width` | `5` | 候选前后用于子地图的关键帧数 |
-| `loop_closure.minimum_candidate_chain_size` | `3` | 候选附近要求的连续历史节点数 |
+| `loop_closure.minimum_candidate_chain_size` | `10` | 候选附近要求的连续历史节点数 |
 | `loop_closure.maximum_correction_translation` | `0.50` | 回环最大平移修正，单位 m |
-| `loop_closure.maximum_correction_rotation` | `0.50` | 回环最大旋转修正，单位 rad |
+| `loop_closure.maximum_correction_rotation` | `0.25` | 回环最大旋转修正，单位 rad |
 | `loop_closure.matcher.minimum_score` | `0.55` | 回环匹配的最小相关分数 |
 | `loop_closure.matcher.minimum_support_fraction` | `0.50` | 回环扫描最小子图支撑占比 |
 | `loop_closure.matcher.minimum_matched_points` | `100` | 回环匹配的最少重合点 |
@@ -187,6 +187,21 @@ ros2 run slam_robot_slam scan_matcher_benchmark
 
 测试工具只读取 `/ground_truth/odom` 计算误差，不会把真值反馈给匹配器。
 
+运行两圈长闭环回归：
+
+```bash
+# 终端 1
+ros2 launch slam_robot_bringup custom_slam_development.launch.py \
+  gui:=false use_rviz:=false
+
+# 终端 2
+ros2 run slam_robot_slam loop_closure_regression
+```
+
+回归工具向 `/cmd_vel` 发布两圈恒曲率开环指令，Gazebo 真值只用于结束后
+计算误差。工具会自动检查回环接受、地图重建、地图持续发布、位姿图规模、
+前端最大消息间隔、最终位姿误差和关键错误日志，任一检查失败时返回非零。
+
 2026-07-30 在后台回环架构整改前建立的圆形闭环基线，于关键帧
 `2 -> 100` 自动接受真实回环：
 相关分数 `0.954`、重合点 `354`，Ceres 代价从 `0.020000` 降到
@@ -195,9 +210,13 @@ ros2 run slam_robot_slam scan_matcher_benchmark
 期间没有再次出现激光对应里程计样本过旧的警告。停止后自研位置与
 Gazebo 真值的平面位置差约 `0.003 m`。
 
-后台回环、事务合并和分块地图整改后，固定路线已重新验证局部匹配、TF
-和地图发布。仍需用同一套可重复圆形路线重新完成一次长闭环回归，确认
-后台回环触发、完整地图重建和保存；历史基线不替代这项当前架构验证。
+后台回环、事务合并和分块地图整改后，使用默认参数完成 12.57 m 两圈
+长闭环回归：共建立 210 个关键帧，接受 4 次回环并完成 4 次地图重建；
+收紧回环链长和旋转修正上限后再次回归，后台任务完成延迟为
+`26.4～46.4 ms`，最大前端消息间隔保持 `0.100 s`。停止后匹配位姿
+相对真值误差为 `0.0067 m / 0.315°`，全部自动判定通过。
+重建后的 `/custom_slam/map` 也已通过 Map Saver 保存为
+`242×202 @ 0.05 m` 的 YAML/PGM 地图。
 
 重建期间再次收到回环时，当前重建不会归零；节点会冻结当前版本并将
 最新优化快照排队。当前版本完成后再处理最新版本，因此长时间运行也会

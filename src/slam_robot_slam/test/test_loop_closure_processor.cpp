@@ -152,5 +152,74 @@ TEST(LoopClosureProcessor, RejectsImplausiblyLargeCorrection)
   EXPECT_FALSE(result.accepted);
 }
 
+TEST(LoopClosureProcessor, RejectsImplausiblyLargeRotationCorrection)
+{
+  const std::vector<Pose2D> poses{
+    Pose2D{0.0, 0.0, 0.0},
+    Pose2D{1.0, 0.0, 0.0},
+    Pose2D{0.10, 0.0, 0.30}};
+  std::vector<LoopClosureKeyframe2D> keyframes;
+  for (std::size_t index = 0U; index < poses.size(); ++index) {
+    keyframes.push_back(
+      LoopClosureKeyframe2D{
+          poses[index],
+          static_cast<double>(index),
+          std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
+  }
+  LoopClosureProcessorParameters parameters;
+  parameters.candidate.minimum_keyframe_separation = 2U;
+  parameters.candidate.minimum_travel_distance = 2.0;
+  parameters.candidate.search_radius = 0.3;
+  parameters.candidate_submap_half_width = 0U;
+  parameters.minimum_candidate_chain_size = 1U;
+  parameters.maximum_correction_rotation = 0.25;
+  parameters.matcher.angular_search_window = 0.40;
+  parameters.matcher.coarse_angular_resolution = 0.05;
+  parameters.matcher.fine_angular_resolution = 0.01;
+  parameters.matcher.minimum_score = 0.5;
+  parameters.matcher.minimum_matched_points = 80U;
+
+  const auto result = processLoopClosure(
+    keyframes,
+    makeLoopGraph(poses),
+    2U,
+    parameters);
+
+  EXPECT_FALSE(result.accepted);
+}
+
+TEST(LoopClosureProcessor, RejectsCandidateWithoutLongEnoughChain)
+{
+  const std::vector<Pose2D> poses{
+    Pose2D{0.0, 0.0, 0.0},
+    Pose2D{1.0, 0.0, 0.0},
+    Pose2D{0.10, 0.0, 0.0}};
+  std::vector<LoopClosureKeyframe2D> keyframes;
+  for (std::size_t index = 0U; index < poses.size(); ++index) {
+    keyframes.push_back(
+      LoopClosureKeyframe2D{
+          poses[index],
+          static_cast<double>(index),
+          std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
+  }
+  LoopClosureProcessorParameters parameters;
+  parameters.candidate.minimum_keyframe_separation = 2U;
+  parameters.candidate.minimum_travel_distance = 2.0;
+  parameters.candidate.search_radius = 0.3;
+  parameters.candidate_submap_half_width = 0U;
+  parameters.minimum_candidate_chain_size = 2U;
+  parameters.matcher.minimum_score = 0.5;
+  parameters.matcher.minimum_matched_points = 80U;
+
+  const auto result = processLoopClosure(
+    keyframes,
+    makeLoopGraph(poses),
+    2U,
+    parameters);
+
+  EXPECT_FALSE(result.accepted);
+  EXPECT_EQ(result.evaluated_candidates, 1U);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam

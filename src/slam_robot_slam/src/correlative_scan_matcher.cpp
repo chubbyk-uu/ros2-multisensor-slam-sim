@@ -15,6 +15,12 @@ namespace
 class CorrelationGrid
 {
 public:
+  struct Sample
+  {
+    float likelihood{0.0F};
+    bool supported{false};
+  };
+
   CorrelationGrid(
     const std::vector<Point2D> & points,
     const double resolution,
@@ -106,21 +112,18 @@ public:
     }
   }
 
-  float likelihood(const Point2D & point) const
+  Sample sample(const Point2D & point) const
   {
     const int grid_x = worldToGridX(point.x);
     const int grid_y = worldToGridY(point.y);
     if (!contains(grid_x, grid_y)) {
-      return 0.0F;
+      return Sample{};
     }
-    return cells_[
-      static_cast<std::size_t>(grid_y) * width_ +
-      static_cast<std::size_t>(grid_x)];
-  }
-
-  bool supports(const Point2D & point) const
-  {
-    return contains(worldToGridX(point.x), worldToGridY(point.y));
+    return Sample{
+      cells_[
+        static_cast<std::size_t>(grid_y) * width_ +
+        static_cast<std::size_t>(grid_x)],
+      true};
   }
 
 private:
@@ -177,12 +180,12 @@ CandidateScore scoreCandidate(
       static_cast<float>(
         sine * static_cast<double>(point.x) +
         cosine * static_cast<double>(point.y) + candidate.y)};
-    const float likelihood = grid.likelihood(transformed);
-    if (grid.supports(transformed)) {
+    const CorrelationGrid::Sample sample = grid.sample(transformed);
+    if (sample.supported) {
       ++supported_points;
     }
-    likelihood_sum += static_cast<double>(likelihood);
-    if (likelihood > 0.01F) {
+    likelihood_sum += static_cast<double>(sample.likelihood);
+    if (sample.likelihood > 0.01F) {
       ++matched_points;
     }
   }

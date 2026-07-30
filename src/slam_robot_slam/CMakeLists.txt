@@ -206,6 +206,7 @@ ament_export_dependencies(Ceres sensor_msgs)
 
 install(
   PROGRAMS
+    scripts/loop_closure_regression
     scripts/save_slam_map
     scripts/scan_matcher_benchmark
   DESTINATION lib/${PROJECT_NAME}
