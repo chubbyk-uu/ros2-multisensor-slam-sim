@@ -139,7 +139,16 @@ public:
     const auto maximum_local_keyframes =
       declare_parameter<int64_t>("maximum_local_keyframes", 20);
     maximum_path_poses_ =
-      declare_parameter<int64_t>("maximum_path_poses", 10000);
+      declare_parameter<int64_t>("maximum_path_poses", 5000);
+    maximum_pose_graph_path_poses_ =
+      declare_parameter<int64_t>(
+      "pose_graph.maximum_path_poses", 2000);
+    path_publish_period_ =
+      declare_parameter<double>("path.publish_period", 0.5);
+    path_minimum_translation_ =
+      declare_parameter<double>("path.minimum_translation", 0.03);
+    path_minimum_rotation_ =
+      declare_parameter<double>("path.minimum_rotation", 0.03);
     const auto map_ray_stride =
       declare_parameter<int64_t>("map.ray_stride", 2);
     const auto map_padding_cells =
@@ -269,6 +278,10 @@ public:
       !isFiniteNonNegative(minimum_translation_for_update_) ||
       !isFiniteNonNegative(minimum_rotation_for_update_) ||
       maximum_local_keyframes < 1 || maximum_path_poses_ < 1 ||
+      maximum_pose_graph_path_poses_ < 1 ||
+      !isFinitePositive(path_publish_period_) ||
+      !isFiniteNonNegative(path_minimum_translation_) ||
+      !isFiniteNonNegative(path_minimum_rotation_) ||
       minimum_matched_points < 1 || map_ray_stride < 1 ||
       !isFinitePositive(map_publish_period) ||
       map_rebuild_keyframes_per_cycle < 1 ||
@@ -368,15 +381,20 @@ public:
         &ScanMatcherOdometryNode::laserScanCallback,
         this,
         std::placeholders::_1));
-    map_publish_timer_ = create_wall_timer(
+    map_publish_timer_ = create_timer(
       std::chrono::duration<double>(map_publish_period),
       std::bind(
         &ScanMatcherOdometryNode::publishMapIfDirty,
         this));
-    map_rebuild_timer_ = create_wall_timer(
+    map_rebuild_timer_ = create_timer(
       std::chrono::duration<double>(map_rebuild_period),
       std::bind(
         &ScanMatcherOdometryNode::backgroundMaintenanceCallback,
+        this));
+    path_publish_timer_ = create_timer(
+      std::chrono::duration<double>(path_publish_period_),
+      std::bind(
+        &ScanMatcherOdometryNode::publishPathsIfDirty,
         this));
 
     path_.header.frame_id = map_frame_;
@@ -422,7 +440,7 @@ private:
       Point2D endpoint;
       bool endpoint_is_hit;
     };
-    std::vector<MapRayObservation> map_rays;
+    std::shared_ptr<const std::vector<MapRayObservation>> map_rays;
   };
 
   void odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr odometry)
@@ -676,7 +694,8 @@ private:
       Point2D{
         static_cast<float>(base_from_laser.x),
         static_cast<float>(base_from_laser.y)},
-      buildMapRayObservations(scan, base_from_laser)};
+      std::make_shared<const std::vector<Keyframe::MapRayObservation>>(
+        buildMapRayObservations(scan, base_from_laser))};
 
     const std::size_t expected_node_id = keyframes_.size();
     const std::size_t node_id = pose_graph_.addNode(pose);
@@ -723,7 +742,10 @@ private:
     graph_pose.pose.orientation = yawToQuaternion(pose.yaw);
     pose_graph_path_.header = graph_pose.header;
     pose_graph_path_.poses.push_back(graph_pose);
-    pose_graph_path_publisher_->publish(pose_graph_path_);
+    trimPath(
+      pose_graph_path_,
+      static_cast<std::size_t>(maximum_pose_graph_path_poses_));
+    pose_graph_path_dirty_ = true;
 
     integrateKeyframeIntoActiveMap(keyframes_.back());
     startLoopClosure(node_id);
@@ -742,8 +764,14 @@ private:
   {
     validateKeyframeGraphInvariant();
     pose_graph_path_.poses.clear();
-    pose_graph_path_.poses.reserve(pose_graph_.nodes().size());
-    for (std::size_t index = 0U;
+    const std::size_t maximum_poses =
+      static_cast<std::size_t>(maximum_pose_graph_path_poses_);
+    const std::size_t first_node =
+      pose_graph_.nodes().size() > maximum_poses ?
+      pose_graph_.nodes().size() - maximum_poses : 0U;
+    pose_graph_path_.poses.reserve(
+      pose_graph_.nodes().size() - first_node);
+    for (std::size_t index = first_node;
       index < pose_graph_.nodes().size(); ++index)
     {
       geometry_msgs::msg::PoseStamped graph_pose;
@@ -757,7 +785,7 @@ private:
     }
     pose_graph_path_.header.stamp = latest_stamp;
     pose_graph_path_.header.frame_id = map_frame_;
-    pose_graph_path_publisher_->publish(pose_graph_path_);
+    pose_graph_path_dirty_ = true;
   }
 
   void startLoopClosure(const std::size_t current_id)
@@ -1021,13 +1049,13 @@ private:
     const Keyframe & keyframe,
     OccupancyGridMap & map) const
   {
-    if (keyframe.map_rays.empty()) {
+    if (!keyframe.map_rays || keyframe.map_rays->empty()) {
       return;
     }
 
     const Point2D map_sensor_origin =
       transformPoint(keyframe.pose, keyframe.sensor_origin);
-    for (const auto & observation : keyframe.map_rays) {
+    for (const auto & observation : *keyframe.map_rays) {
       const Point2D map_endpoint =
         transformPoint(keyframe.pose, observation.endpoint);
       map.updateRay(
@@ -1046,14 +1074,60 @@ private:
 
   void startMapRebuild()
   {
+    std::vector<Keyframe> rebuild_snapshot = keyframes_;
+    if (pending_rebuild_map_) {
+      queued_rebuild_keyframes_ = std::move(rebuild_snapshot);
+      if (!rebuild_tail_frozen_) {
+        appendLiveKeyframesToRebuildSnapshot();
+        rebuild_tail_frozen_ = true;
+      }
+      RCLCPP_INFO(
+        get_logger(),
+        "Queued latest occupancy grid rebuild for %zu keyframes; "
+        "current rebuild will finish first",
+        queued_rebuild_keyframes_->size());
+      return;
+    }
+    beginMapRebuild(std::move(rebuild_snapshot));
+  }
+
+  void beginMapRebuild(std::vector<Keyframe> rebuild_snapshot)
+  {
     pending_rebuild_map_ =
       std::make_unique<OccupancyGridMap>(map_parameters_);
+    rebuild_keyframes_ = std::move(rebuild_snapshot);
     next_rebuild_keyframe_ = 0U;
+    rebuild_tail_frozen_ = false;
     map_rebuild_started_ = std::chrono::steady_clock::now();
     RCLCPP_INFO(
       get_logger(),
       "Started incremental occupancy grid rebuild for %zu keyframes",
-      keyframes_.size());
+      rebuild_keyframes_.size());
+  }
+
+  void appendLiveKeyframesToRebuildSnapshot()
+  {
+    if (rebuild_keyframes_.empty() ||
+      rebuild_keyframes_.size() >= keyframes_.size())
+    {
+      return;
+    }
+    const std::size_t anchor_id = rebuild_keyframes_.size() - 1U;
+    if (anchor_id >= keyframes_.size()) {
+      throw std::logic_error(
+              "Map rebuild snapshot is not a prefix of live keyframes");
+    }
+    const Pose2D snapshot_from_live =
+      composePoses(
+      rebuild_keyframes_[anchor_id].pose,
+      inversePose(keyframes_[anchor_id].pose));
+    for (std::size_t index = rebuild_keyframes_.size();
+      index < keyframes_.size(); ++index)
+    {
+      Keyframe keyframe = keyframes_[index];
+      keyframe.pose = composePoses(snapshot_from_live, keyframe.pose);
+      rebuild_keyframes_.push_back(std::move(keyframe));
+    }
   }
 
   void processMapRebuildBatch()
@@ -1063,31 +1137,36 @@ private:
     }
 
     try {
+      if (!rebuild_tail_frozen_) {
+        appendLiveKeyframesToRebuildSnapshot();
+      }
       const std::size_t final_keyframe = std::min(
         next_rebuild_keyframe_ + map_rebuild_keyframes_per_cycle_,
-        keyframes_.size());
+        rebuild_keyframes_.size());
       for (; next_rebuild_keyframe_ < final_keyframe;
         ++next_rebuild_keyframe_)
       {
         integrateKeyframeIntoMap(
-          keyframes_[next_rebuild_keyframe_],
+          rebuild_keyframes_[next_rebuild_keyframe_],
           *pending_rebuild_map_);
       }
     } catch (const std::exception & error) {
       pending_rebuild_map_.reset();
+      rebuild_keyframes_.clear();
+      queued_rebuild_keyframes_.reset();
       RCLCPP_ERROR(
         get_logger(),
         "Aborted occupancy grid rebuild: %s",
         error.what());
       return;
     }
-    if (next_rebuild_keyframe_ < keyframes_.size()) {
+    if (next_rebuild_keyframe_ < rebuild_keyframes_.size()) {
       return;
     }
 
     std::swap(occupancy_grid_map_, pending_rebuild_map_);
     pending_rebuild_map_.reset();
-    latest_map_stamp_ = keyframes_.back().stamp;
+    latest_map_stamp_ = rebuild_keyframes_.back().stamp;
     map_dirty_ = true;
     const double elapsed_milliseconds =
       std::chrono::duration<double, std::milli>(
@@ -1098,7 +1177,14 @@ private:
       "in %.1f ms",
       next_rebuild_keyframe_,
       elapsed_milliseconds);
+    rebuild_keyframes_.clear();
     publishMapIfDirty();
+    if (queued_rebuild_keyframes_.has_value()) {
+      auto queued_snapshot =
+        std::move(*queued_rebuild_keyframes_);
+      queued_rebuild_keyframes_.reset();
+      beginMapRebuild(std::move(queued_snapshot));
+    }
   }
 
   void backgroundMaintenanceCallback()
@@ -1181,15 +1267,27 @@ private:
     laser_odometry.twist.covariance[0] = -1.0;
     laser_odometry_publisher_->publish(laser_odometry);
 
-    geometry_msgs::msg::PoseStamped path_pose;
-    path_pose.header = laser_odometry.header;
-    path_pose.pose = laser_odometry.pose.pose;
-    path_.header = laser_odometry.header;
-    path_.poses.push_back(path_pose);
-    if (path_.poses.size() > static_cast<std::size_t>(maximum_path_poses_)) {
-      path_.poses.erase(path_.poses.begin());
+    bool append_path_pose = path_.poses.empty();
+    if (last_path_pose_.has_value()) {
+      const Pose2D increment =
+        relativePose(*last_path_pose_, estimated_pose_);
+      append_path_pose =
+        std::hypot(increment.x, increment.y) >=
+        path_minimum_translation_ ||
+        std::abs(increment.yaw) >= path_minimum_rotation_;
     }
-    laser_path_publisher_->publish(path_);
+    if (append_path_pose) {
+      geometry_msgs::msg::PoseStamped path_pose;
+      path_pose.header = laser_odometry.header;
+      path_pose.pose = laser_odometry.pose.pose;
+      path_.header = laser_odometry.header;
+      path_.poses.push_back(path_pose);
+      last_path_pose_ = estimated_pose_;
+      trimPath(
+        path_,
+        static_cast<std::size_t>(maximum_path_poses_));
+      laser_path_dirty_ = true;
+    }
 
     sensor_msgs::msg::PointCloud2 aligned_points;
     aligned_points.header = laser_odometry.header;
@@ -1215,6 +1313,31 @@ private:
     aligned_points_publisher_->publish(aligned_points);
   }
 
+  static void trimPath(
+    nav_msgs::msg::Path & path,
+    const std::size_t maximum_poses)
+  {
+    if (path.poses.size() <= maximum_poses) {
+      return;
+    }
+    const std::size_t excess = path.poses.size() - maximum_poses;
+    path.poses.erase(
+      path.poses.begin(),
+      path.poses.begin() + static_cast<std::ptrdiff_t>(excess));
+  }
+
+  void publishPathsIfDirty()
+  {
+    if (laser_path_dirty_) {
+      laser_path_publisher_->publish(path_);
+      laser_path_dirty_ = false;
+    }
+    if (pose_graph_path_dirty_) {
+      pose_graph_path_publisher_->publish(pose_graph_path_);
+      pose_graph_path_dirty_ = false;
+    }
+  }
+
   std::string map_frame_;
   std::string odom_frame_;
   std::string base_frame_;
@@ -1226,6 +1349,10 @@ private:
   double minimum_rotation_for_update_;
   std::size_t maximum_local_keyframes_;
   int64_t maximum_path_poses_;
+  int64_t maximum_pose_graph_path_poses_;
+  double path_publish_period_;
+  double path_minimum_translation_;
+  double path_minimum_rotation_;
   std::size_t map_ray_stride_;
   std::size_t map_rebuild_keyframes_per_cycle_;
   double sequential_translation_weight_;
@@ -1262,6 +1389,7 @@ private:
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_publisher_;
   rclcpp::TimerBase::SharedPtr map_publish_timer_;
   rclcpp::TimerBase::SharedPtr map_rebuild_timer_;
+  rclcpp::TimerBase::SharedPtr path_publish_timer_;
 
   std::deque<OdomSample> odom_samples_;
   std::vector<Keyframe> keyframes_;
@@ -1271,9 +1399,15 @@ private:
   Pose2D estimated_pose_;
   nav_msgs::msg::Path path_;
   nav_msgs::msg::Path pose_graph_path_;
+  std::optional<Pose2D> last_path_pose_;
+  bool laser_path_dirty_{false};
+  bool pose_graph_path_dirty_{false};
   builtin_interfaces::msg::Time latest_map_stamp_;
   bool map_dirty_{false};
   std::size_t next_rebuild_keyframe_{0U};
+  std::vector<Keyframe> rebuild_keyframes_;
+  std::optional<std::vector<Keyframe>> queued_rebuild_keyframes_;
+  bool rebuild_tail_frozen_{false};
   std::chrono::steady_clock::time_point map_rebuild_started_;
   std::optional<std::size_t> last_loop_closure_node_;
   std::optional<std::future<LoopClosureProcessingResult>>

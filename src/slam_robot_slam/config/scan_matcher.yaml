@@ -18,7 +18,11 @@ scan_matcher_odometry:
     minimum_translation_for_update: 0.05
     minimum_rotation_for_update: 0.05
     maximum_local_keyframes: 20
-    maximum_path_poses: 10000
+    maximum_path_poses: 5000
+    path:
+      publish_period: 0.5
+      minimum_translation: 0.03
+      minimum_rotation: 0.03
     map:
       resolution: 0.05
       ray_stride: 2
@@ -31,6 +35,7 @@ scan_matcher_odometry:
       maximum_probability: 0.97
       padding_cells: 2
     pose_graph:
+      maximum_path_poses: 2000
       sequential_translation_stddev: 0.05
       sequential_rotation_stddev: 0.05
     loop_closure:
