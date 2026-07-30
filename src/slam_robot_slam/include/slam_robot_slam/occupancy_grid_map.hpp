@@ -42,6 +42,8 @@ public:
     const Point2D & endpoint,
     bool endpoint_is_hit);
 
+  void clear();
+
   OccupancyGridSnapshot snapshot() const;
 
   std::size_t observedCellCount() const;

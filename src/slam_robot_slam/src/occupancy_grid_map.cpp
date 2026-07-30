@@ -122,6 +122,16 @@ void OccupancyGridMap::updateRay(
   updateCell(end, endpoint_is_hit ? hit_log_odds_ : miss_log_odds_);
 }
 
+void OccupancyGridMap::clear()
+{
+  cells_.clear();
+  has_bounds_ = false;
+  minimum_x_ = 0;
+  maximum_x_ = 0;
+  minimum_y_ = 0;
+  maximum_y_ = 0;
+}
+
 OccupancyGridSnapshot OccupancyGridMap::snapshot() const
 {
   OccupancyGridSnapshot result;

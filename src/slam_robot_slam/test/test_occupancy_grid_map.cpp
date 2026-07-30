@@ -75,5 +75,25 @@ TEST(OccupancyGridMap, RejectsInvalidProbabilities)
   EXPECT_THROW(OccupancyGridMap map(parameters), std::invalid_argument);
 }
 
+TEST(OccupancyGridMap, ClearRemovesCellsAndDynamicBounds)
+{
+  OccupancyGridMapParameters parameters;
+  parameters.resolution = 1.0;
+  parameters.padding_cells = 0;
+  OccupancyGridMap map(parameters);
+  map.updateRay(Point2D{0.0F, 0.0F}, Point2D{2.0F, 0.0F}, true);
+
+  map.clear();
+
+  EXPECT_EQ(map.observedCellCount(), 0U);
+  EXPECT_TRUE(map.snapshot().data.empty());
+
+  map.updateRay(Point2D{-2.0F, 0.0F}, Point2D{-1.0F, 0.0F}, true);
+  const auto rebuilt = map.snapshot();
+  EXPECT_EQ(rebuilt.origin_cell_x, -2);
+  EXPECT_EQ(rebuilt.width, 2U);
+  EXPECT_EQ(rebuilt.height, 1U);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam

@@ -23,6 +23,8 @@ scan_matcher_odometry:
       resolution: 0.05
       ray_stride: 2
       publish_period: 0.5
+      rebuild_keyframes_per_cycle: 4
+      rebuild_period: 0.02
       hit_probability: 0.70
       miss_probability: 0.40
       minimum_probability: 0.12
