@@ -91,6 +91,20 @@ target_compile_options(
   PRIVATE -Wall -Wextra -Wpedantic
 )
 
+add_library(loop_closure_detector
+  src/loop_closure_detector.cpp
+)
+target_include_directories(loop_closure_detector
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(loop_closure_detector pose2d)
+target_compile_options(
+  loop_closure_detector
+  PRIVATE -Wall -Wextra -Wpedantic
+)
+
 add_executable(laser_scan_preprocessor_node
   src/laser_scan_preprocessor_node.cpp
 )
@@ -111,6 +125,7 @@ target_link_libraries(
   occupancy_grid_map
   pose2d
   pose_graph_2d
+  loop_closure_detector
 )
 ament_target_dependencies(
   scan_matcher_odometry_node
@@ -139,6 +154,7 @@ install(
   TARGETS
     laser_scan_preprocessor
     laser_scan_preprocessor_node
+    loop_closure_detector
     correlative_scan_matcher
     occupancy_grid_map
     point_to_line_icp
@@ -210,6 +226,16 @@ if(BUILD_TESTING)
     test_pose_graph_2d
     pose2d
     pose_graph_2d
+  )
+
+  ament_add_gtest(
+    test_loop_closure_detector
+    test/test_loop_closure_detector.cpp
+  )
+  target_link_libraries(
+    test_loop_closure_detector
+    loop_closure_detector
+    pose2d
   )
 endif()
 

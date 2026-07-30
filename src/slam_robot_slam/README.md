@@ -42,7 +42,7 @@ ros2 run slam_robot_slam save_slam_map \
 
 ## 自研 C++ SLAM
 
-当前已实现激光预处理、局部扫描匹配、基础占据栅格和位姿图骨架：
+当前已实现激光预处理、局部扫描匹配、基础占据栅格和自动回环优化：
 
 - LaserScan 有效量程、`NaN` 和 `Inf` 过滤。
 - 可配置的点间隔降采样。
@@ -59,6 +59,9 @@ ros2 run slam_robot_slam save_slam_map \
 - 自动扩展的 0.05 m 分辨率占据栅格。
 - 保存全部成功关键帧，最近 20 帧只用于局部匹配。
 - 使用 Ceres 2.2 建立二维位姿图、顺序约束和可带 Huber 核的回环约束。
+- 排除近期关键帧后按空间距离筛选历史回环候选。
+- 使用候选附近多关键帧子地图和独立高门限相关匹配验证回环。
+- 回环通过后自动运行 Ceres 优化并同步关键帧路径与当前定位。
 - 真值、轮式里程计和匹配轨迹自动对比工具。
 
 仿真已经运行时，可独立启动预处理节点：
@@ -99,6 +102,8 @@ ICP，而是参考 slam_toolbox/Karto 和 Cartographer 的成熟结构：
   -> 小范围精匹配
   -> 分数与重合点检查
   -> 成功关键帧、顺序约束
+  -> 历史候选筛选与回环子地图匹配
+  -> 回环边与 Ceres 全图优化
   -> 激光轨迹与位姿图关键帧路径
 ```
 
@@ -144,6 +149,14 @@ base_footprint -> lidar_link  robot_state_publisher
 | `map.maximum_probability` | `0.97` | log-odds 累积上限 |
 | `pose_graph.sequential_translation_stddev` | `0.05` | 顺序边平移标准差，单位 m |
 | `pose_graph.sequential_rotation_stddev` | `0.05` | 顺序边旋转标准差，单位 rad |
+| `loop_closure.minimum_keyframe_separation` | `80` | 当前帧与候选的最小关键帧间隔 |
+| `loop_closure.check_interval` | `10` | 每隔多少个关键帧检查一次回环 |
+| `loop_closure.minimum_loop_closure_interval` | `30` | 两次已接受回环的最小关键帧间隔 |
+| `loop_closure.search_radius` | `0.8` | 历史候选搜索半径，单位 m |
+| `loop_closure.maximum_candidates` | `3` | 每次最多验证的最近候选数 |
+| `loop_closure.candidate_submap_half_width` | `5` | 候选前后用于子地图的关键帧数 |
+| `loop_closure.matcher.minimum_score` | `0.55` | 回环匹配的最小相关分数 |
+| `loop_closure.matcher.minimum_matched_points` | `100` | 回环匹配的最少重合点 |
 
 运行固定路线真值测试：
 
@@ -152,9 +165,11 @@ ros2 run slam_robot_slam scan_matcher_benchmark
 ```
 
 测试工具只读取 `/ground_truth/odom` 计算误差，不会把真值反馈给匹配器。
-当前前端已持续建立关键帧节点和顺序边，Ceres 后端也已通过合成回环
-测试；但尚未自动搜索并验证真实回环，历史关键帧还不能随优化结果重投影
-并重建地图，因此仍不是完整的自研 SLAM。
+2026-07-30 的圆形闭环回归在关键帧 `2 -> 100` 自动接受真实回环：
+相关分数 `0.954`、重合点 `354`，Ceres 代价从 `0.020000` 降到
+`0.000154`，4 次迭代收敛。历史关键帧目前还不能随优化结果重投影并
+重建占据栅格，因此黑白地图不会立刻消除优化前的重影；这是下一开发
+步骤，不影响已优化的紫色位姿图路径和当前定位。
 
 录制算法输入和真值：
 

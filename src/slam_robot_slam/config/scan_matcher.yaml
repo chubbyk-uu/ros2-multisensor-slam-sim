@@ -31,6 +31,31 @@ scan_matcher_odometry:
     pose_graph:
       sequential_translation_stddev: 0.05
       sequential_rotation_stddev: 0.05
+    loop_closure:
+      enabled: true
+      minimum_keyframe_separation: 80
+      check_interval: 10
+      minimum_loop_closure_interval: 30
+      search_radius: 0.8
+      maximum_candidates: 3
+      candidate_submap_half_width: 5
+      translation_stddev: 0.05
+      rotation_stddev: 0.05
+      optimization_maximum_iterations: 50
+      huber_scale: 1.0
+      matcher:
+        grid_resolution: 0.03
+        smear_deviation: 0.10
+        linear_search_window: 0.40
+        angular_search_window: 0.50
+        coarse_linear_resolution: 0.05
+        coarse_angular_resolution: 0.05
+        fine_linear_resolution: 0.01
+        fine_angular_resolution: 0.01
+        translation_penalty_weight: 0.05
+        rotation_penalty_weight: 0.05
+        minimum_score: 0.55
+        minimum_matched_points: 100
     matcher:
       grid_resolution: 0.02
       smear_deviation: 0.10

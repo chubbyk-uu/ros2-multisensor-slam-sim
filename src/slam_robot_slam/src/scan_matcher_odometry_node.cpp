@@ -7,6 +7,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "slam_robot_slam/correlative_scan_matcher.hpp"
 #include "slam_robot_slam/laser_scan_preprocessor.hpp"
+#include "slam_robot_slam/loop_closure_detector.hpp"
 #include "slam_robot_slam/occupancy_grid_map.hpp"
 #include "slam_robot_slam/pose_graph_2d.hpp"
 #include "tf2_ros/buffer.hpp"
@@ -118,6 +120,36 @@ public:
     const double sequential_rotation_stddev =
       declare_parameter<double>(
       "pose_graph.sequential_rotation_stddev", 0.05);
+    loop_closure_enabled_ =
+      declare_parameter<bool>("loop_closure.enabled", true);
+    const auto minimum_keyframe_separation =
+      declare_parameter<int64_t>(
+      "loop_closure.minimum_keyframe_separation", 80);
+    const auto loop_closure_check_interval =
+      declare_parameter<int64_t>(
+      "loop_closure.check_interval", 10);
+    const auto minimum_loop_closure_interval =
+      declare_parameter<int64_t>(
+      "loop_closure.minimum_loop_closure_interval", 30);
+    loop_candidate_parameters_.search_radius =
+      declare_parameter<double>("loop_closure.search_radius", 0.8);
+    const auto maximum_loop_candidates =
+      declare_parameter<int64_t>(
+      "loop_closure.maximum_candidates", 3);
+    const auto candidate_submap_half_width =
+      declare_parameter<int64_t>(
+      "loop_closure.candidate_submap_half_width", 5);
+    const double loop_translation_stddev =
+      declare_parameter<double>(
+      "loop_closure.translation_stddev", 0.05);
+    const double loop_rotation_stddev =
+      declare_parameter<double>(
+      "loop_closure.rotation_stddev", 0.05);
+    const auto optimization_maximum_iterations =
+      declare_parameter<int64_t>(
+      "loop_closure.optimization_maximum_iterations", 50);
+    pose_graph_optimization_options_.loop_closure_huber_scale =
+      declare_parameter<double>("loop_closure.huber_scale", 1.0);
 
     OccupancyGridMapParameters map_parameters;
     map_parameters.resolution =
@@ -157,6 +189,43 @@ public:
     const auto minimum_matched_points =
       declare_parameter<int64_t>("matcher.minimum_matched_points", 40);
 
+    loop_matcher_parameters_.grid_resolution =
+      declare_parameter<double>(
+      "loop_closure.matcher.grid_resolution", 0.03);
+    loop_matcher_parameters_.smear_deviation =
+      declare_parameter<double>(
+      "loop_closure.matcher.smear_deviation", 0.10);
+    loop_matcher_parameters_.linear_search_window =
+      declare_parameter<double>(
+      "loop_closure.matcher.linear_search_window", 0.40);
+    loop_matcher_parameters_.angular_search_window =
+      declare_parameter<double>(
+      "loop_closure.matcher.angular_search_window", 0.50);
+    loop_matcher_parameters_.coarse_linear_resolution =
+      declare_parameter<double>(
+      "loop_closure.matcher.coarse_linear_resolution", 0.05);
+    loop_matcher_parameters_.coarse_angular_resolution =
+      declare_parameter<double>(
+      "loop_closure.matcher.coarse_angular_resolution", 0.05);
+    loop_matcher_parameters_.fine_linear_resolution =
+      declare_parameter<double>(
+      "loop_closure.matcher.fine_linear_resolution", 0.01);
+    loop_matcher_parameters_.fine_angular_resolution =
+      declare_parameter<double>(
+      "loop_closure.matcher.fine_angular_resolution", 0.01);
+    loop_matcher_parameters_.translation_penalty_weight =
+      declare_parameter<double>(
+      "loop_closure.matcher.translation_penalty_weight", 0.05);
+    loop_matcher_parameters_.rotation_penalty_weight =
+      declare_parameter<double>(
+      "loop_closure.matcher.rotation_penalty_weight", 0.05);
+    loop_matcher_parameters_.minimum_score =
+      declare_parameter<double>(
+      "loop_closure.matcher.minimum_score", 0.55);
+    const auto minimum_loop_matched_points =
+      declare_parameter<int64_t>(
+      "loop_closure.matcher.minimum_matched_points", 100);
+
     if (minimum_range_ < 0.0 || maximum_range_ <= minimum_range_ ||
       point_stride < 1 || maximum_odom_age_ <= 0.0 ||
       minimum_translation_for_update_ < 0.0 ||
@@ -166,7 +235,16 @@ public:
       map_publish_period <= 0.0 || map_padding_cells < 0 ||
       map_padding_cells > std::numeric_limits<int>::max() ||
       sequential_translation_stddev <= 0.0 ||
-      sequential_rotation_stddev <= 0.0)
+      sequential_rotation_stddev <= 0.0 ||
+      minimum_keyframe_separation < 1 ||
+      loop_closure_check_interval < 1 ||
+      minimum_loop_closure_interval < 1 ||
+      maximum_loop_candidates < 1 ||
+      candidate_submap_half_width < 0 ||
+      loop_translation_stddev <= 0.0 ||
+      loop_rotation_stddev <= 0.0 ||
+      optimization_maximum_iterations < 1 ||
+      minimum_loop_matched_points < 1)
     {
       throw std::invalid_argument("Invalid scan matcher node parameters");
     }
@@ -175,12 +253,28 @@ public:
       static_cast<std::size_t>(maximum_local_keyframes);
     matcher_parameters_.minimum_matched_points =
       static_cast<std::size_t>(minimum_matched_points);
+    loop_candidate_parameters_.minimum_keyframe_separation =
+      static_cast<std::size_t>(minimum_keyframe_separation);
+    loop_candidate_parameters_.maximum_candidates =
+      static_cast<std::size_t>(maximum_loop_candidates);
+    loop_closure_check_interval_ =
+      static_cast<std::size_t>(loop_closure_check_interval);
+    minimum_loop_closure_interval_ =
+      static_cast<std::size_t>(minimum_loop_closure_interval);
+    candidate_submap_half_width_ =
+      static_cast<std::size_t>(candidate_submap_half_width);
+    loop_matcher_parameters_.minimum_matched_points =
+      static_cast<std::size_t>(minimum_loop_matched_points);
+    pose_graph_optimization_options_.maximum_iterations =
+      static_cast<int>(optimization_maximum_iterations);
     map_ray_stride_ = static_cast<std::size_t>(map_ray_stride);
     map_parameters.padding_cells = static_cast<int>(map_padding_cells);
     sequential_translation_weight_ =
       1.0 / sequential_translation_stddev;
     sequential_rotation_weight_ =
       1.0 / sequential_rotation_stddev;
+    loop_translation_weight_ = 1.0 / loop_translation_stddev;
+    loop_rotation_weight_ = 1.0 / loop_rotation_stddev;
     occupancy_grid_map_ =
       std::make_unique<OccupancyGridMap>(map_parameters);
 
@@ -245,6 +339,14 @@ public:
       map_topic.c_str(),
       map_frame_.c_str(),
       map_parameters.resolution);
+    RCLCPP_INFO(
+      get_logger(),
+      "Loop closure %s: history >= %zu keyframes, radius %.2f m, "
+      "check every %zu keyframes",
+      loop_closure_enabled_ ? "enabled" : "disabled",
+      loop_candidate_parameters_.minimum_keyframe_separation,
+      loop_candidate_parameters_.search_radius,
+      loop_closure_check_interval_);
   }
 
 private:
@@ -256,6 +358,7 @@ private:
 
   struct Keyframe
   {
+    builtin_interfaces::msg::Time stamp;
     Pose2D pose;
     std::vector<Point2D> points;
   };
@@ -434,7 +537,7 @@ private:
     const Pose2D & pose,
     const std::vector<Point2D> & points)
   {
-    keyframes_.push_back(Keyframe{pose, points});
+    keyframes_.push_back(Keyframe{stamp, pose, points});
 
     const std::size_t node_id = pose_graph_.addNode(pose);
     if (node_id > 0U) {
@@ -460,13 +563,166 @@ private:
     pose_graph_path_.poses.push_back(graph_pose);
     pose_graph_path_publisher_->publish(pose_graph_path_);
 
+    tryLoopClosure(node_id, stamp);
+
     RCLCPP_INFO_THROTTLE(
       get_logger(),
       *get_clock(),
       5000,
-      "Pose graph contains %zu nodes and %zu sequential constraints",
+      "Pose graph contains %zu nodes and %zu constraints",
       pose_graph_.nodes().size(),
       pose_graph_.constraints().size());
+  }
+
+  std::vector<Point2D> buildLoopClosureReferencePoints(
+    const std::size_t candidate_id,
+    const std::size_t current_id) const
+  {
+    const std::size_t latest_historical_id =
+      current_id -
+      loop_candidate_parameters_.minimum_keyframe_separation;
+    const std::size_t first_id =
+      candidate_id > candidate_submap_half_width_ ?
+      candidate_id - candidate_submap_half_width_ : 0U;
+    const std::size_t last_id = std::min(
+      candidate_id + candidate_submap_half_width_,
+      latest_historical_id);
+
+    std::size_t total_points = 0U;
+    for (std::size_t index = first_id; index <= last_id; ++index) {
+      total_points += keyframes_[index].points.size();
+    }
+
+    std::vector<Point2D> reference_points;
+    reference_points.reserve(total_points);
+    for (std::size_t index = first_id; index <= last_id; ++index) {
+      const auto & keyframe = keyframes_[index];
+      std::transform(
+        keyframe.points.begin(),
+        keyframe.points.end(),
+        std::back_inserter(reference_points),
+        [&keyframe](const Point2D & point) {
+          return transformPoint(keyframe.pose, point);
+        });
+    }
+    return reference_points;
+  }
+
+  void rebuildPoseGraphPath(
+    const builtin_interfaces::msg::Time & latest_stamp)
+  {
+    pose_graph_path_.poses.clear();
+    pose_graph_path_.poses.reserve(pose_graph_.nodes().size());
+    for (std::size_t index = 0U;
+      index < pose_graph_.nodes().size(); ++index)
+    {
+      geometry_msgs::msg::PoseStamped graph_pose;
+      graph_pose.header.stamp = keyframes_[index].stamp;
+      graph_pose.header.frame_id = map_frame_;
+      graph_pose.pose.position.x = pose_graph_.nodes()[index].pose.x;
+      graph_pose.pose.position.y = pose_graph_.nodes()[index].pose.y;
+      graph_pose.pose.orientation =
+        yawToQuaternion(pose_graph_.nodes()[index].pose.yaw);
+      pose_graph_path_.poses.push_back(graph_pose);
+    }
+    pose_graph_path_.header.stamp = latest_stamp;
+    pose_graph_path_.header.frame_id = map_frame_;
+    pose_graph_path_publisher_->publish(pose_graph_path_);
+  }
+
+  bool tryLoopClosure(
+    const std::size_t current_id,
+    const builtin_interfaces::msg::Time & stamp)
+  {
+    if (!loop_closure_enabled_ ||
+      current_id <
+      loop_candidate_parameters_.minimum_keyframe_separation ||
+      current_id % loop_closure_check_interval_ != 0U ||
+      (last_loop_closure_node_.has_value() &&
+      current_id - *last_loop_closure_node_ <
+      minimum_loop_closure_interval_))
+    {
+      return false;
+    }
+
+    std::vector<Pose2D> graph_poses;
+    graph_poses.reserve(pose_graph_.nodes().size());
+    for (const auto & node : pose_graph_.nodes()) {
+      graph_poses.push_back(node.pose);
+    }
+    const auto candidates = findLoopClosureCandidates(
+      graph_poses, current_id, loop_candidate_parameters_);
+    if (candidates.empty()) {
+      return false;
+    }
+
+    bool found_match = false;
+    std::size_t best_candidate_id = 0U;
+    CorrelativeScanMatcherResult best_match;
+    for (const auto & candidate : candidates) {
+      const auto reference_points =
+        buildLoopClosureReferencePoints(candidate.keyframe_id, current_id);
+      const auto match = matchCorrelative(
+        reference_points,
+        keyframes_[current_id].points,
+        graph_poses[current_id],
+        loop_matcher_parameters_);
+      if (match.success &&
+        (!found_match || match.score > best_match.score))
+      {
+        found_match = true;
+        best_candidate_id = candidate.keyframe_id;
+        best_match = match;
+      }
+    }
+    if (!found_match) {
+      RCLCPP_DEBUG(
+        get_logger(),
+        "Rejected %zu loop closure candidates for keyframe %zu",
+        candidates.size(),
+        current_id);
+      return false;
+    }
+
+    pose_graph_.addConstraint(
+      PoseGraphConstraint{
+        best_candidate_id,
+        current_id,
+        relativePose(graph_poses[best_candidate_id], best_match.pose),
+        loop_translation_weight_,
+        loop_rotation_weight_,
+        PoseGraphConstraintType::kLoopClosure});
+    last_loop_closure_node_ = current_id;
+    const auto optimization =
+      pose_graph_.optimize(pose_graph_optimization_options_);
+    if (!optimization.success) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "Pose graph optimization failed after loop closure %zu -> %zu",
+        best_candidate_id,
+        current_id);
+      return false;
+    }
+
+    for (std::size_t index = 0U; index < keyframes_.size(); ++index) {
+      keyframes_[index].pose = pose_graph_.nodes()[index].pose;
+    }
+    estimated_pose_ = pose_graph_.nodes()[current_id].pose;
+    last_matched_pose_ = estimated_pose_;
+    rebuildPoseGraphPath(stamp);
+
+    RCLCPP_INFO(
+      get_logger(),
+      "Accepted loop closure %zu -> %zu: score=%.3f points=%zu, "
+      "Ceres cost %.6f -> %.6f in %d iterations",
+      best_candidate_id,
+      current_id,
+      best_match.score,
+      best_match.matched_points,
+      optimization.initial_cost,
+      optimization.final_cost,
+      optimization.iterations);
+    return true;
   }
 
   std::vector<Point2D> buildLocalReferencePoints() const
@@ -668,7 +924,16 @@ private:
   std::size_t map_ray_stride_;
   double sequential_translation_weight_;
   double sequential_rotation_weight_;
+  bool loop_closure_enabled_;
+  LoopClosureCandidateParameters loop_candidate_parameters_;
+  std::size_t loop_closure_check_interval_;
+  std::size_t minimum_loop_closure_interval_;
+  std::size_t candidate_submap_half_width_;
+  double loop_translation_weight_;
+  double loop_rotation_weight_;
+  PoseGraphOptimizationOptions pose_graph_optimization_options_;
   CorrelativeScanMatcherParameters matcher_parameters_;
+  CorrelativeScanMatcherParameters loop_matcher_parameters_;
   std::unique_ptr<OccupancyGridMap> occupancy_grid_map_;
   PoseGraph2D pose_graph_;
 
@@ -699,6 +964,7 @@ private:
   nav_msgs::msg::Path pose_graph_path_;
   builtin_interfaces::msg::Time latest_map_stamp_;
   bool map_dirty_{false};
+  std::optional<std::size_t> last_loop_closure_node_;
 };
 
 }  // namespace slam_robot_slam
