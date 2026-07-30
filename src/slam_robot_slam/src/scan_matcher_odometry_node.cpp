@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <future>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -26,6 +27,7 @@
 #include "slam_robot_slam/correlative_scan_matcher.hpp"
 #include "slam_robot_slam/laser_scan_preprocessor.hpp"
 #include "slam_robot_slam/loop_closure_detector.hpp"
+#include "slam_robot_slam/loop_closure_processor.hpp"
 #include "slam_robot_slam/occupancy_grid_map.hpp"
 #include "slam_robot_slam/pose_graph_2d.hpp"
 #include "tf2_ros/buffer.hpp"
@@ -374,7 +376,7 @@ public:
     map_rebuild_timer_ = create_wall_timer(
       std::chrono::duration<double>(map_rebuild_period),
       std::bind(
-        &ScanMatcherOdometryNode::processMapRebuildBatch,
+        &ScanMatcherOdometryNode::backgroundMaintenanceCallback,
         this));
 
     path_.header.frame_id = map_frame_;
@@ -413,7 +415,7 @@ private:
   {
     builtin_interfaces::msg::Time stamp;
     Pose2D pose;
-    std::vector<Point2D> points;
+    std::shared_ptr<const std::vector<Point2D>> points;
     Point2D sensor_origin;
     struct MapRayObservation
     {
@@ -531,6 +533,7 @@ private:
   void laserScanCallback(
     const sensor_msgs::msg::LaserScan::ConstSharedPtr scan)
   {
+    applyCompletedLoopClosure();
     try {
       processLaserScan(scan);
     } catch (const std::exception & error) {
@@ -669,7 +672,7 @@ private:
     Keyframe keyframe{
       stamp,
       pose,
-      points,
+      std::make_shared<const std::vector<Point2D>>(points),
       Point2D{
         static_cast<float>(base_from_laser.x),
         static_cast<float>(base_from_laser.y)},
@@ -722,8 +725,8 @@ private:
     pose_graph_path_.poses.push_back(graph_pose);
     pose_graph_path_publisher_->publish(pose_graph_path_);
 
-    tryLoopClosure(node_id, stamp);
     integrateKeyframeIntoActiveMap(keyframes_.back());
+    startLoopClosure(node_id);
 
     RCLCPP_INFO_THROTTLE(
       get_logger(),
@@ -732,41 +735,6 @@ private:
       "Pose graph contains %zu nodes and %zu constraints",
       pose_graph_.nodes().size(),
       pose_graph_.constraints().size());
-  }
-
-  std::vector<Point2D> buildLoopClosureReferencePoints(
-    const std::size_t candidate_id,
-    const std::size_t current_id) const
-  {
-    validateKeyframeGraphInvariant();
-    const std::size_t latest_historical_id =
-      current_id -
-      loop_candidate_parameters_.minimum_keyframe_separation;
-    const std::size_t first_id =
-      candidate_id > candidate_submap_half_width_ ?
-      candidate_id - candidate_submap_half_width_ : 0U;
-    const std::size_t last_id = std::min(
-      candidate_id + candidate_submap_half_width_,
-      latest_historical_id);
-
-    std::size_t total_points = 0U;
-    for (std::size_t index = first_id; index <= last_id; ++index) {
-      total_points += keyframes_[index].points.size();
-    }
-
-    std::vector<Point2D> reference_points;
-    reference_points.reserve(total_points);
-    for (std::size_t index = first_id; index <= last_id; ++index) {
-      const auto & keyframe = keyframes_[index];
-      std::transform(
-        keyframe.points.begin(),
-        keyframe.points.end(),
-        std::back_inserter(reference_points),
-        [&keyframe](const Point2D & point) {
-          return transformPoint(keyframe.pose, point);
-        });
-    }
-    return reference_points;
   }
 
   void rebuildPoseGraphPath(
@@ -792,12 +760,11 @@ private:
     pose_graph_path_publisher_->publish(pose_graph_path_);
   }
 
-  bool tryLoopClosure(
-    const std::size_t current_id,
-    const builtin_interfaces::msg::Time & stamp)
+  void startLoopClosure(const std::size_t current_id)
   {
     validateKeyframeGraphInvariant();
     if (!loop_closure_enabled_ ||
+      loop_closure_future_.has_value() ||
       current_id <
       loop_candidate_parameters_.minimum_keyframe_separation ||
       current_id % loop_closure_check_interval_ != 0U ||
@@ -805,90 +772,155 @@ private:
       current_id - *last_loop_closure_node_ <
       minimum_loop_closure_interval_))
     {
-      return false;
+      return;
     }
 
-    std::vector<Pose2D> graph_poses;
-    graph_poses.reserve(pose_graph_.nodes().size());
-    for (const auto & node : pose_graph_.nodes()) {
-      graph_poses.push_back(node.pose);
-    }
-    const auto candidates = findLoopClosureCandidates(
-      graph_poses, current_id, loop_candidate_parameters_);
-    if (candidates.empty()) {
-      return false;
+    std::vector<LoopClosureKeyframe2D> loop_keyframes;
+    loop_keyframes.reserve(keyframes_.size());
+    for (const auto & keyframe : keyframes_) {
+      loop_keyframes.push_back(
+        LoopClosureKeyframe2D{keyframe.pose, keyframe.points});
     }
 
-    bool found_match = false;
-    std::size_t best_candidate_id = 0U;
-    CorrelativeScanMatcherResult best_match;
-    for (const auto & candidate : candidates) {
-      const auto reference_points =
-        buildLoopClosureReferencePoints(candidate.keyframe_id, current_id);
-      const auto match = matchCorrelative(
-        reference_points,
-        keyframes_[current_id].points,
-        graph_poses[current_id],
-        loop_matcher_parameters_);
-      if (match.success &&
-        (!found_match || match.score > best_match.score))
-      {
-        found_match = true;
-        best_candidate_id = candidate.keyframe_id;
-        best_match = match;
-      }
+    LoopClosureProcessorParameters parameters;
+    parameters.candidate = loop_candidate_parameters_;
+    parameters.candidate_submap_half_width =
+      candidate_submap_half_width_;
+    parameters.matcher = loop_matcher_parameters_;
+    parameters.translation_weight = loop_translation_weight_;
+    parameters.rotation_weight = loop_rotation_weight_;
+    parameters.optimization = pose_graph_optimization_options_;
+    PoseGraph2D graph_snapshot = pose_graph_;
+    loop_closure_job_started_ = std::chrono::steady_clock::now();
+    try {
+      loop_closure_future_.emplace(
+        std::async(
+          std::launch::async,
+          [
+            loop_keyframes = std::move(loop_keyframes),
+            graph_snapshot = std::move(graph_snapshot),
+            current_id,
+            parameters
+          ]() mutable {
+            return processLoopClosure(
+              loop_keyframes,
+              std::move(graph_snapshot),
+              current_id,
+              parameters);
+          }));
+    } catch (const std::exception & error) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "Failed to start loop closure worker: %s",
+        error.what());
     }
-    if (!found_match) {
+  }
+
+  void applyCompletedLoopClosure()
+  {
+    if (!loop_closure_future_.has_value() ||
+      loop_closure_future_->wait_for(std::chrono::seconds(0)) !=
+      std::future_status::ready)
+    {
+      return;
+    }
+
+    LoopClosureProcessingResult result;
+    try {
+      result = loop_closure_future_->get();
+    } catch (const std::exception & error) {
+      loop_closure_future_.reset();
+      RCLCPP_ERROR(
+        get_logger(),
+        "Loop closure worker failed: %s",
+        error.what());
+      return;
+    }
+    loop_closure_future_.reset();
+    if (!result.accepted) {
       RCLCPP_DEBUG(
         get_logger(),
         "Rejected %zu loop closure candidates for keyframe %zu",
-        candidates.size(),
-        current_id);
-      return false;
+        result.evaluated_candidates,
+        result.current_id);
+      return;
     }
 
-    PoseGraph2D optimized_graph = pose_graph_;
-    optimized_graph.addConstraint(
-      PoseGraphConstraint{
-        best_candidate_id,
-        current_id,
-        relativePose(graph_poses[best_candidate_id], best_match.pose),
-        loop_translation_weight_,
-        loop_rotation_weight_,
-        PoseGraphConstraintType::kLoopClosure});
-    const auto optimization =
-      optimized_graph.optimize(pose_graph_optimization_options_);
-    if (!optimization.success) {
+    try {
+      validateKeyframeGraphInvariant();
+      if (result.current_id >= keyframes_.size() ||
+        result.optimized_graph.nodes().size() !=
+        result.current_id + 1U)
+      {
+        throw std::logic_error(
+                "Loop closure result does not match the live graph prefix");
+      }
+
+      const Pose2D old_latest_keyframe_pose = keyframes_.back().pose;
+      const Pose2D latest_to_estimate =
+        relativePose(old_latest_keyframe_pose, estimated_pose_);
+      const Pose2D latest_to_last_match =
+        relativePose(old_latest_keyframe_pose, last_matched_pose_);
+      const Pose2D old_anchor_pose =
+        pose_graph_.nodes()[result.current_id].pose;
+      const Pose2D new_anchor_pose =
+        result.optimized_graph.nodes()[result.current_id].pose;
+      const Pose2D map_correction =
+        composePoses(new_anchor_pose, inversePose(old_anchor_pose));
+
+      std::vector<Pose2D> merged_poses;
+      merged_poses.reserve(pose_graph_.nodes().size());
+      for (std::size_t index = 0U;
+        index <= result.current_id; ++index)
+      {
+        merged_poses.push_back(
+          result.optimized_graph.nodes()[index].pose);
+      }
+      for (std::size_t index = result.current_id + 1U;
+        index < pose_graph_.nodes().size(); ++index)
+      {
+        merged_poses.push_back(
+          composePoses(map_correction, pose_graph_.nodes()[index].pose));
+      }
+
+      PoseGraph2D merged_graph = pose_graph_;
+      merged_graph.addConstraint(result.constraint);
+      merged_graph.setNodePoses(merged_poses);
+      pose_graph_ = std::move(merged_graph);
+      for (std::size_t index = 0U; index < keyframes_.size(); ++index) {
+        keyframes_[index].pose = merged_poses[index];
+      }
+      estimated_pose_ =
+        composePoses(keyframes_.back().pose, latest_to_estimate);
+      last_matched_pose_ =
+        composePoses(keyframes_.back().pose, latest_to_last_match);
+      last_loop_closure_node_ = result.current_id;
+      rebuildPoseGraphPath(keyframes_.back().stamp);
+      startMapRebuild();
+    } catch (const std::exception & error) {
       RCLCPP_ERROR(
         get_logger(),
-        "Pose graph optimization failed after loop closure %zu -> %zu",
-        best_candidate_id,
-        current_id);
-      return false;
+        "Discarded incompatible loop closure result: %s",
+        error.what());
+      return;
     }
 
-    pose_graph_ = std::move(optimized_graph);
-    last_loop_closure_node_ = current_id;
-    for (std::size_t index = 0U; index < keyframes_.size(); ++index) {
-      keyframes_[index].pose = pose_graph_.nodes()[index].pose;
-    }
-    estimated_pose_ = pose_graph_.nodes()[current_id].pose;
-    last_matched_pose_ = estimated_pose_;
-    rebuildPoseGraphPath(stamp);
-    startMapRebuild();
-
+    const double elapsed_milliseconds =
+      std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() -
+      loop_closure_job_started_).count();
     RCLCPP_INFO(
       get_logger(),
       "Accepted loop closure %zu -> %zu: score=%.3f points=%zu, "
-      "Ceres cost %.6f -> %.6f in %d iterations",
-      best_candidate_id,
-      current_id,
-      best_match.score,
-      best_match.matched_points,
-      optimization.initial_cost,
-      optimization.final_cost,
-      optimization.iterations);
-    return true;
+      "Ceres cost %.6f -> %.6f in %d iterations (worker %.1f ms)",
+      result.candidate_id,
+      result.current_id,
+      result.match.score,
+      result.match.matched_points,
+      result.optimization.initial_cost,
+      result.optimization.final_cost,
+      result.optimization.iterations,
+      elapsed_milliseconds);
   }
 
   std::vector<Point2D> buildLocalReferencePoints() const
@@ -901,7 +933,7 @@ private:
     for (std::size_t index = first_keyframe;
       index < keyframes_.size(); ++index)
     {
-      total_points += keyframes_[index].points.size();
+      total_points += keyframes_[index].points->size();
     }
 
     std::vector<Point2D> reference_points;
@@ -911,8 +943,8 @@ private:
     {
       const auto & keyframe = keyframes_[index];
       std::transform(
-        keyframe.points.begin(),
-        keyframe.points.end(),
+        keyframe.points->begin(),
+        keyframe.points->end(),
         std::back_inserter(reference_points),
         [&keyframe](const Point2D & point) {
           return transformPoint(keyframe.pose, point);
@@ -1067,6 +1099,12 @@ private:
       next_rebuild_keyframe_,
       elapsed_milliseconds);
     publishMapIfDirty();
+  }
+
+  void backgroundMaintenanceCallback()
+  {
+    applyCompletedLoopClosure();
+    processMapRebuildBatch();
   }
 
   void publishMapIfDirty()
@@ -1238,6 +1276,9 @@ private:
   std::size_t next_rebuild_keyframe_{0U};
   std::chrono::steady_clock::time_point map_rebuild_started_;
   std::optional<std::size_t> last_loop_closure_node_;
+  std::optional<std::future<LoopClosureProcessingResult>>
+  loop_closure_future_;
+  std::chrono::steady_clock::time_point loop_closure_job_started_;
 };
 
 }  // namespace slam_robot_slam

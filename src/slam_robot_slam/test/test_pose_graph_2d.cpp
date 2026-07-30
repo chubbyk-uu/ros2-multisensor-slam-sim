@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 #include "slam_robot_slam/pose_graph_2d.hpp"
@@ -155,6 +156,30 @@ TEST(PoseGraph2D, RollsBackNodesAndConstraints)
   EXPECT_EQ(graph.nodes().size(), 1U);
   EXPECT_TRUE(graph.constraints().empty());
   EXPECT_THROW(graph.removeConstraint(0U), std::out_of_range);
+}
+
+TEST(PoseGraph2D, ReplacesNodePosesAtomically)
+{
+  PoseGraph2D graph;
+  graph.addNode(Pose2D{});
+  graph.addNode(Pose2D{1.0, 0.0, 0.0});
+
+  graph.setNodePoses(
+    std::vector<Pose2D>{
+      Pose2D{0.0, 0.0, 0.0},
+      Pose2D{2.0, 1.0, 7.0}});
+  EXPECT_NEAR(graph.nodes()[1].pose.x, 2.0, 1.0e-12);
+  EXPECT_NEAR(graph.nodes()[1].pose.yaw, normalizeAngle(7.0), 1.0e-12);
+
+  const auto poses_before = graph.nodes();
+  EXPECT_THROW(
+    graph.setNodePoses(
+      std::vector<Pose2D>{
+        Pose2D{},
+        Pose2D{std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0}}),
+    std::invalid_argument);
+  EXPECT_EQ(graph.nodes()[1].pose.x, poses_before[1].pose.x);
+  EXPECT_THROW(graph.setNodePoses(std::vector<Pose2D>{Pose2D{}}), std::invalid_argument);
 }
 
 }  // namespace

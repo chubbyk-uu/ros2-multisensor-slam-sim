@@ -52,6 +52,7 @@ public:
   void removeLastNode();
   std::size_t addConstraint(const PoseGraphConstraint & constraint);
   void removeConstraint(std::size_t constraint_id);
+  void setNodePoses(const std::vector<Pose2D> & poses);
 
   PoseGraphOptimizationSummary optimize(
     const PoseGraphOptimizationOptions & options = {});

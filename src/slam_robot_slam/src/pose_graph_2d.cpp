@@ -163,6 +163,26 @@ void PoseGraph2D::removeConstraint(const std::size_t constraint_id)
     static_cast<std::ptrdiff_t>(constraint_id));
 }
 
+void PoseGraph2D::setNodePoses(const std::vector<Pose2D> & poses)
+{
+  if (poses.size() != nodes_.size()) {
+    throw std::invalid_argument(
+            "Pose graph update must contain one pose per node");
+  }
+  for (const auto & pose : poses) {
+    if (!isFinitePose(pose)) {
+      throw std::invalid_argument(
+              "Pose graph update must contain only finite poses");
+    }
+  }
+  for (std::size_t index = 0U; index < poses.size(); ++index) {
+    nodes_[index].pose = Pose2D{
+      poses[index].x,
+      poses[index].y,
+      normalizeAngle(poses[index].yaw)};
+  }
+}
+
 void PoseGraph2D::validateConnectedGraph() const
 {
   if (nodes_.size() < 2U) {
