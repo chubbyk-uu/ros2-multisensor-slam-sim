@@ -62,6 +62,20 @@ target_compile_options(
   PRIVATE -Wall -Wextra -Wpedantic
 )
 
+add_library(occupancy_grid_map
+  src/occupancy_grid_map.cpp
+)
+target_include_directories(occupancy_grid_map
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(occupancy_grid_map laser_scan_preprocessor)
+target_compile_options(
+  occupancy_grid_map
+  PRIVATE -Wall -Wextra -Wpedantic
+)
+
 add_executable(laser_scan_preprocessor_node
   src/laser_scan_preprocessor_node.cpp
 )
@@ -79,6 +93,7 @@ target_link_libraries(
   scan_matcher_odometry_node
   correlative_scan_matcher
   laser_scan_preprocessor
+  occupancy_grid_map
   pose2d
 )
 ament_target_dependencies(
@@ -109,6 +124,7 @@ install(
     laser_scan_preprocessor
     laser_scan_preprocessor_node
     correlative_scan_matcher
+    occupancy_grid_map
     point_to_line_icp
     pose2d
     scan_matcher_odometry_node
@@ -157,6 +173,16 @@ if(BUILD_TESTING)
     correlative_scan_matcher
     laser_scan_preprocessor
     pose2d
+  )
+
+  ament_add_gtest(
+    test_occupancy_grid_map
+    test/test_occupancy_grid_map.cpp
+  )
+  target_link_libraries(
+    test_occupancy_grid_map
+    laser_scan_preprocessor
+    occupancy_grid_map
   )
 endif()
 

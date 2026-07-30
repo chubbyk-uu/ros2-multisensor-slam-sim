@@ -42,7 +42,7 @@ ros2 run slam_robot_slam save_slam_map \
 
 ## 自研 C++ SLAM
 
-当前已实现激光预处理和局部扫描匹配前端：
+当前已实现激光预处理、局部扫描匹配前端和基础占据栅格：
 
 - LaserScan 有效量程、`NaN` 和 `Inf` 过滤。
 - 可配置的点间隔降采样。
@@ -55,6 +55,8 @@ ros2 run slam_robot_slam save_slam_map \
 - Karto 风格的相关栅格粗到细搜索。
 - 当前扫描到最近 20 个关键帧局部子图的匹配。
 - 匹配分数、最少重合点和失败回退机制。
+- 基于关键帧的射线清空、末端占用和 log-odds 概率更新。
+- 自动扩展的 0.05 m 分辨率占据栅格。
 - 真值、轮式里程计和匹配轨迹自动对比工具。
 
 仿真已经运行时，可独立启动预处理节点：
@@ -69,7 +71,11 @@ ros2 launch slam_robot_slam custom_slam.launch.py
 ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
-专用 RViz 使用 `odom` 固定坐标系：红色为原始 `/scan`，绿色为预处理点集，青色为局部子图匹配后的扫描，黄色为匹配轨迹。当前阶段不会发布 `/map` 或 `map -> odom`，不会与 SLAM Toolbox 抢占 TF。
+专用 RViz 使用 `map` 固定坐标系：黑白栅格为自研地图，红色为原始
+`/scan`，绿色为预处理点集，青色为局部子图匹配后的扫描，黄色为匹配
+轨迹。当前阶段发布 `/custom_slam/map` 和 `map -> odom`，但不会发布
+标准 `/map`。自研入口与 SLAM Toolbox 入口不能同时运行，避免重复发布
+同一段 TF。
 
 参数位于 `config/laser_preprocessor.yaml`：
 
@@ -99,7 +105,33 @@ ICP，而是参考 slam_toolbox/Karto 和 Cartographer 的成熟结构：
 | --- | --- | --- |
 | `/custom_slam/laser_odom` | `nav_msgs/Odometry` | 匹配前端估计位姿 |
 | `/custom_slam/laser_path` | `nav_msgs/Path` | 匹配轨迹 |
-| `/custom_slam/aligned_scan_points` | `sensor_msgs/PointCloud2` | 对齐到 `odom` 的当前扫描 |
+| `/custom_slam/aligned_scan_points` | `sensor_msgs/PointCloud2` | 对齐到 `map` 的当前扫描 |
+| `/custom_slam/map` | `nav_msgs/OccupancyGrid` | `map` 坐标系下的关键帧占据栅格 |
+
+TF 发布职责：
+
+```text
+map -> odom                 自研扫描匹配前端
+odom -> base_footprint      Gazebo 差速驱动里程计
+base_footprint -> lidar_link  robot_state_publisher
+```
+
+`map -> odom` 按 `T_map_base × inverse(T_odom_base)` 计算。这样轮式里程计
+即使累计漂移，原始激光和机器人模型在 RViz 的 `map` 坐标系下仍会与
+匹配地图对齐。
+
+地图参数也位于 `config/scan_matcher.yaml`：
+
+| 参数 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `map_frame` | `map` | 自研地图、轨迹和匹配位姿坐标系 |
+| `map.resolution` | `0.05` | 地图分辨率，单位 m/cell |
+| `map.ray_stride` | `2` | 每隔多少束激光执行一次地图更新 |
+| `map.publish_period` | `0.5` | 地图发布周期，单位 s |
+| `map.hit_probability` | `0.70` | 命中单元的概率更新 |
+| `map.miss_probability` | `0.40` | 射线穿过单元的空闲概率更新 |
+| `map.minimum_probability` | `0.12` | log-odds 累积下限 |
+| `map.maximum_probability` | `0.97` | log-odds 累积上限 |
 
 运行固定路线真值测试：
 
@@ -108,8 +140,8 @@ ros2 run slam_robot_slam scan_matcher_benchmark
 ```
 
 测试工具只读取 `/ground_truth/odom` 计算误差，不会把真值反馈给匹配器。
-目前仍缺少全局占据栅格、位姿图优化和回环检测，因此这是 SLAM
-前端，不是完整的自研 SLAM。
+当前 `map` 仍是局部扫描匹配建立的坐标系，缺少位姿图优化和回环检测；
+历史关键帧还不能随全局优化重投影，因此仍不是完整的自研 SLAM。
 
 录制算法输入和真值：
 

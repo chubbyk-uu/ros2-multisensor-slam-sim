@@ -110,7 +110,8 @@ map
 
 TF 发布职责：
 
-- `map -> odom`：由 `slam_toolbox` 发布。
+- `map -> odom`：官方基线由 `slam_toolbox` 发布，自研入口由扫描匹配前端
+  发布；两个入口不得同时运行。
 - `odom -> base_footprint`：由差速驱动里程计发布。
 - `base_footprint -> base_link` 及机器人结构：由 `robot_state_publisher` 发布。
 - `base_footprint` 位于左右驱动轮轴线中点的地面投影，作为差速运动学旋转中心。
@@ -333,10 +334,12 @@ TF 发布职责：
 
 ### 7.4 占据栅格地图
 
-- 使用射线模型更新空闲和占据区域。
-- 使用 Bresenham 算法遍历栅格。
-- 使用 log-odds 表示占据概率。
-- 发布标准 `nav_msgs/OccupancyGrid`。
+- [x] 使用射线模型更新空闲和占据区域。
+- [x] 使用 Bresenham 算法遍历栅格。
+- [x] 使用 log-odds 表示占据概率。
+- [x] 发布 `/custom_slam/map` 标准 `nav_msgs/OccupancyGrid`。
+- [x] 在 RViz 中显示自研占据栅格。
+- [x] 发布 `map -> odom` 校正，并将地图、匹配轨迹和激光统一到 `map`。
 
 ### 7.5 回环与位姿图
 
@@ -418,5 +421,6 @@ TF 发布职责：
 - [x] 实现点到线 ICP 对照算法。
 - [x] 实现基于轮式里程计预测的局部相关扫描匹配前端。
 - [x] 对齐 10 Hz 激光与 50 Hz 里程计 TF，并消除 RViz 点云间歇性时间同步错误。
-- [ ] 实现自研占据栅格地图发布。
+- [x] 实现自研占据栅格地图发布。
+- [x] 实现自研 `map -> odom` 校正并验证原始点云与匹配点云对齐。
 - [ ] 实现位姿图优化和回环检测。

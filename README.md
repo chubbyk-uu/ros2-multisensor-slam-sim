@@ -234,7 +234,11 @@ ros2 run slam_robot_navigation navigation_regression.py \
 ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
-这个入口不会启动 SLAM Toolbox，也不会发布 `/map` 或 `map -> odom`。RViz 中红色点为原始 `/scan`，绿色点为预处理后的 `/custom_slam/scan_points`，青色点为局部子图匹配后的扫描，黄色线为自研匹配轨迹。
+这个入口不会启动 SLAM Toolbox，也不会发布标准 `/map`。它会在
+`/custom_slam/map` 发布 `map` 坐标系下的自研占据栅格，并由自研前端
+发布 `map -> odom` 校正；RViz 中红色点为原始 `/scan`，绿色点为预处理后的
+`/custom_slam/scan_points`，青色点为局部子图匹配后的扫描，黄色线为
+自研匹配轨迹。
 启动时会先等待 Gazebo 建立仿真时钟和 TF，再依次启动 RViz 与自研节点，
 避免点云在 RViz 的 TF 缓存尚未就绪时触发间歇性 `Message Filter` 错误。
 
@@ -263,6 +267,10 @@ ros2 topic echo /ground_truth/odom --once
 - 根据相关分数和重合点数接受或拒绝匹配，失败时回退到里程计预测。
 - 发布 `/custom_slam/laser_odom`、`/custom_slam/laser_path` 和
   `/custom_slam/aligned_scan_points`。
+- 只将初始化和匹配成功的关键帧写入 log-odds 占据栅格，并发布
+  `/custom_slam/map`。
+- 根据匹配位姿与轮式里程计的差值发布 `map -> odom`，使机器人模型和
+  原始激光在 `map` 坐标系下得到一致校正。
 
 自动执行固定路线并对比真值、轮式里程计和匹配轨迹：
 
@@ -271,8 +279,8 @@ ros2 run slam_robot_slam scan_matcher_benchmark
 ```
 
 点到线 ICP 作为独立的算法对照和单元测试保留，不是默认运行前端。
-当前实现还没有发布占据栅格，也没有位姿图与回环，因此尚不是完整
-SLAM。
+当前地图仍使用 `odom` 坐标系；尚未实现位姿图与回环，历史关键帧不能
+随全局优化重投影，因此尚不是完整 SLAM。
 
 录制可重复使用的 SLAM 数据集：
 
@@ -317,6 +325,8 @@ robot_state_publisher -> /tf、/tf_static
 /scan -> custom C++ preprocessing -> /custom_slam/scan_points
 /scan + /odom + TF -> local correlative matcher
   -> /custom_slam/laser_odom、/custom_slam/laser_path
+  -> map -> odom
+  -> keyframe inverse sensor model -> /custom_slam/map（map frame）
 saved map + /scan + TF -> AMCL / Nav2
 ```
 

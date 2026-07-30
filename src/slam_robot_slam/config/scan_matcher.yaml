@@ -6,6 +6,8 @@ scan_matcher_odometry:
     laser_odom_topic: /custom_slam/laser_odom
     laser_path_topic: /custom_slam/laser_path
     aligned_points_topic: /custom_slam/aligned_scan_points
+    map_topic: /custom_slam/map
+    map_frame: map
     odom_frame: odom
     base_frame: base_footprint
     minimum_range: 0.12
@@ -16,6 +18,15 @@ scan_matcher_odometry:
     minimum_rotation_for_update: 0.05
     maximum_local_keyframes: 20
     maximum_path_poses: 10000
+    map:
+      resolution: 0.05
+      ray_stride: 2
+      publish_period: 0.5
+      hit_probability: 0.70
+      miss_probability: 0.40
+      minimum_probability: 0.12
+      maximum_probability: 0.97
+      padding_cells: 2
     matcher:
       grid_resolution: 0.02
       smear_deviation: 0.10
