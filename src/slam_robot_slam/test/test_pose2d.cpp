@@ -61,5 +61,20 @@ TEST(Pose2D, DetectsNonFinitePose)
         0.3}));
 }
 
+TEST(Pose2D, InterpolatesAcrossAngleWrap)
+{
+  const Pose2D interpolated = interpolatePoses(
+    Pose2D{0.0, 1.0, 3.10},
+    Pose2D{2.0, 3.0, -3.10},
+    0.5);
+
+  EXPECT_NEAR(interpolated.x, 1.0, 1.0e-12);
+  EXPECT_NEAR(interpolated.y, 2.0, 1.0e-12);
+  EXPECT_NEAR(std::abs(interpolated.yaw), 3.14159265358979323846, 1.0e-3);
+  EXPECT_THROW(
+    interpolatePoses(Pose2D{}, Pose2D{}, 1.1),
+    std::invalid_argument);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam

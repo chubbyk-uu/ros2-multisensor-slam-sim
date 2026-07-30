@@ -19,6 +19,10 @@ Point2D transformPoint(const Pose2D & pose, const Point2D & point);
 Pose2D composePoses(const Pose2D & first, const Pose2D & second);
 Pose2D inversePose(const Pose2D & pose);
 Pose2D relativePose(const Pose2D & from, const Pose2D & to);
+Pose2D interpolatePoses(
+  const Pose2D & first,
+  const Pose2D & second,
+  double ratio);
 
 }  // namespace slam_robot_slam
 

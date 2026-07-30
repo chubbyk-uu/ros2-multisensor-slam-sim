@@ -132,6 +132,12 @@ public:
       declare_parameter<int64_t>("point_stride", 2);
     maximum_odom_age_ =
       declare_parameter<double>("maximum_odom_age", 0.10);
+    output_pose_translation_stddev_ =
+      declare_parameter<double>(
+      "output.pose_translation_stddev", 0.05);
+    output_pose_rotation_stddev_ =
+      declare_parameter<double>(
+      "output.pose_rotation_stddev", 0.05);
     minimum_translation_for_update_ =
       declare_parameter<double>("minimum_translation_for_update", 0.05);
     minimum_rotation_for_update_ =
@@ -293,6 +299,8 @@ public:
       !isFinitePositive(maximum_range_) ||
       maximum_range_ <= minimum_range_ ||
       point_stride < 1 || !isFinitePositive(maximum_odom_age_) ||
+      !isFinitePositive(output_pose_translation_stddev_) ||
+      !isFinitePositive(output_pose_rotation_stddev_) ||
       !isFiniteNonNegative(minimum_translation_for_update_) ||
       !isFiniteNonNegative(minimum_rotation_for_update_) ||
       maximum_local_keyframes < 1 || maximum_path_poses_ < 1 ||
@@ -496,10 +504,17 @@ private:
         "Ignoring odometry that produced a non-finite planar pose");
       return;
     }
-    odom_samples_.push_back(
-      OdomSample{
-        stampToNanoseconds(odometry->header.stamp),
-        pose});
+    const OdomSample sample{
+      stampToNanoseconds(odometry->header.stamp),
+      pose};
+    const auto insertion_position = std::upper_bound(
+      odom_samples_.begin(),
+      odom_samples_.end(),
+      sample.stamp_nanoseconds,
+      [](const int64_t stamp, const OdomSample & candidate) {
+        return stamp < candidate.stamp_nanoseconds;
+      });
+    odom_samples_.insert(insertion_position, sample);
 
     constexpr std::size_t kMaximumSamples = 300U;
     while (odom_samples_.size() > kMaximumSamples) {
@@ -507,7 +522,7 @@ private:
     }
   }
 
-  bool findNearestOdometry(
+  bool findOdometryAtStamp(
     const builtin_interfaces::msg::Time & stamp,
     Pose2D & pose) const
   {
@@ -516,22 +531,60 @@ private:
     }
 
     const int64_t target = stampToNanoseconds(stamp);
-    const OdomSample * nearest = nullptr;
-    int64_t nearest_difference = std::numeric_limits<int64_t>::max();
-    for (const auto & sample : odom_samples_) {
-      const int64_t difference = std::abs(sample.stamp_nanoseconds - target);
-      if (difference < nearest_difference) {
-        nearest = &sample;
-        nearest_difference = difference;
+    const int64_t maximum_difference = static_cast<int64_t>(
+      maximum_odom_age_ * 1000000000.0);
+    const auto after = std::lower_bound(
+      odom_samples_.begin(),
+      odom_samples_.end(),
+      target,
+      [](const OdomSample & sample, const int64_t stamp) {
+        return sample.stamp_nanoseconds < stamp;
+      });
+    if (after != odom_samples_.end() &&
+      after->stamp_nanoseconds == target)
+    {
+      pose = after->pose;
+      return true;
+    }
+    if (after != odom_samples_.begin() &&
+      after != odom_samples_.end())
+    {
+      const auto before = std::prev(after);
+      const int64_t before_difference =
+        target - before->stamp_nanoseconds;
+      const int64_t after_difference =
+        after->stamp_nanoseconds - target;
+      if (before_difference <= maximum_difference &&
+        after_difference <= maximum_difference)
+      {
+        const double ratio =
+          static_cast<double>(before_difference) /
+          static_cast<double>(
+          after->stamp_nanoseconds - before->stamp_nanoseconds);
+        pose = interpolatePoses(before->pose, after->pose, ratio);
+        return true;
       }
     }
 
-    const int64_t maximum_difference = static_cast<int64_t>(
-      maximum_odom_age_ * 1000000000.0);
-    if (nearest == nullptr || nearest_difference > maximum_difference) {
+    const OdomSample * nearest = nullptr;
+    int64_t nearest_difference = std::numeric_limits<int64_t>::max();
+    if (after != odom_samples_.end()) {
+      nearest = &*after;
+      nearest_difference = after->stamp_nanoseconds - target;
+    }
+    if (after != odom_samples_.begin()) {
+      const auto before = std::prev(after);
+      const int64_t difference = target - before->stamp_nanoseconds;
+      if (difference < nearest_difference) {
+        nearest = &*before;
+        nearest_difference = difference;
+      }
+    }
+    if (nearest == nullptr ||
+      nearest_difference > maximum_difference)
+    {
       return false;
     }
-
     pose = nearest->pose;
     return true;
   }
@@ -603,7 +656,7 @@ private:
     }
 
     Pose2D odometry_pose;
-    if (!findNearestOdometry(scan->header.stamp, odometry_pose)) {
+    if (!findOdometryAtStamp(scan->header.stamp, odometry_pose)) {
       RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),
@@ -1312,7 +1365,21 @@ private:
     laser_odometry.pose.pose.position.y = estimated_pose_.y;
     laser_odometry.pose.pose.orientation =
       yawToQuaternion(estimated_pose_.yaw);
-    laser_odometry.twist.covariance[0] = -1.0;
+    const double translation_variance =
+      output_pose_translation_stddev_ *
+      output_pose_translation_stddev_;
+    const double rotation_variance =
+      output_pose_rotation_stddev_ *
+      output_pose_rotation_stddev_;
+    laser_odometry.pose.covariance[0] = translation_variance;
+    laser_odometry.pose.covariance[7] = translation_variance;
+    laser_odometry.pose.covariance[14] = 1.0e6;
+    laser_odometry.pose.covariance[21] = 1.0e6;
+    laser_odometry.pose.covariance[28] = 1.0e6;
+    laser_odometry.pose.covariance[35] = rotation_variance;
+    for (std::size_t index = 0U; index < 6U; ++index) {
+      laser_odometry.twist.covariance[index * 6U + index] = 1.0e6;
+    }
     laser_odometry_publisher_->publish(laser_odometry);
 
     bool append_path_pose = path_.poses.empty();
@@ -1393,6 +1460,8 @@ private:
   double maximum_range_;
   std::size_t point_stride_;
   double maximum_odom_age_;
+  double output_pose_translation_stddev_;
+  double output_pose_rotation_stddev_;
   double minimum_translation_for_update_;
   double minimum_rotation_for_update_;
   std::size_t maximum_local_keyframes_;

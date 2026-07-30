@@ -37,7 +37,7 @@
             <samples>720</samples>
             <resolution>1.0</resolution>
             <min_angle>${-pi}</min_angle>
-            <max_angle>${pi}</max_angle>
+            <max_angle>${pi - 2.0 * pi / 720.0}</max_angle>
           </horizontal>
         </scan>
         <range>

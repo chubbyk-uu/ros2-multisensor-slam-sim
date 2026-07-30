@@ -154,6 +154,8 @@ base_footprint -> lidar_link  robot_state_publisher
 | `path.minimum_translation` | `0.03` | 激光轨迹新增位姿的最小平移，单位 m |
 | `path.minimum_rotation` | `0.03` | 激光轨迹新增位姿的最小旋转，单位 rad |
 | `pose_graph.maximum_path_poses` | `2000` | 位姿图 Path 最多发布的关键帧数 |
+| `output.pose_translation_stddev` | `0.05` | 输出平面位置标准差，单位 m |
+| `output.pose_rotation_stddev` | `0.05` | 输出偏航角标准差，单位 rad |
 | `map.hit_probability` | `0.70` | 命中单元的概率更新 |
 | `map.miss_probability` | `0.40` | 射线穿过单元的空闲概率更新 |
 | `map.minimum_probability` | `0.12` | log-odds 累积下限 |
@@ -192,6 +194,11 @@ Gazebo 真值的平面位置差约 `0.003 m`。
 最新优化快照排队。当前版本完成后再处理最新版本，因此长时间运行也会
 持续产出完整地图。地图与 Path 定时器使用仿真时钟；两条 Path 以 2 Hz
 发布并按移动阈值降采样，避免消息大小和带宽随每帧激光无界增长。
+
+激光时间戳落在两个轮式里程计样本之间时，前端会对平移和最短角距离
+进行插值；只有缺少双边样本时才在 `maximum_odom_age` 内使用最近样本。
+自研激光里程计消息显式发布平面位姿协方差，并将未估计的三维自由度和
+速度标为高不确定度。
 
 录制算法输入和真值：
 

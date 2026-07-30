@@ -1,6 +1,7 @@
 #include "slam_robot_slam/pose2d.hpp"
 
 #include <cmath>
+#include <stdexcept>
 
 namespace slam_robot_slam
 {
@@ -53,6 +54,27 @@ Pose2D inversePose(const Pose2D & pose)
 Pose2D relativePose(const Pose2D & from, const Pose2D & to)
 {
   return composePoses(inversePose(from), to);
+}
+
+Pose2D interpolatePoses(
+  const Pose2D & first,
+  const Pose2D & second,
+  const double ratio)
+{
+  if (!isFinitePose(first) ||
+    !isFinitePose(second) ||
+    !std::isfinite(ratio) ||
+    ratio < 0.0 ||
+    ratio > 1.0)
+  {
+    throw std::invalid_argument("Pose interpolation inputs are invalid");
+  }
+  return Pose2D{
+    first.x + ratio * (second.x - first.x),
+    first.y + ratio * (second.y - first.y),
+    normalizeAngle(
+      first.yaw +
+      ratio * normalizeAngle(second.yaw - first.yaw))};
 }
 
 }  // namespace slam_robot_slam
