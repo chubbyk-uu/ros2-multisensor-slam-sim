@@ -295,6 +295,15 @@ if(BUILD_TESTING)
     test_loop_closure_processor
     loop_closure_processor
   )
+
+  ament_add_gtest(
+    test_latest_snapshot_queue
+    test/test_latest_snapshot_queue.cpp
+  )
+  target_include_directories(
+    test_latest_snapshot_queue
+    PRIVATE include
+  )
 endif()
 
 ament_package()

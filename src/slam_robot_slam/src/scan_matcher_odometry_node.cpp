@@ -25,6 +25,7 @@
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
 #include "slam_robot_slam/correlative_scan_matcher.hpp"
+#include "slam_robot_slam/latest_snapshot_queue.hpp"
 #include "slam_robot_slam/laser_scan_preprocessor.hpp"
 #include "slam_robot_slam/loop_closure_detector.hpp"
 #include "slam_robot_slam/loop_closure_processor.hpp"
@@ -1187,7 +1188,7 @@ private:
   {
     std::vector<Keyframe> rebuild_snapshot = keyframes_;
     if (pending_rebuild_map_) {
-      queued_rebuild_keyframes_ = std::move(rebuild_snapshot);
+      map_rebuild_queue_.request(std::move(rebuild_snapshot));
       if (!rebuild_tail_frozen_) {
         appendLiveKeyframesToRebuildSnapshot();
         rebuild_tail_frozen_ = true;
@@ -1196,48 +1197,54 @@ private:
         get_logger(),
         "Queued latest occupancy grid rebuild for %zu keyframes; "
         "current rebuild will finish first",
-        queued_rebuild_keyframes_->size());
+        map_rebuild_queue_.queued().size());
       return;
     }
-    beginMapRebuild(std::move(rebuild_snapshot));
+    map_rebuild_queue_.request(std::move(rebuild_snapshot));
+    beginMapRebuild();
   }
 
-  void beginMapRebuild(std::vector<Keyframe> rebuild_snapshot)
+  void beginMapRebuild()
   {
+    if (!map_rebuild_queue_.hasActive() ||
+      map_rebuild_queue_.active().empty())
+    {
+      throw std::logic_error("Cannot start an empty map rebuild");
+    }
     pending_rebuild_map_ =
       std::make_unique<OccupancyGridMap>(map_parameters_);
-    rebuild_keyframes_ = std::move(rebuild_snapshot);
     next_rebuild_keyframe_ = 0U;
     rebuild_tail_frozen_ = false;
     map_rebuild_started_ = std::chrono::steady_clock::now();
     RCLCPP_INFO(
       get_logger(),
       "Started incremental occupancy grid rebuild for %zu keyframes",
-      rebuild_keyframes_.size());
+      map_rebuild_queue_.active().size());
   }
 
   void appendLiveKeyframesToRebuildSnapshot()
   {
-    if (rebuild_keyframes_.empty() ||
-      rebuild_keyframes_.size() >= keyframes_.size())
+    auto & rebuild_keyframes = map_rebuild_queue_.active();
+    if (rebuild_keyframes.empty() ||
+      rebuild_keyframes.size() >= keyframes_.size())
     {
       return;
     }
-    const std::size_t anchor_id = rebuild_keyframes_.size() - 1U;
+    const std::size_t anchor_id = rebuild_keyframes.size() - 1U;
     if (anchor_id >= keyframes_.size()) {
       throw std::logic_error(
               "Map rebuild snapshot is not a prefix of live keyframes");
     }
     const Pose2D snapshot_from_live =
       composePoses(
-      rebuild_keyframes_[anchor_id].pose,
+      rebuild_keyframes[anchor_id].pose,
       inversePose(keyframes_[anchor_id].pose));
-    for (std::size_t index = rebuild_keyframes_.size();
+    for (std::size_t index = rebuild_keyframes.size();
       index < keyframes_.size(); ++index)
     {
       Keyframe keyframe = keyframes_[index];
       keyframe.pose = composePoses(snapshot_from_live, keyframe.pose);
-      rebuild_keyframes_.push_back(std::move(keyframe));
+      rebuild_keyframes.push_back(std::move(keyframe));
     }
   }
 
@@ -1248,36 +1255,37 @@ private:
     }
 
     try {
+      auto & rebuild_keyframes = map_rebuild_queue_.active();
       if (!rebuild_tail_frozen_) {
         appendLiveKeyframesToRebuildSnapshot();
       }
       const std::size_t final_keyframe = std::min(
         next_rebuild_keyframe_ + map_rebuild_keyframes_per_cycle_,
-        rebuild_keyframes_.size());
+        rebuild_keyframes.size());
       for (; next_rebuild_keyframe_ < final_keyframe;
         ++next_rebuild_keyframe_)
       {
         integrateKeyframeIntoMap(
-          rebuild_keyframes_[next_rebuild_keyframe_],
+          rebuild_keyframes[next_rebuild_keyframe_],
           *pending_rebuild_map_);
       }
     } catch (const std::exception & error) {
       pending_rebuild_map_.reset();
-      rebuild_keyframes_.clear();
-      queued_rebuild_keyframes_.reset();
+      map_rebuild_queue_.clear();
       RCLCPP_ERROR(
         get_logger(),
         "Aborted occupancy grid rebuild: %s",
         error.what());
       return;
     }
-    if (next_rebuild_keyframe_ < rebuild_keyframes_.size()) {
+    const auto & rebuild_keyframes = map_rebuild_queue_.active();
+    if (next_rebuild_keyframe_ < rebuild_keyframes.size()) {
       return;
     }
 
     std::swap(occupancy_grid_map_, pending_rebuild_map_);
     pending_rebuild_map_.reset();
-    latest_map_stamp_ = rebuild_keyframes_.back().stamp;
+    latest_map_stamp_ = rebuild_keyframes.back().stamp;
     map_dirty_ = true;
     const double elapsed_milliseconds =
       std::chrono::duration<double, std::milli>(
@@ -1288,13 +1296,10 @@ private:
       "in %.1f ms",
       next_rebuild_keyframe_,
       elapsed_milliseconds);
-    rebuild_keyframes_.clear();
+    const bool has_queued_rebuild = map_rebuild_queue_.completeActive();
     publishMapIfDirty();
-    if (queued_rebuild_keyframes_.has_value()) {
-      auto queued_snapshot =
-        std::move(*queued_rebuild_keyframes_);
-      queued_rebuild_keyframes_.reset();
-      beginMapRebuild(std::move(queued_snapshot));
+    if (has_queued_rebuild) {
+      beginMapRebuild();
     }
   }
 
@@ -1535,8 +1540,7 @@ private:
   builtin_interfaces::msg::Time latest_map_stamp_;
   bool map_dirty_{false};
   std::size_t next_rebuild_keyframe_{0U};
-  std::vector<Keyframe> rebuild_keyframes_;
-  std::optional<std::vector<Keyframe>> queued_rebuild_keyframes_;
+  LatestSnapshotQueue<std::vector<Keyframe>> map_rebuild_queue_;
   bool rebuild_tail_frozen_{false};
   std::chrono::steady_clock::time_point map_rebuild_started_;
   std::optional<std::size_t> last_loop_closure_node_;
