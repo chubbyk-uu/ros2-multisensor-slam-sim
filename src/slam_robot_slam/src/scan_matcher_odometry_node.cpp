@@ -23,6 +23,7 @@
 #include "slam_robot_slam/correlative_scan_matcher.hpp"
 #include "slam_robot_slam/laser_scan_preprocessor.hpp"
 #include "slam_robot_slam/occupancy_grid_map.hpp"
+#include "slam_robot_slam/pose_graph_2d.hpp"
 #include "tf2_ros/buffer.hpp"
 #include "tf2_ros/transform_broadcaster.hpp"
 #include "tf2_ros/transform_listener.hpp"
@@ -78,6 +79,9 @@ public:
     const auto laser_path_topic =
       declare_parameter<std::string>(
       "laser_path_topic", "/custom_slam/laser_path");
+    const auto pose_graph_path_topic =
+      declare_parameter<std::string>(
+      "pose_graph_path_topic", "/custom_slam/pose_graph_path");
     const auto aligned_points_topic =
       declare_parameter<std::string>(
       "aligned_points_topic", "/custom_slam/aligned_scan_points");
@@ -108,6 +112,12 @@ public:
       declare_parameter<int64_t>("map.padding_cells", 2);
     const double map_publish_period =
       declare_parameter<double>("map.publish_period", 0.5);
+    const double sequential_translation_stddev =
+      declare_parameter<double>(
+      "pose_graph.sequential_translation_stddev", 0.05);
+    const double sequential_rotation_stddev =
+      declare_parameter<double>(
+      "pose_graph.sequential_rotation_stddev", 0.05);
 
     OccupancyGridMapParameters map_parameters;
     map_parameters.resolution =
@@ -154,7 +164,9 @@ public:
       maximum_local_keyframes < 1 || maximum_path_poses_ < 1 ||
       minimum_matched_points < 1 || map_ray_stride < 1 ||
       map_publish_period <= 0.0 || map_padding_cells < 0 ||
-      map_padding_cells > std::numeric_limits<int>::max())
+      map_padding_cells > std::numeric_limits<int>::max() ||
+      sequential_translation_stddev <= 0.0 ||
+      sequential_rotation_stddev <= 0.0)
     {
       throw std::invalid_argument("Invalid scan matcher node parameters");
     }
@@ -165,6 +177,10 @@ public:
       static_cast<std::size_t>(minimum_matched_points);
     map_ray_stride_ = static_cast<std::size_t>(map_ray_stride);
     map_parameters.padding_cells = static_cast<int>(map_padding_cells);
+    sequential_translation_weight_ =
+      1.0 / sequential_translation_stddev;
+    sequential_rotation_weight_ =
+      1.0 / sequential_rotation_stddev;
     occupancy_grid_map_ =
       std::make_unique<OccupancyGridMap>(map_parameters);
 
@@ -180,6 +196,10 @@ public:
     laser_path_publisher_ =
       create_publisher<nav_msgs::msg::Path>(
       laser_path_topic, rclcpp::QoS(1).reliable());
+    pose_graph_path_publisher_ =
+      create_publisher<nav_msgs::msg::Path>(
+      pose_graph_path_topic,
+      rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
     aligned_points_publisher_ =
       create_publisher<sensor_msgs::msg::PointCloud2>(
       aligned_points_topic, rclcpp::QoS(10).reliable());
@@ -211,6 +231,7 @@ public:
         this));
 
     path_.header.frame_id = map_frame_;
+    pose_graph_path_.header.frame_id = map_frame_;
     RCLCPP_INFO(
       get_logger(),
       "Correlative scan-to-local-submap matcher: %s + %s -> %s, stride %zu",
@@ -233,7 +254,7 @@ private:
     Pose2D pose;
   };
 
-  struct LocalKeyframe
+  struct Keyframe
   {
     Pose2D pose;
     std::vector<Point2D> points;
@@ -347,7 +368,7 @@ private:
       estimated_pose_ = odometry_pose;
       last_matched_pose_ = odometry_pose;
       last_matched_odometry_pose_ = odometry_pose;
-      addLocalKeyframe(estimated_pose_, base_points);
+      addKeyframe(scan->header.stamp, estimated_pose_, base_points);
       integrateMap(*scan, base_from_laser);
       initialized_ = true;
       publishEstimate(scan->header.stamp, odometry_pose, base_points);
@@ -378,7 +399,7 @@ private:
       estimated_pose_ = result.pose;
       last_matched_pose_ = estimated_pose_;
       last_matched_odometry_pose_ = odometry_pose;
-      addLocalKeyframe(estimated_pose_, base_points);
+      addKeyframe(scan->header.stamp, estimated_pose_, base_points);
       integrateMap(*scan, base_from_laser);
       const Pose2D correction =
         relativePose(predicted_pose, result.pose);
@@ -408,26 +429,64 @@ private:
     publishEstimate(scan->header.stamp, odometry_pose, base_points);
   }
 
-  void addLocalKeyframe(
+  void addKeyframe(
+    const builtin_interfaces::msg::Time & stamp,
     const Pose2D & pose,
     const std::vector<Point2D> & points)
   {
-    local_keyframes_.push_back(LocalKeyframe{pose, points});
-    while (local_keyframes_.size() > maximum_local_keyframes_) {
-      local_keyframes_.pop_front();
+    keyframes_.push_back(Keyframe{pose, points});
+
+    const std::size_t node_id = pose_graph_.addNode(pose);
+    if (node_id > 0U) {
+      const Pose2D & previous_pose =
+        keyframes_[node_id - 1U].pose;
+      pose_graph_.addConstraint(
+        PoseGraphConstraint{
+          node_id - 1U,
+          node_id,
+          relativePose(previous_pose, pose),
+          sequential_translation_weight_,
+          sequential_rotation_weight_,
+          PoseGraphConstraintType::kSequential});
     }
+
+    geometry_msgs::msg::PoseStamped graph_pose;
+    graph_pose.header.stamp = stamp;
+    graph_pose.header.frame_id = map_frame_;
+    graph_pose.pose.position.x = pose.x;
+    graph_pose.pose.position.y = pose.y;
+    graph_pose.pose.orientation = yawToQuaternion(pose.yaw);
+    pose_graph_path_.header = graph_pose.header;
+    pose_graph_path_.poses.push_back(graph_pose);
+    pose_graph_path_publisher_->publish(pose_graph_path_);
+
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      5000,
+      "Pose graph contains %zu nodes and %zu sequential constraints",
+      pose_graph_.nodes().size(),
+      pose_graph_.constraints().size());
   }
 
   std::vector<Point2D> buildLocalReferencePoints() const
   {
     std::size_t total_points = 0U;
-    for (const auto & keyframe : local_keyframes_) {
-      total_points += keyframe.points.size();
+    const std::size_t first_keyframe =
+      keyframes_.size() > maximum_local_keyframes_ ?
+      keyframes_.size() - maximum_local_keyframes_ : 0U;
+    for (std::size_t index = first_keyframe;
+      index < keyframes_.size(); ++index)
+    {
+      total_points += keyframes_[index].points.size();
     }
 
     std::vector<Point2D> reference_points;
     reference_points.reserve(total_points);
-    for (const auto & keyframe : local_keyframes_) {
+    for (std::size_t index = first_keyframe;
+      index < keyframes_.size(); ++index)
+    {
+      const auto & keyframe = keyframes_[index];
       std::transform(
         keyframe.points.begin(),
         keyframe.points.end(),
@@ -607,8 +666,11 @@ private:
   std::size_t maximum_local_keyframes_;
   int64_t maximum_path_poses_;
   std::size_t map_ray_stride_;
+  double sequential_translation_weight_;
+  double sequential_rotation_weight_;
   CorrelativeScanMatcherParameters matcher_parameters_;
   std::unique_ptr<OccupancyGridMap> occupancy_grid_map_;
+  PoseGraph2D pose_graph_;
 
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -620,18 +682,21 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr
     laser_odometry_publisher_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr laser_path_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr
+    pose_graph_path_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
     aligned_points_publisher_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_publisher_;
   rclcpp::TimerBase::SharedPtr map_publish_timer_;
 
   std::deque<OdomSample> odom_samples_;
-  std::deque<LocalKeyframe> local_keyframes_;
+  std::vector<Keyframe> keyframes_;
   bool initialized_{false};
   Pose2D last_matched_odometry_pose_;
   Pose2D last_matched_pose_;
   Pose2D estimated_pose_;
   nav_msgs::msg::Path path_;
+  nav_msgs::msg::Path pose_graph_path_;
   builtin_interfaces::msg::Time latest_map_stamp_;
   bool map_dirty_{false};
 };

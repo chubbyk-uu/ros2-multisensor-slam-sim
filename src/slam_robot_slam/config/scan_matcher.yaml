@@ -5,6 +5,7 @@ scan_matcher_odometry:
     odom_topic: /odom
     laser_odom_topic: /custom_slam/laser_odom
     laser_path_topic: /custom_slam/laser_path
+    pose_graph_path_topic: /custom_slam/pose_graph_path
     aligned_points_topic: /custom_slam/aligned_scan_points
     map_topic: /custom_slam/map
     map_frame: map
@@ -27,6 +28,9 @@ scan_matcher_odometry:
       minimum_probability: 0.12
       maximum_probability: 0.97
       padding_cells: 2
+    pose_graph:
+      sequential_translation_stddev: 0.05
+      sequential_rotation_stddev: 0.05
     matcher:
       grid_resolution: 0.02
       smear_deviation: 0.10

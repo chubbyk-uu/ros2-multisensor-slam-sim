@@ -42,7 +42,7 @@ ros2 run slam_robot_slam save_slam_map \
 
 ## 自研 C++ SLAM
 
-当前已实现激光预处理、局部扫描匹配前端和基础占据栅格：
+当前已实现激光预处理、局部扫描匹配、基础占据栅格和位姿图骨架：
 
 - LaserScan 有效量程、`NaN` 和 `Inf` 过滤。
 - 可配置的点间隔降采样。
@@ -57,6 +57,8 @@ ros2 run slam_robot_slam save_slam_map \
 - 匹配分数、最少重合点和失败回退机制。
 - 基于关键帧的射线清空、末端占用和 log-odds 概率更新。
 - 自动扩展的 0.05 m 分辨率占据栅格。
+- 保存全部成功关键帧，最近 20 帧只用于局部匹配。
+- 使用 Ceres 2.2 建立二维位姿图、顺序约束和可带 Huber 核的回环约束。
 - 真值、轮式里程计和匹配轨迹自动对比工具。
 
 仿真已经运行时，可独立启动预处理节点：
@@ -73,9 +75,9 @@ ros2 launch slam_robot_bringup custom_slam_development.launch.py
 
 专用 RViz 使用 `map` 固定坐标系：黑白栅格为自研地图，红色为原始
 `/scan`，绿色为预处理点集，青色为局部子图匹配后的扫描，黄色为匹配
-轨迹。当前阶段发布 `/custom_slam/map` 和 `map -> odom`，但不会发布
-标准 `/map`。自研入口与 SLAM Toolbox 入口不能同时运行，避免重复发布
-同一段 TF。
+轨迹，紫色为位姿图关键帧路径。当前阶段发布 `/custom_slam/map` 和
+`map -> odom`，但不会发布标准 `/map`。自研入口与 SLAM Toolbox 入口
+不能同时运行，避免重复发布同一段 TF。
 
 参数位于 `config/laser_preprocessor.yaml`：
 
@@ -96,8 +98,15 @@ ICP，而是参考 slam_toolbox/Karto 和 Cartographer 的成熟结构：
   -> 当前扫描与局部关键帧相关栅格粗匹配
   -> 小范围精匹配
   -> 分数与重合点检查
-  -> 激光轨迹
+  -> 成功关键帧、顺序约束
+  -> 激光轨迹与位姿图关键帧路径
 ```
+
+位姿图残差参考
+[Ceres 官方二维 Pose Graph 示例](https://ceres-solver.googlesource.com/ceres-solver/+/master/examples/slam/pose_graph_2d/)
+的局部坐标约束形式；求解器使用与 SLAM Toolbox 默认建议一致的
+`SPARSE_NORMAL_CHOLESKY` 和 Levenberg-Marquardt，并固定首节点消除
+规范自由度。
 
 核心输出：
 
@@ -105,6 +114,7 @@ ICP，而是参考 slam_toolbox/Karto 和 Cartographer 的成熟结构：
 | --- | --- | --- |
 | `/custom_slam/laser_odom` | `nav_msgs/Odometry` | 匹配前端估计位姿 |
 | `/custom_slam/laser_path` | `nav_msgs/Path` | 匹配轨迹 |
+| `/custom_slam/pose_graph_path` | `nav_msgs/Path` | 成功关键帧及顺序边路径 |
 | `/custom_slam/aligned_scan_points` | `sensor_msgs/PointCloud2` | 对齐到 `map` 的当前扫描 |
 | `/custom_slam/map` | `nav_msgs/OccupancyGrid` | `map` 坐标系下的关键帧占据栅格 |
 
@@ -132,6 +142,8 @@ base_footprint -> lidar_link  robot_state_publisher
 | `map.miss_probability` | `0.40` | 射线穿过单元的空闲概率更新 |
 | `map.minimum_probability` | `0.12` | log-odds 累积下限 |
 | `map.maximum_probability` | `0.97` | log-odds 累积上限 |
+| `pose_graph.sequential_translation_stddev` | `0.05` | 顺序边平移标准差，单位 m |
+| `pose_graph.sequential_rotation_stddev` | `0.05` | 顺序边旋转标准差，单位 rad |
 
 运行固定路线真值测试：
 
@@ -140,8 +152,9 @@ ros2 run slam_robot_slam scan_matcher_benchmark
 ```
 
 测试工具只读取 `/ground_truth/odom` 计算误差，不会把真值反馈给匹配器。
-当前 `map` 仍是局部扫描匹配建立的坐标系，缺少位姿图优化和回环检测；
-历史关键帧还不能随全局优化重投影，因此仍不是完整的自研 SLAM。
+当前前端已持续建立关键帧节点和顺序边，Ceres 后端也已通过合成回环
+测试；但尚未自动搜索并验证真实回环，历史关键帧还不能随优化结果重投影
+并重建地图，因此仍不是完整的自研 SLAM。
 
 录制算法输入和真值：
 

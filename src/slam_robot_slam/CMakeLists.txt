@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(slam_robot_slam)
 
 find_package(ament_cmake REQUIRED)
+find_package(Ceres REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -76,6 +77,20 @@ target_compile_options(
   PRIVATE -Wall -Wextra -Wpedantic
 )
 
+add_library(pose_graph_2d
+  src/pose_graph_2d.cpp
+)
+target_include_directories(pose_graph_2d
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(pose_graph_2d pose2d Ceres::ceres)
+target_compile_options(
+  pose_graph_2d
+  PRIVATE -Wall -Wextra -Wpedantic
+)
+
 add_executable(laser_scan_preprocessor_node
   src/laser_scan_preprocessor_node.cpp
 )
@@ -95,6 +110,7 @@ target_link_libraries(
   laser_scan_preprocessor
   occupancy_grid_map
   pose2d
+  pose_graph_2d
 )
 ament_target_dependencies(
   scan_matcher_odometry_node
@@ -127,6 +143,7 @@ install(
     occupancy_grid_map
     point_to_line_icp
     pose2d
+    pose_graph_2d
     scan_matcher_odometry_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -183,6 +200,16 @@ if(BUILD_TESTING)
     test_occupancy_grid_map
     laser_scan_preprocessor
     occupancy_grid_map
+  )
+
+  ament_add_gtest(
+    test_pose_graph_2d
+    test/test_pose_graph_2d.cpp
+  )
+  target_link_libraries(
+    test_pose_graph_2d
+    pose2d
+    pose_graph_2d
   )
 endif()
 
