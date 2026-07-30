@@ -304,6 +304,15 @@ if(BUILD_TESTING)
     test_latest_snapshot_queue
     PRIVATE include
   )
+
+  ament_add_gtest(
+    test_container_utils
+    test/test_container_utils.cpp
+  )
+  target_include_directories(
+    test_container_utils
+    PRIVATE include
+  )
 endif()
 
 ament_package()

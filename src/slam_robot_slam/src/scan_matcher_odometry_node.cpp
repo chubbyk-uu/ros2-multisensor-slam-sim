@@ -24,6 +24,7 @@
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/point_cloud2_iterator.hpp"
+#include "slam_robot_slam/container_utils.hpp"
 #include "slam_robot_slam/correlative_scan_matcher.hpp"
 #include "slam_robot_slam/latest_snapshot_queue.hpp"
 #include "slam_robot_slam/laser_scan_preprocessor.hpp"
@@ -1450,10 +1451,7 @@ private:
     if (path.poses.size() <= maximum_poses) {
       return;
     }
-    const std::size_t excess = path.poses.size() - maximum_poses;
-    path.poses.erase(
-      path.poses.begin(),
-      path.poses.begin() + static_cast<std::ptrdiff_t>(excess));
+    trimOldestInBatches(path.poses, maximum_poses);
   }
 
   void publishPathsIfDirty()
