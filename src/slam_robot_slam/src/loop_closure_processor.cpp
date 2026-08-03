@@ -111,6 +111,41 @@ std::vector<Point2D> buildReferencePoints(
   return reference_points;
 }
 
+PoseGraphInformationMatrix2D makeLoopClosureInformation(
+  const CorrelativeScanMatcherResult & match,
+  const Pose2D & source_pose,
+  const double translation_weight,
+  const double rotation_weight)
+{
+  const double base_information =
+    translation_weight * translation_weight;
+  if (match.translation_observable_rank >= 2U) {
+    return makeDiagonalPoseGraphInformation(
+      translation_weight, rotation_weight);
+  }
+
+  const double cosine = std::cos(source_pose.yaw);
+  const double sine = std::sin(source_pose.yaw);
+  const double weak_x =
+    cosine * match.weak_translation_direction.x +
+    sine * match.weak_translation_direction.y;
+  const double weak_y =
+    -sine * match.weak_translation_direction.x +
+    cosine * match.weak_translation_direction.y;
+  const double weak_scale = std::clamp(
+    match.translation_information_ratio, 1.0e-3, 1.0);
+  const double weak_information = base_information * weak_scale;
+  const double information_difference =
+    weak_information - base_information;
+  return PoseGraphInformationMatrix2D{
+    base_information + information_difference * weak_x * weak_x,
+    information_difference * weak_x * weak_y,
+    0.0,
+    base_information + information_difference * weak_y * weak_y,
+    0.0,
+    rotation_weight * rotation_weight};
+}
+
 }  // namespace
 
 LoopClosureProcessingResult processLoopClosure(
@@ -198,8 +233,11 @@ LoopClosureProcessingResult processLoopClosure(
     result.candidate_id,
     current_id,
     relativePose(graph_poses[result.candidate_id], result.match.pose),
-    parameters.translation_weight,
-    parameters.rotation_weight,
+    makeLoopClosureInformation(
+      result.match,
+      graph_poses[result.candidate_id],
+      parameters.translation_weight,
+      parameters.rotation_weight),
     PoseGraphConstraintType::kLoopClosure};
   graph.addConstraint(result.constraint);
   result.optimization = graph.optimize(parameters.optimization);

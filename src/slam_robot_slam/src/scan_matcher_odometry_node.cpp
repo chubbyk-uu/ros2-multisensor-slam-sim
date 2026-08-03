@@ -1097,8 +1097,9 @@ private:
             node_id - 1U,
             node_id,
             relativePose(previous_pose, pose),
-            sequential_translation_weight_,
-            sequential_rotation_weight_,
+            makeDiagonalPoseGraphInformation(
+              sequential_translation_weight_,
+              sequential_rotation_weight_),
             PoseGraphConstraintType::kSequential});
       }
       validateKeyframeGraphInvariant();

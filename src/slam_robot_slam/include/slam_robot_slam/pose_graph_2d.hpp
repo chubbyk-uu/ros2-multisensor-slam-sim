@@ -21,13 +21,26 @@ struct PoseGraphNode
   Pose2D pose;
 };
 
+struct PoseGraphInformationMatrix2D
+{
+  double xx{400.0};
+  double xy{0.0};
+  double x_yaw{0.0};
+  double yy{400.0};
+  double y_yaw{0.0};
+  double yaw_yaw{400.0};
+};
+
+PoseGraphInformationMatrix2D makeDiagonalPoseGraphInformation(
+  double translation_weight,
+  double rotation_weight);
+
 struct PoseGraphConstraint
 {
   std::size_t source_id;
   std::size_t target_id;
   Pose2D relative_pose;
-  double translation_weight{20.0};
-  double rotation_weight{20.0};
+  PoseGraphInformationMatrix2D information;
   PoseGraphConstraintType type{PoseGraphConstraintType::kSequential};
 };
 

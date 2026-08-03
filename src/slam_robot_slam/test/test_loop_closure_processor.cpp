@@ -56,8 +56,7 @@ PoseGraph2D makeLoopGraph(const std::vector<Pose2D> & poses)
           index - 1U,
           index,
           relativePose(poses[index - 1U], poses[index]),
-          20.0,
-          20.0,
+          makeDiagonalPoseGraphInformation(20.0, 20.0),
           PoseGraphConstraintType::kSequential});
   }
   return graph;
@@ -155,6 +154,18 @@ TEST(LoopClosureProcessor, RejectsTranslationDegenerateMatch)
   EXPECT_FALSE(result.accepted);
   EXPECT_EQ(result.evaluated_candidates, 1U);
   EXPECT_EQ(result.rejected_degenerate_candidates, 1U);
+
+  parameters.reject_degenerate_matches = false;
+  const auto anisotropic_result = processLoopClosure(
+    keyframes,
+    makeLoopGraph(poses),
+    2U,
+    parameters);
+  ASSERT_TRUE(anisotropic_result.accepted);
+  EXPECT_LT(
+    anisotropic_result.constraint.information.xx,
+    anisotropic_result.constraint.information.yy);
+  EXPECT_GT(anisotropic_result.constraint.information.xx, 0.0);
 }
 
 TEST(LoopClosureProcessor, RejectsMismatchedState)

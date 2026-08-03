@@ -46,10 +46,19 @@ class PoseGraphErrorTerm
 {
 public:
   explicit PoseGraphErrorTerm(const PoseGraphConstraint & constraint)
-  : measurement_(constraint.relative_pose),
-    translation_weight_(constraint.translation_weight),
-    rotation_weight_(constraint.rotation_weight)
+  : measurement_(constraint.relative_pose)
   {
+    const auto & information = constraint.information;
+    lower_00_ = std::sqrt(information.xx);
+    lower_10_ = information.xy / lower_00_;
+    lower_20_ = information.x_yaw / lower_00_;
+    lower_11_ = std::sqrt(
+      information.yy - lower_10_ * lower_10_);
+    lower_21_ =
+      (information.y_yaw - lower_20_ * lower_10_) / lower_11_;
+    lower_22_ = std::sqrt(
+      information.yaw_yaw - lower_20_ * lower_20_ -
+      lower_21_ * lower_21_);
   }
 
   template<typename T>
@@ -69,12 +78,14 @@ public:
 
     const T predicted_x = cosine * delta_x + sine * delta_y;
     const T predicted_y = -sine * delta_x + cosine * delta_y;
-    residuals[0] =
-      T(translation_weight_) * (predicted_x - T(measurement_.x));
-    residuals[1] =
-      T(translation_weight_) * (predicted_y - T(measurement_.y));
-    residuals[2] = T(rotation_weight_) * normalizeAngleForCeres(
+    const T error_x = predicted_x - T(measurement_.x);
+    const T error_y = predicted_y - T(measurement_.y);
+    const T error_yaw = normalizeAngleForCeres(
       (target_yaw[0] - source_yaw[0]) - T(measurement_.yaw));
+    residuals[0] = T(lower_00_) * error_x +
+      T(lower_10_) * error_y + T(lower_20_) * error_yaw;
+    residuals[1] = T(lower_11_) * error_y + T(lower_21_) * error_yaw;
+    residuals[2] = T(lower_22_) * error_yaw;
     return true;
   }
 
@@ -88,8 +99,12 @@ public:
 
 private:
   Pose2D measurement_;
-  double translation_weight_;
-  double rotation_weight_;
+  double lower_00_{0.0};
+  double lower_10_{0.0};
+  double lower_20_{0.0};
+  double lower_11_{0.0};
+  double lower_21_{0.0};
+  double lower_22_{0.0};
 };
 
 struct OptimizedPose
@@ -100,6 +115,26 @@ struct OptimizedPose
 };
 
 }  // namespace
+
+PoseGraphInformationMatrix2D makeDiagonalPoseGraphInformation(
+  const double translation_weight,
+  const double rotation_weight)
+{
+  if (!std::isfinite(translation_weight) ||
+    !std::isfinite(rotation_weight) ||
+    translation_weight <= 0.0 || rotation_weight <= 0.0)
+  {
+    throw std::invalid_argument(
+            "Pose graph weights must be finite and positive");
+  }
+  return PoseGraphInformationMatrix2D{
+    translation_weight * translation_weight,
+    0.0,
+    0.0,
+    translation_weight * translation_weight,
+    0.0,
+    rotation_weight * rotation_weight};
+}
 
 std::size_t PoseGraph2D::addNode(const Pose2D & initial_pose)
 {
@@ -137,14 +172,31 @@ void PoseGraph2D::removeLastNode()
 std::size_t PoseGraph2D::addConstraint(
   const PoseGraphConstraint & constraint)
 {
+  const auto & information = constraint.information;
+  const double leading_minor_xy =
+    information.xx * information.yy - information.xy * information.xy;
+  const double determinant =
+    information.xx *
+    (information.yy * information.yaw_yaw -
+    information.y_yaw * information.y_yaw) -
+    information.xy *
+    (information.xy * information.yaw_yaw -
+    information.y_yaw * information.x_yaw) +
+    information.x_yaw *
+    (information.xy * information.y_yaw -
+    information.yy * information.x_yaw);
   if (constraint.source_id >= nodes_.size() ||
     constraint.target_id >= nodes_.size() ||
     constraint.source_id == constraint.target_id ||
     !isFinitePose(constraint.relative_pose) ||
-    !std::isfinite(constraint.translation_weight) ||
-    !std::isfinite(constraint.rotation_weight) ||
-    constraint.translation_weight <= 0.0 ||
-    constraint.rotation_weight <= 0.0)
+    !std::isfinite(information.xx) ||
+    !std::isfinite(information.xy) ||
+    !std::isfinite(information.x_yaw) ||
+    !std::isfinite(information.yy) ||
+    !std::isfinite(information.y_yaw) ||
+    !std::isfinite(information.yaw_yaw) ||
+    information.xx <= 0.0 ||
+    leading_minor_xy <= 0.0 || determinant <= 0.0)
   {
     throw std::invalid_argument("Invalid pose graph constraint");
   }

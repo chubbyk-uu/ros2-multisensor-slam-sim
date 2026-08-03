@@ -20,8 +20,7 @@ PoseGraphConstraint sequentialConstraint(
     source,
     target,
     relative_pose,
-    20.0,
-    20.0,
+    makeDiagonalPoseGraphInformation(20.0, 20.0),
     PoseGraphConstraintType::kSequential};
 }
 
@@ -62,8 +61,7 @@ TEST(PoseGraph2D, LoopClosureReducesAccumulatedDrift)
         3U,
         0U,
         Pose2D{-3.0, 0.0, 0.0},
-        30.0,
-        30.0,
+        makeDiagonalPoseGraphInformation(30.0, 30.0),
         PoseGraphConstraintType::kLoopClosure});
 
   const double error_before =
@@ -119,8 +117,7 @@ TEST(PoseGraph2D, RobustLoopKernelLimitsOutlierInfluence)
         2U,
         0U,
         Pose2D{-20.0, 0.0, 0.0},
-        20.0,
-        20.0,
+        makeDiagonalPoseGraphInformation(20.0, 20.0),
         PoseGraphConstraintType::kLoopClosure});
 
   PoseGraphOptimizationOptions options;
@@ -129,6 +126,50 @@ TEST(PoseGraph2D, RobustLoopKernelLimitsOutlierInfluence)
 
   ASSERT_TRUE(result.success);
   EXPECT_NEAR(graph.nodes()[2].pose.x, 2.0, 0.1);
+}
+
+TEST(PoseGraph2D, HonorsAnisotropicTranslationInformation)
+{
+  PoseGraph2D graph;
+  graph.addNode(Pose2D{0.0, 0.0, 0.0});
+  graph.addNode(Pose2D{1.0, 1.0, 0.0});
+  graph.addConstraint(
+    sequentialConstraint(0U, 1U, Pose2D{1.0, 1.0, 0.0}));
+  graph.addConstraint(
+    PoseGraphConstraint{
+        0U,
+        1U,
+        Pose2D{1.0, 0.0, 0.0},
+        PoseGraphInformationMatrix2D{
+          400.0, 0.0, 0.0, 1.0, 0.0, 400.0},
+        PoseGraphConstraintType::kLoopClosure});
+
+  PoseGraphOptimizationOptions options;
+  options.loop_closure_huber_scale = 100.0;
+  const auto result = graph.optimize(options);
+
+  ASSERT_TRUE(result.success);
+  EXPECT_NEAR(graph.nodes()[1].pose.x, 1.0, 1.0e-6);
+  EXPECT_GT(graph.nodes()[1].pose.y, 0.99);
+  EXPECT_LT(graph.nodes()[1].pose.y, 1.0);
+}
+
+TEST(PoseGraph2D, RejectsNonPositiveDefiniteInformation)
+{
+  PoseGraph2D graph;
+  graph.addNode(Pose2D{});
+  graph.addNode(Pose2D{1.0, 0.0, 0.0});
+
+  EXPECT_THROW(
+    graph.addConstraint(
+      PoseGraphConstraint{
+        0U,
+        1U,
+        Pose2D{1.0, 0.0, 0.0},
+        PoseGraphInformationMatrix2D{
+          1.0, 2.0, 0.0, 1.0, 0.0, 1.0},
+        PoseGraphConstraintType::kSequential}),
+    std::invalid_argument);
 }
 
 TEST(PoseGraph2D, RejectsDisconnectedGraph)

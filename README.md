@@ -332,6 +332,8 @@ ros2 topic echo /ground_truth/odom --once
   或家具边缘产生虚假法向。
 - 关键帧保留采集时的单帧法向可观测性；后台回环对 rank 小于 2 的候选
   采用保守拒绝，避免把走廊轴向先验当成 5 cm 精度的激光约束写入位姿图。
+- 位姿图约束使用对称 3×3 信息矩阵并在 Ceres 残差中 Cholesky 白化；
+  顺序边保持原对角权重，允许退化回环时可沿单帧弱方向降低平移信息。
 - 发布 `/custom_slam/laser_odom`、`/custom_slam/laser_path` 和
   `/custom_slam/aligned_scan_points`。
 - 只将初始化和匹配成功的关键帧写入 log-odds 占据栅格，并发布
