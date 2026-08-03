@@ -34,6 +34,7 @@
 #include "slam_robot_slam/loop_closure_detector.hpp"
 #include "slam_robot_slam/loop_closure_processor.hpp"
 #include "slam_robot_slam/occupancy_grid_map.hpp"
+#include "slam_robot_slam/pose_covariance_2d.hpp"
 #include "slam_robot_slam/pose_graph_2d.hpp"
 #include "tf2_ros/buffer.hpp"
 #include "tf2_ros/transform_broadcaster.hpp"
@@ -140,15 +141,23 @@ public:
       declare_parameter<int64_t>("point_stride", 2);
     maximum_odom_age_ =
       declare_parameter<double>("maximum_odom_age", 0.10);
-    output_pose_translation_stddev_ =
+    pose_covariance_parameters_.translation_stddev =
       declare_parameter<double>(
       "output.pose_translation_stddev", 0.05);
-    output_pose_rotation_stddev_ =
+    pose_covariance_parameters_.rotation_stddev =
       declare_parameter<double>(
       "output.pose_rotation_stddev", 0.05);
-    output_degenerate_translation_stddev_ =
+    pose_covariance_parameters_.degenerate_translation_stddev =
       declare_parameter<double>(
       "output.degenerate_translation_stddev", 0.30);
+    pose_covariance_parameters_.
+    dead_reckoning_translation_stddev_per_sqrt_meter =
+      declare_parameter<double>(
+      "output.dead_reckoning_translation_stddev_per_sqrt_meter", 0.10);
+    pose_covariance_parameters_.
+    dead_reckoning_rotation_stddev_per_sqrt_radian =
+      declare_parameter<double>(
+      "output.dead_reckoning_rotation_stddev_per_sqrt_radian", 0.10);
     minimum_translation_for_update_ =
       declare_parameter<double>("minimum_translation_for_update", 0.05);
     minimum_rotation_for_update_ =
@@ -352,11 +361,6 @@ public:
       !isFinitePositive(maximum_range_) ||
       maximum_range_ <= minimum_range_ ||
       point_stride < 1 || !isFinitePositive(maximum_odom_age_) ||
-      !isFinitePositive(output_pose_translation_stddev_) ||
-      !isFinitePositive(output_pose_rotation_stddev_) ||
-      !isFinitePositive(output_degenerate_translation_stddev_) ||
-      output_degenerate_translation_stddev_ <
-      output_pose_translation_stddev_ ||
       !isFiniteNonNegative(minimum_translation_for_update_) ||
       !isFiniteNonNegative(minimum_rotation_for_update_) ||
       maximum_local_keyframes < 1 || maximum_path_poses_ < 1 ||
@@ -424,6 +428,7 @@ public:
     validateCorrelativeScanMatcherParameters(loop_matcher_parameters_);
     validateTranslationObservabilityParameters(
       translation_observability_parameters_);
+    validatePoseCovariance2DParameters(pose_covariance_parameters_);
     pose_graph_optimization_options_.maximum_iterations =
       static_cast<int>(optimization_maximum_iterations);
     map_ray_stride_ = static_cast<std::size_t>(map_ray_stride);
@@ -933,6 +938,8 @@ private:
       estimated_pose_ = odometry_pose;
       last_matched_pose_ = odometry_pose;
       last_matched_odometry_pose_ = odometry_pose;
+      covariance_odometry_pose_ = odometry_pose;
+      resetOutputPoseCovariance();
       addKeyframe(
         scan->header.stamp,
         estimated_pose_,
@@ -957,6 +964,7 @@ private:
       std::abs(odometry_increment.yaw) < minimum_rotation_for_update_)
     {
       estimated_pose_ = predicted_pose;
+      propagateOutputPoseCovariance(odometry_pose);
       ++front_end_diagnostic_counters_.motion_below_threshold_scans;
       publishFrontEndDiagnostic(
         scan->header.stamp, "motion_below_threshold", base_points.size(), 0U);
@@ -1004,6 +1012,7 @@ private:
     if (result.success) {
       estimated_pose_ = result.pose;
       updateOutputPoseCovariance(result);
+      covariance_odometry_pose_ = odometry_pose;
       last_matched_pose_ = estimated_pose_;
       last_matched_odometry_pose_ = odometry_pose;
       addKeyframe(
@@ -1034,6 +1043,7 @@ private:
         correction.yaw * 180.0 / 3.14159265358979323846);
     } else {
       estimated_pose_ = predicted_pose;
+      propagateOutputPoseCovariance(odometry_pose);
       RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),
@@ -1700,17 +1710,14 @@ private:
     laser_odometry.pose.pose.position.y = estimated_pose_.y;
     laser_odometry.pose.pose.orientation =
       yawToQuaternion(estimated_pose_.yaw);
-    const double rotation_variance =
-      output_pose_rotation_stddev_ *
-      output_pose_rotation_stddev_;
-    laser_odometry.pose.covariance[0] = output_pose_covariance_xx_;
-    laser_odometry.pose.covariance[1] = output_pose_covariance_xy_;
-    laser_odometry.pose.covariance[6] = output_pose_covariance_xy_;
-    laser_odometry.pose.covariance[7] = output_pose_covariance_yy_;
+    laser_odometry.pose.covariance[0] = output_pose_covariance_.xx;
+    laser_odometry.pose.covariance[1] = output_pose_covariance_.xy;
+    laser_odometry.pose.covariance[6] = output_pose_covariance_.xy;
+    laser_odometry.pose.covariance[7] = output_pose_covariance_.yy;
     laser_odometry.pose.covariance[14] = 1.0e6;
     laser_odometry.pose.covariance[21] = 1.0e6;
     laser_odometry.pose.covariance[28] = 1.0e6;
-    laser_odometry.pose.covariance[35] = rotation_variance;
+    laser_odometry.pose.covariance[35] = output_pose_covariance_.yaw_yaw;
     for (std::size_t index = 0U; index < 6U; ++index) {
       laser_odometry.twist.covariance[index * 6U + index] = 1.0e6;
     }
@@ -1774,41 +1781,33 @@ private:
 
   void resetOutputPoseCovariance()
   {
-    const double variance =
-      output_pose_translation_stddev_ *
-      output_pose_translation_stddev_;
-    output_pose_covariance_xx_ = variance;
-    output_pose_covariance_xy_ = 0.0;
-    output_pose_covariance_yy_ = variance;
+    output_pose_covariance_ = matchedPoseCovariance(
+      2U, Point2D{1.0F, 0.0F}, pose_covariance_parameters_);
   }
 
   void updateOutputPoseCovariance(
     const CorrelativeScanMatcherResult & result)
   {
-    resetOutputPoseCovariance();
-    if (result.translation_observable_rank >= 2U) {
+    output_pose_covariance_ = matchedPoseCovariance(
+      result.translation_observable_rank,
+      result.weak_translation_direction,
+      pose_covariance_parameters_);
+  }
+
+  void propagateOutputPoseCovariance(const Pose2D & odometry_pose)
+  {
+    if (!covariance_odometry_pose_.has_value()) {
+      covariance_odometry_pose_ = odometry_pose;
       return;
     }
-
-    const double regular_variance =
-      output_pose_translation_stddev_ *
-      output_pose_translation_stddev_;
-    const double degenerate_variance =
-      output_degenerate_translation_stddev_ *
-      output_degenerate_translation_stddev_;
-    if (result.translation_observable_rank == 0U) {
-      output_pose_covariance_xx_ = degenerate_variance;
-      output_pose_covariance_yy_ = degenerate_variance;
-      return;
-    }
-
-    const double weak_x = result.weak_translation_direction.x;
-    const double weak_y = result.weak_translation_direction.y;
-    const double additional_variance =
-      degenerate_variance - regular_variance;
-    output_pose_covariance_xx_ += additional_variance * weak_x * weak_x;
-    output_pose_covariance_xy_ += additional_variance * weak_x * weak_y;
-    output_pose_covariance_yy_ += additional_variance * weak_y * weak_y;
+    const Pose2D increment = relativePose(
+      *covariance_odometry_pose_, odometry_pose);
+    output_pose_covariance_ = propagateDeadReckoningCovariance(
+      output_pose_covariance_,
+      std::hypot(increment.x, increment.y),
+      std::abs(increment.yaw),
+      pose_covariance_parameters_);
+    covariance_odometry_pose_ = odometry_pose;
   }
 
   void publishPathsIfDirty()
@@ -1830,12 +1829,9 @@ private:
   double maximum_range_;
   std::size_t point_stride_;
   double maximum_odom_age_;
-  double output_pose_translation_stddev_;
-  double output_pose_rotation_stddev_;
-  double output_degenerate_translation_stddev_;
-  double output_pose_covariance_xx_{0.0};
-  double output_pose_covariance_xy_{0.0};
-  double output_pose_covariance_yy_{0.0};
+  PoseCovariance2DParameters pose_covariance_parameters_;
+  PoseCovariance2D output_pose_covariance_;
+  std::optional<Pose2D> covariance_odometry_pose_;
   double minimum_translation_for_update_;
   double minimum_rotation_for_update_;
   std::size_t maximum_local_keyframes_;

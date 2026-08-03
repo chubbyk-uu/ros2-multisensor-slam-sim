@@ -125,6 +125,8 @@ class CorridorRegression(Node):
         self.diagnostic_baseline = None
         self.match_information_ratios = []
         self.weak_direction_angles = []
+        self.degenerate_segment_matches = 0
+        self.degenerate_segment_detections = 0
         self.malformed_diagnostics = 0
         self.latest_map = None
         self.map_messages = 0
@@ -249,6 +251,7 @@ class CorridorRegression(Node):
                     for name in DIAGNOSTIC_COUNTER_NAMES
                 }
                 if self.measuring and status.message.startswith('match_'):
+                    rank = int(values['translation_observable_rank'])
                     self.match_information_ratios.append(
                         float(values['translation_information_ratio'])
                     )
@@ -259,6 +262,19 @@ class CorridorRegression(Node):
                         (angle + 0.5 * math.pi) % math.pi
                     ) - 0.5 * math.pi
                     self.weak_direction_angles.append(undirected_angle)
+                    if self.starts is not None and 'truth' in self.poses:
+                        truth = relative_pose(
+                            self.starts['truth'],
+                            self.poses['truth'],
+                        )
+                        margin = self.arguments.degenerate_segment_margin
+                        if (
+                            margin <= truth[0]
+                            <= self.arguments.distance - margin
+                        ):
+                            self.degenerate_segment_matches += 1
+                            if rank < 2:
+                                self.degenerate_segment_detections += 1
             except (KeyError, ValueError):
                 self.malformed_diagnostics += 1
 
@@ -438,6 +454,10 @@ class CorridorRegression(Node):
         motion_below_threshold = self.diagnostic_count(
             'motion_below_threshold_scans'
         )
+        degenerate_detection_fraction = (
+            self.degenerate_segment_detections
+            / max(self.degenerate_segment_matches, 1)
+        )
 
         checks = {
             'outbound_distance_reached': (
@@ -498,6 +518,14 @@ class CorridorRegression(Node):
             ),
             'match_diagnostics_well_formed': (
                 self.malformed_diagnostics == 0
+            ),
+            'degenerate_segment_sampled': (
+                self.degenerate_segment_matches
+                >= arguments.minimum_degenerate_segment_matches
+            ),
+            'degenerate_segment_detection_rate': (
+                degenerate_detection_fraction
+                >= arguments.minimum_degenerate_detection_fraction
             ),
         }
         if arguments.return_trip:
@@ -567,6 +595,12 @@ class CorridorRegression(Node):
             f'suppressed={suppressed_matches} '
             f'below_motion={motion_below_threshold} '
             f'malformed={self.malformed_diagnostics}'
+        )
+        print(
+            'degenerate  : '
+            f'segment_matches={self.degenerate_segment_matches} '
+            f'detections={self.degenerate_segment_detections} '
+            f'fraction={degenerate_detection_fraction:.3f}'
         )
         ratio_boundaries = (0.0, 0.01, 0.025, 0.05, 0.10, 0.25, 0.50, 1.0)
         angle_boundaries = tuple(
@@ -710,6 +744,17 @@ def parse_arguments():
     parser.add_argument('--maximum-map-width', type=float, default=4.0)
     parser.add_argument('--minimum-samples', type=int, default=500)
     parser.add_argument('--minimum-match-attempts', type=int, default=100)
+    parser.add_argument('--degenerate-segment-margin', type=float, default=5.0)
+    parser.add_argument(
+        '--minimum-degenerate-segment-matches',
+        type=int,
+        default=100,
+    )
+    parser.add_argument(
+        '--minimum-degenerate-detection-fraction',
+        type=float,
+        default=0.90,
+    )
     parser.add_argument('--minimum-covariance-ratio', type=float, default=10.0)
     parser.add_argument(
         '--maximum-regular-translation-stddev',
@@ -740,6 +785,8 @@ def parse_arguments():
         arguments.maximum_map_width,
         arguments.minimum_covariance_ratio,
         arguments.maximum_regular_translation_stddev,
+        arguments.degenerate_segment_margin,
+        arguments.minimum_degenerate_detection_fraction,
     )
     if (
         any(not math.isfinite(value) or value <= 0.0 for value in numeric_values)
@@ -753,7 +800,11 @@ def parse_arguments():
         or arguments.minimum_map_rebuilds < 1
         or arguments.minimum_samples < 1
         or arguments.minimum_match_attempts < 1
+        or arguments.minimum_degenerate_segment_matches < 1
         or arguments.minimum_covariance_ratio <= 1.0
+        or arguments.degenerate_segment_margin * 2.0
+        >= arguments.distance
+        or arguments.minimum_degenerate_detection_fraction > 1.0
     ):
         parser.error('Distances, speeds, timeouts and thresholds must be valid')
     return arguments

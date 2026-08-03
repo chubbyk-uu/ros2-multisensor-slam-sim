@@ -20,6 +20,8 @@ scan_matcher_odometry:
       pose_translation_stddev: 0.05
       pose_rotation_stddev: 0.05
       degenerate_translation_stddev: 0.30
+      dead_reckoning_translation_stddev_per_sqrt_meter: 0.10
+      dead_reckoning_rotation_stddev_per_sqrt_radian: 0.10
     minimum_translation_for_update: 0.05
     minimum_rotation_for_update: 0.05
     maximum_local_keyframes: 20

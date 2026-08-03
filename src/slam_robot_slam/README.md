@@ -164,6 +164,8 @@ base_footprint -> lidar_link  robot_state_publisher
 | `output.pose_translation_stddev` | `0.05` | 输出平面位置标准差，单位 m |
 | `output.pose_rotation_stddev` | `0.05` | 输出偏航角标准差，单位 rad |
 | `output.degenerate_translation_stddev` | `0.30` | 退化方向的位置标准差，单位 m |
+| `output.dead_reckoning_translation_stddev_per_sqrt_meter` | `0.10` | 纯里程计每平方根米增加的平移标准差 |
+| `output.dead_reckoning_rotation_stddev_per_sqrt_radian` | `0.10` | 纯里程计每平方根弧度增加的偏航标准差 |
 | `matcher_diagnostics_topic` | `/custom_slam/matcher_diagnostics` | 前端诊断话题 |
 | `matcher.degeneracy.enabled` | `true` | 启用扫描法向平移可观测性处理 |
 | `matcher.degeneracy.normal_half_window` | `3` | 局部直线拟合在中心光束两侧使用的连续点数 |
@@ -306,6 +308,10 @@ rank 直方图。真实匹配还报告两个有效法向特征值、法向数量
 方向角、是否执行退化过滤、实际连续修正比例及累计计数。回归工具据此
 打印信息比值与弱方向角直方图，
 不再从可能重复发布的里程计协方差反推退化检测次数。
+拒配或运动量低于匹配阈值时，输出协方差会按相邻里程计增量继续增长；
+成功匹配后才重置为本次激光观测协方差，因此纯航位推算不再复用陈旧值。
+走廊中段还会按真值位置划出不含入口/出口锚点的退化区间，要求其中至少
+100 次真实匹配且 rank 1 检出比例不低于 90%。真值只用于回归分段。
 
 完全平行墙在行进方向上没有几何约束，前端检测到一维退化后保留该方向的
 轮式里程计预测；横向与航向仍由激光相关匹配校正。法向只在原始光束索引

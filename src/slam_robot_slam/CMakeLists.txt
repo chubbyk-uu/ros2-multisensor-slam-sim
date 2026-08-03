@@ -46,6 +46,19 @@ target_include_directories(pose2d
 )
 target_compile_options(pose2d PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(pose_covariance_2d
+  src/pose_covariance_2d.cpp
+)
+target_include_directories(pose_covariance_2d
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_compile_options(
+  pose_covariance_2d
+  PRIVATE -Wall -Wextra -Wpedantic
+)
+
 add_library(point_to_line_icp
   src/point_to_line_icp.cpp
 )
@@ -167,6 +180,7 @@ target_link_libraries(
   correlative_scan_matcher
   laser_scan_preprocessor
   occupancy_grid_map
+  pose_covariance_2d
   pose2d
   pose_graph_2d
   loop_closure_detector
@@ -207,6 +221,7 @@ install(
     correlative_scan_matcher
     occupancy_grid_map
     point_to_line_icp
+    pose_covariance_2d
     pose2d
     pose_graph_2d
     scan_matcher_odometry_node
@@ -263,6 +278,12 @@ if(BUILD_TESTING)
     laser_scan_preprocessor
     point_to_line_icp
   )
+
+  ament_add_gtest(
+    test_pose_covariance_2d
+    test/test_pose_covariance_2d.cpp
+  )
+  target_link_libraries(test_pose_covariance_2d pose_covariance_2d)
 
   ament_add_gtest(
     test_pose2d
