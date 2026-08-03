@@ -6,9 +6,14 @@
 
 `base_footprint` 位于左右驱动轮轴线中点的地面投影，`base_link` 位于其正上方。
 底盘几何中心相对驱动轴后移 0.07 m，后万向轮与两驱动轮构成稳定的三点支撑。
-雷达通过有实体、碰撞体和惯性的 `lidar_mount_link` 固定到底盘。
+雷达通过有实体和惯性的安装座固定到底盘；IMU 位于 `base_link` 原点，
+即驱动轮轴线中点正上方的底盘内部。
 
-当前模型只包含 2D LiDAR，TF 固定链为
-`base_link -> lidar_mount_link -> lidar_link`。3D 阶段会新增独立的
-`lidar_3d_mount_link -> lidar_3d_link`，不会复用或替换现有 2D 雷达坐标系，
-以保证已经冻结的 2D 回归接口保持兼容。
+`sensor_variant:=2d|3d` 选择互斥的 LiDAR 结构：
+
+- 默认 `2d` 保留原有 `base_link -> lidar_mount_link -> lidar_link`。
+- `3d` 使用 `base_link -> lidar_3d_mount_link -> lidar_3d_link`，传感器
+  位于底盘几何中心上方，不生成 2D 雷达链接。
+
+两种配置都包含 `base_link -> imu_link`。这样不需要在同一机器人上堆叠
+两套雷达，也不会改变已经冻结的 2D 雷达安装位姿和回归几何。

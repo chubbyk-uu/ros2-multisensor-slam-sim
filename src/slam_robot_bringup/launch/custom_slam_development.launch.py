@@ -40,6 +40,9 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
     use_wsl_gpu = LaunchConfiguration("use_wsl_gpu")
     wsl_gpu_adapter = LaunchConfiguration("wsl_gpu_adapter")
+    odometry_mode = LaunchConfiguration("odometry_mode")
+    left_wheel_friction = LaunchConfiguration("left_wheel_friction")
+    right_wheel_friction = LaunchConfiguration("right_wheel_friction")
 
     custom_slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(custom_slam_launch),
@@ -82,6 +85,21 @@ def generate_launch_description():
                 default_value="NVIDIA",
                 description="GPU adapter selected by Mesa D3D12 in WSL.",
             ),
+            DeclareLaunchArgument(
+                "odometry_mode",
+                default_value="wheel",
+                description="Odometry source: wheel or wheel_imu.",
+            ),
+            DeclareLaunchArgument(
+                "left_wheel_friction",
+                default_value="1.2",
+                description="Left drive-wheel friction coefficient.",
+            ),
+            DeclareLaunchArgument(
+                "right_wheel_friction",
+                default_value="1.2",
+                description="Right drive-wheel friction coefficient.",
+            ),
             SetEnvironmentVariable(
                 "GALLIUM_DRIVER",
                 "d3d12",
@@ -100,6 +118,9 @@ def generate_launch_description():
                     "rviz": "false",
                     "use_wsl_gpu": use_wsl_gpu,
                     "wsl_gpu_adapter": wsl_gpu_adapter,
+                    "odometry_mode": odometry_mode,
+                    "left_wheel_friction": left_wheel_friction,
+                    "right_wheel_friction": right_wheel_friction,
                 }.items(),
             ),
             # Let Gazebo spawn the robot and begin publishing TF first.

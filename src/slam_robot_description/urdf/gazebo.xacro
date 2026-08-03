@@ -2,15 +2,15 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
   <!-- Contact parameters for the two driven wheels. -->
   <gazebo reference="left_wheel_link">
-    <mu1>1.2</mu1>
-    <mu2>1.2</mu2>
+    <mu1>$(arg left_wheel_friction)</mu1>
+    <mu2>$(arg left_wheel_friction)</mu2>
     <kp>1000000.0</kp>
     <kd>10.0</kd>
   </gazebo>
 
   <gazebo reference="right_wheel_link">
-    <mu1>1.2</mu1>
-    <mu2>1.2</mu2>
+    <mu1>$(arg right_wheel_friction)</mu1>
+    <mu2>$(arg right_wheel_friction)</mu2>
     <kp>1000000.0</kp>
     <kd>10.0</kd>
   </gazebo>
@@ -23,7 +23,8 @@
     <kd>10.0</kd>
   </gazebo>
 
-  <gazebo reference="lidar_link">
+  <xacro:unless value="${'$(arg sensor_variant)' == '3d'}">
+    <gazebo reference="lidar_link">
     <sensor name="lidar_2d" type="gpu_lidar">
       <always_on>true</always_on>
       <!-- RViz displays /scan; Gazebo ray visualization is unnecessary load. -->
@@ -52,12 +53,76 @@
         </noise>
       </lidar>
     </sensor>
+    </gazebo>
+  </xacro:unless>
+
+  <xacro:if value="${'$(arg sensor_variant)' == '3d'}">
+    <gazebo reference="lidar_3d_link">
+      <sensor name="lidar_3d" type="gpu_lidar">
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <update_rate>$(arg lidar_3d_update_rate)</update_rate>
+        <topic>/lidar_3d</topic>
+        <gz_frame_id>lidar_3d_link</gz_frame_id>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>$(arg lidar_3d_horizontal_samples)</samples>
+              <resolution>1.0</resolution>
+              <min_angle>$(arg lidar_3d_horizontal_min_angle)</min_angle>
+              <max_angle>$(arg lidar_3d_horizontal_max_angle)</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>$(arg lidar_3d_vertical_samples)</samples>
+              <resolution>1.0</resolution>
+              <min_angle>$(arg lidar_3d_vertical_min_angle)</min_angle>
+              <max_angle>$(arg lidar_3d_vertical_max_angle)</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>$(arg lidar_3d_minimum_range)</min>
+            <max>$(arg lidar_3d_maximum_range)</max>
+            <resolution>0.01</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>$(arg lidar_3d_noise_stddev)</stddev>
+          </noise>
+        </lidar>
+      </sensor>
+    </gazebo>
+  </xacro:if>
+
+  <gazebo reference="imu_link">
+    <sensor name="imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>$(arg imu_update_rate)</update_rate>
+      <topic>/imu/data_raw</topic>
+      <gz_frame_id>imu_link</gz_frame_id>
+      <imu>
+        <orientation_reference_frame>
+          <localization>ENU</localization>
+        </orientation_reference_frame>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>$(arg imu_angular_velocity_noise_stddev)</stddev><bias_mean>0.0</bias_mean><bias_stddev>$(arg imu_angular_velocity_bias_stddev)</bias_stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>$(arg imu_angular_velocity_noise_stddev)</stddev><bias_mean>0.0</bias_mean><bias_stddev>$(arg imu_angular_velocity_bias_stddev)</bias_stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>$(arg imu_angular_velocity_noise_stddev)</stddev><bias_mean>0.0</bias_mean><bias_stddev>$(arg imu_angular_velocity_bias_stddev)</bias_stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>$(arg imu_linear_acceleration_noise_stddev)</stddev><bias_mean>0.0</bias_mean><bias_stddev>$(arg imu_linear_acceleration_bias_stddev)</bias_stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>$(arg imu_linear_acceleration_noise_stddev)</stddev><bias_mean>0.0</bias_mean><bias_stddev>$(arg imu_linear_acceleration_bias_stddev)</bias_stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>$(arg imu_linear_acceleration_noise_stddev)</stddev><bias_mean>0.0</bias_mean><bias_stddev>$(arg imu_linear_acceleration_bias_stddev)</bias_stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
   </gazebo>
 
   <gazebo>
     <self_collide>false</self_collide>
 
-    <plugin
+    <xacro:macro name="diff_drive_plugin" params="odom_topic tf_topic">
+      <plugin
       filename="gz-sim-diff-drive-system"
       name="gz::sim::systems::DiffDrive">
       <left_joint>left_wheel_joint</left_joint>
@@ -67,8 +132,8 @@
       <wheel_radius>${wheel_radius}</wheel_radius>
 
       <topic>/cmd_vel</topic>
-      <odom_topic>/odom</odom_topic>
-      <tf_topic>/model/slam_robot/tf</tf_topic>
+      <odom_topic>${odom_topic}</odom_topic>
+      <tf_topic>${tf_topic}</tf_topic>
       <frame_id>odom</frame_id>
       <child_frame_id>base_footprint</child_frame_id>
       <!--
@@ -86,7 +151,19 @@
       <min_linear_acceleration>-0.80</min_linear_acceleration>
       <max_angular_acceleration>2.00</max_angular_acceleration>
       <min_angular_acceleration>-2.00</min_angular_acceleration>
-    </plugin>
+      </plugin>
+    </xacro:macro>
+
+    <xacro:if value="${'$(arg odometry_mode)' == 'wheel_imu'}">
+      <xacro:diff_drive_plugin
+        odom_topic="/wheel/odom"
+        tf_topic="/model/slam_robot/wheel_tf"/>
+    </xacro:if>
+    <xacro:unless value="${'$(arg odometry_mode)' == 'wheel_imu'}">
+      <xacro:diff_drive_plugin
+        odom_topic="/odom"
+        tf_topic="/model/slam_robot/tf"/>
+    </xacro:unless>
 
     <plugin
       filename="gz-sim-joint-state-publisher-system"

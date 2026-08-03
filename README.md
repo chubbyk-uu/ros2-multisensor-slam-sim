@@ -7,7 +7,12 @@
 25 m 单向及 50 m 往返退化长走廊回归，并通过双重复房间的假回环保护
 测试及 155 m 大场景长时间回归；前端已能识别平行走廊的弱观测方向，
 并沿该方向保留轮式里程计预测；155 m 固定 rosbag 的 2× 离线回归也已
-通过。下一阶段先接入 3D LiDAR；视觉和多传感器融合随后推进。
+通过。3D LiDAR 的互斥机器人变体、点云桥接、TF、RViz 和基础性能验收
+也已完成；机器人同时具备 100 Hz IMU，并提供可选的轮速 + IMU 二维
+EKF 对照链路。成熟 3D 基线已接入 MOLA 官方 GICP 流水线，并以不伪造
+逐点时间的纯激光里程计模式通过首次运动验收。下一步将建立 3D 回环世界
+和可重复 rosbag 回归；视觉及其与 3D LiDAR、IMU 的融合随后推进，不计划
+融合 2D 与 3D LiDAR。
 
 ## 运行效果
 
@@ -30,7 +35,8 @@
 | 定位与导航 | 已完成 | Map Server、AMCL、Nav2 官方完整组件和 RViz |
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
 | 自研 C++ 2D SLAM | 已完成 2D 基线 | 已完成前后端、场景回归及 155 m 固定 rosbag 的 2× 离线回放 |
-| 3D LiDAR | 下一阶段 | 先完成模型、点云桥接、TF 和性能验收，再选择成熟 3D SLAM 基线 |
+| IMU / 二维 EKF | 已完成可选基线 | 100 Hz 原始 IMU；可选轮速平移 + IMU 偏航角速度融合，默认仍使用纯轮速基线 |
+| 3D LiDAR | LO 基线已完成 | 16 线点云接入 MOLA GICP，已验证输入契约、TF、轨迹和局部地图 |
 | 视觉 / 多传感器融合 | 计划中 | 在 3D 激光链路稳定后逐步接入 |
 
 详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见
@@ -50,6 +56,8 @@
 - `ros_gz`
 - SLAM Toolbox
 - Navigation2
+- `robot_localization`
+- MOLA LiDAR odometry、ROS 2 bridge 和 metric maps
 - Xacro、`robot_state_publisher` 和 RViz
 
 假设 ROS 2 Jazzy 已正确安装，克隆项目后执行：
@@ -70,6 +78,15 @@ source install/setup.bash
 
 ```bash
 sudo apt install ros-jazzy-joint-state-publisher-gui
+```
+
+运行 3D 激光里程计还需安装 MOLA 的算法及动态加载插件：
+
+```bash
+sudo apt install \
+  ros-jazzy-mola-lidar-odometry \
+  ros-jazzy-mola-bridge-ros2 \
+  ros-jazzy-mola-metric-maps
 ```
 
 后续命令默认在仓库根目录运行。启动文件会以当前目录为基准查找或保存 `maps/`，因此建议每个新终端先执行：
@@ -121,10 +138,11 @@ ros2 launch slam_robot_gazebo simulation.launch.py \
 | --- | --- |
 | `/clock` | Gazebo 仿真时间 |
 | `/cmd_vel` | 差速底盘速度指令 |
-| `/odom` | 轮式里程计 |
+| `/odom` | 默认轮式里程计；可选轮速 + IMU EKF 输出 |
 | `/ground_truth/odom` | Gazebo 无噪声真值，仅用于算法评估 |
 | `/joint_states` | 轮子关节状态 |
 | `/scan` | 2D 激光扫描 |
+| `/imu/data_raw` | 100 Hz 原始 IMU |
 | `/tf`、`/tf_static` | 动态与静态坐标变换 |
 
 检查 LiDAR 和 TF：
@@ -134,6 +152,32 @@ ros2 topic hz /scan
 ros2 topic echo /scan --once
 ros2 run tf2_ros tf2_echo base_footprint lidar_link
 ```
+
+2D 和 3D LiDAR 是同一底盘的两种互斥配置，不会同时生成。默认命令保持
+原有 2D 模型；查看 3D 点云使用：
+
+```bash
+ros2 launch slam_robot_gazebo lidar_3d_simulation.launch.py
+ros2 topic hz /lidar_3d/points
+ros2 topic echo /lidar_3d/points --once --field header
+ros2 run tf2_ros tf2_echo base_link lidar_3d_link
+```
+
+3D 配置不发布 `/scan`，2D 配置不生成 3D 雷达。IMU 在两种配置中都
+存在，固定在底盘内部的 `imu_link`；静止时 `linear_acceleration.z`
+应约为 `+9.81 m/s²`。
+
+默认 `odometry_mode:=wheel` 保留已有 2D 回归结果。需要比较轮速 + IMU
+局部里程计时可使用：
+
+```bash
+ros2 launch slam_robot_bringup mapping_simulation.launch.py \
+  odometry_mode:=wheel_imu
+```
+
+此模式下 Gazebo 发布 `/wheel/odom`，`robot_localization` 只融合轮速的
+平面线速度和 IMU 的偏航角速度，再唯一发布 `/odom` 及
+`odom -> base_footprint`。IMU 的绝对姿态和线加速度暂不进入二维 EKF。
 
 ### 3. 建图
 
@@ -386,13 +430,34 @@ ros2 launch slam_robot_slam play_slam_data.launch.py \
 
 回放入口默认打开专用 RViz，并在发布数据前等待 2 秒，让节点和订阅关系完成初始化。可通过 `rate:=0.5` 慢速播放，或通过 `loop:=true` 循环播放。
 
+### 8. 运行 3D 激光里程计基线
+
+一条命令启动 3D 机器人、点云输入检查、MOLA GICP 和官方 RViz：
+
+```bash
+ros2 launch slam_robot_slam_3d mola_lo_simulation.launch.py
+```
+
+当前 Gazebo 点云没有真实雷达常见的逐点时间字段，因此启动器明确关闭
+deskew，按纯 LiDAR odometry 运行；不会生成假时间字段，也不会把
+`/ground_truth/odom`、轮式里程计或 IMU 偷喂给算法。默认
+`use_imu_gravity:=false`；可选的 `use_imu_gravity:=true` 仅提供重力方向
+先验，不等于完整 LIO。详细接口和 TF 职责见
+[3D SLAM 包说明](src/slam_robot_slam_3d/README.md)。
+
 ## 系统结构
 
 数据流：
 
 ```text
-teleop / Nav2 -> /cmd_vel -> Gazebo diff drive -> /odom
+teleop / Nav2 -> /cmd_vel -> Gazebo diff drive
+  -> wheel mode: /odom + odom -> base_footprint
+  -> wheel_imu mode: /wheel/odom + /imu/data_raw -> EKF
+     -> /odom + odom -> base_footprint
 Gazebo 2D LiDAR -> /scan
+Gazebo 3D LiDAR variant -> /lidar_3d/points -> MOLA GICP LO
+  -> /lidar_odometry/pose + /lidar_odometry/localmap_points
+  -> map -> odom
 Gazebo world pose -> /ground_truth/odom（仅评估）
 robot_state_publisher -> /tf、/tf_static
 /scan + TF + /odom -> SLAM Toolbox -> /map、map -> odom
@@ -416,11 +481,17 @@ map
             ├── left_wheel_link
             ├── right_wheel_link
             ├── caster_link
-            └── lidar_mount_link
-                └── lidar_link
+            ├── imu_link
+            └── LiDAR 二选一
+                ├── lidar_mount_link -> lidar_link（2D）
+                └── lidar_3d_mount_link -> lidar_3d_link（3D）
 ```
 
 `base_footprint` 位于驱动轮轴线中点的地面投影，是差速运动学旋转中心。几何轮距为 `0.34 m`；Gazebo 中按原地旋转标定的有效运动学轮距为 `0.306 m`，仅用于驱动和里程计参数。
+
+传感器路线有意保持清晰：2D 与 3D LiDAR 用于两条独立 SLAM 基线；IMU
+可服务于二维局部里程计和后续 LIO。最终多传感器阶段优先研究
+3D LiDAR + 相机 + IMU，不把 2D/3D 两套雷达机械叠加在同一模型上。
 
 ## 包结构
 
@@ -428,6 +499,7 @@ map
 - `slam_robot_gazebo`：Gazebo 世界、系统插件和 ROS-Gazebo 桥接。
 - `slam_robot_bringup`：建图、导航、自研 SLAM 和各类仿真回归的统一启动入口。
 - `slam_robot_slam`：SLAM Toolbox、自研 C++ SLAM、数据录制和算法测试。
+- `slam_robot_slam_3d`：3D 点云输入契约、MOLA GICP 适配和后续 3D SLAM 回归。
 - `slam_robot_navigation`：Map Server、AMCL、Nav2 配置和自动回归工具。
 
 ## WSL2 与已知现象

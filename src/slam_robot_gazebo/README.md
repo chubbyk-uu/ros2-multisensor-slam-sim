@@ -14,12 +14,38 @@ ros2 launch slam_robot_gazebo simulation.launch.py
 ros2 launch slam_robot_gazebo simulation.launch.py gui:=false
 ```
 
-当前已桥接 `/clock`、`/cmd_vel`、`/odom`、`/ground_truth/odom`、`/joint_states`、`/scan` 和 `/tf`。
+当前已桥接 `/clock`、`/cmd_vel`、里程计、`/ground_truth/odom`、
+`/joint_states`、LiDAR、`/imu/data_raw` 和所需 TF。
 默认加载 `worlds/slam_world.sdf`，其中包含外围墙、非对称隔墙、箱体、圆柱路标和回环通道。
 2D LiDAR 通过 `/scan` 发布 720 点、10 Hz 的 360° `sensor_msgs/LaserScan`，坐标系为 `lidar_link`。
 
-当前 Gazebo 基线尚未加入 3D LiDAR 或 IMU，也不会发布 3D PointCloud2。
-后续将使用独立话题和坐标系接入它们，现有 `/scan` 与 2D 启动入口保持不变。
+3D LiDAR 通过独立入口启动：
+
+```bash
+ros2 launch slam_robot_gazebo lidar_3d_simulation.launch.py
+```
+
+它发布 10 Hz、720 × 16 的 `/lidar_3d/points`，坐标系为
+`lidar_3d_link`。`sensor_variant:=2d|3d` 保证两套雷达互斥，因而 3D
+配置没有 `/scan`，默认 2D 配置也不承担 3D 点云开销。两种配置均发布
+100 Hz `/imu/data_raw`，噪声、启动偏置及频率可通过 launch 参数调整。
+
+默认 `odometry_mode:=wheel` 由 Gazebo 唯一发布 `/odom` 和
+`odom -> base_footprint`。可选 `odometry_mode:=wheel_imu` 将 Gazebo
+轮速改发到 `/wheel/odom`，由 `robot_localization` 融合轮速平移和 IMU
+偏航角速度后唯一发布 `/odom` 与该 TF。两种模式使用不同 bridge YAML，
+但始终只启动一个 `ros_gz_bridge` 进程。
+
+可自动比较正常附着和单侧低摩擦条件下的轮速、融合里程计与自研 2D
+SLAM：
+
+```bash
+ros2 launch slam_robot_bringup imu_fusion_regression.launch.py \
+  odometry_mode:=wheel_imu profile:=normal
+ros2 launch slam_robot_bringup imu_fusion_regression.launch.py \
+  odometry_mode:=wheel_imu profile:=slip \
+  left_wheel_friction:=0.15 right_wheel_friction:=1.2
+```
 
 `worlds/degenerate_corridor.sdf` 是自研 SLAM 的受控退化场景：33 m 长、
 2.6 m 净宽的平行墙走廊，中段在 LiDAR 量程内没有纵向几何特征，入口和

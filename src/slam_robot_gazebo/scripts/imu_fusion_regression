@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Compare wheel odometry, wheel-IMU EKF, SLAM, and Gazebo truth."""
+
+import argparse
+from dataclasses import dataclass
+import math
+import statistics
+import time
+
+import rclpy
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.utilities import remove_ros_args
+from sensor_msgs.msg import Imu
+
+
+@dataclass(frozen=True)
+class Pose2D:
+    x: float
+    y: float
+    yaw: float
+
+
+def normalize_angle(angle):
+    """Wrap an angle to the closed interval around zero."""
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def yaw_from_quaternion(quaternion):
+    """Extract planar yaw from a geometry quaternion."""
+    return math.atan2(
+        2.0
+        * (
+            quaternion.w * quaternion.z
+            + quaternion.x * quaternion.y
+        ),
+        1.0
+        - 2.0
+        * (
+            quaternion.y * quaternion.y
+            + quaternion.z * quaternion.z
+        ),
+    )
+
+
+def pose_from_odometry(message):
+    """Convert a ROS odometry pose to its planar components."""
+    position = message.pose.pose.position
+    return Pose2D(
+        position.x,
+        position.y,
+        yaw_from_quaternion(message.pose.pose.orientation),
+    )
+
+
+def relative_pose(start, end):
+    """Return the end pose expressed relative to the start pose."""
+    delta_x = end.x - start.x
+    delta_y = end.y - start.y
+    cosine = math.cos(start.yaw)
+    sine = math.sin(start.yaw)
+    return Pose2D(
+        cosine * delta_x + sine * delta_y,
+        -sine * delta_x + cosine * delta_y,
+        normalize_angle(end.yaw - start.yaw),
+    )
+
+
+def pose_error(reference, estimate):
+    """Return planar translation and yaw errors."""
+    return (
+        math.hypot(estimate.x - reference.x, estimate.y - reference.y),
+        abs(normalize_angle(estimate.yaw - reference.yaw)),
+    )
+
+
+class ImuFusionRegression(Node):
+    """Drive repeatable motions and collect all local pose estimates."""
+
+    def __init__(self, odometry_mode, require_slam):
+        """Create publishers, subscriptions, and measurement buffers."""
+        super().__init__("imu_fusion_regression")
+        self.odometry_mode = odometry_mode
+        self.require_slam = require_slam
+        self.latest = {}
+        self.imu_angular_z = []
+        self.imu_acceleration_z = []
+
+        self.command_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.create_subscription(
+            Odometry,
+            "/odom",
+            lambda message: self.store_odometry("odom", message),
+            20,
+        )
+        self.create_subscription(
+            Odometry,
+            "/wheel/odom",
+            lambda message: self.store_odometry("wheel", message),
+            20,
+        )
+        self.create_subscription(
+            Odometry,
+            "/ground_truth/odom",
+            lambda message: self.store_odometry("truth", message),
+            20,
+        )
+        self.create_subscription(
+            Odometry,
+            "/custom_slam/laser_odom",
+            lambda message: self.store_odometry("slam", message),
+            20,
+        )
+        self.create_subscription(
+            Imu,
+            "/imu/data_raw",
+            self.imu_callback,
+            qos_profile_sensor_data,
+        )
+
+    def store_odometry(self, name, message):
+        """Store the most recent planar pose for a named estimator."""
+        self.latest[name] = pose_from_odometry(message)
+
+    def imu_callback(self, message):
+        """Collect IMU axes used by the stationary validation."""
+        self.imu_angular_z.append(message.angular_velocity.z)
+        self.imu_acceleration_z.append(message.linear_acceleration.z)
+
+    def required_sources(self):
+        """Return estimator names required by the selected mode."""
+        sources = {"odom", "truth"}
+        if self.odometry_mode == "wheel_imu":
+            sources.add("wheel")
+        if self.require_slam:
+            sources.add("slam")
+        return sources
+
+    def wait_for_inputs(self, wall_timeout=20.0):
+        """Wait for all required topics without relying on simulation time."""
+        deadline = time.monotonic() + wall_timeout
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.05)
+            if (
+                self.required_sources().issubset(self.latest)
+                and len(self.imu_angular_z) >= 50
+            ):
+                return
+        missing = sorted(self.required_sources() - self.latest.keys())
+        raise RuntimeError(
+            "Timed out waiting for sources: "
+            + (", ".join(missing) if missing else "IMU samples")
+        )
+
+    def run_command(self, linear_x, angular_z, duration):
+        """Publish a velocity command for a simulation-time duration."""
+        command = Twist()
+        command.linear.x = linear_x
+        command.angular.z = angular_z
+        start = self.get_clock().now().nanoseconds
+        wall_deadline = time.monotonic() + max(15.0, duration * 3.0)
+        while rclpy.ok() and time.monotonic() < wall_deadline:
+            rclpy.spin_once(self, timeout_sec=0.01)
+            now = self.get_clock().now().nanoseconds
+            self.command_publisher.publish(command)
+            if now > start and (now - start) * 1.0e-9 >= duration:
+                return
+        raise RuntimeError("Simulation clock did not advance during motion")
+
+    def stop_and_settle(self, duration=1.5):
+        """Stop the robot and wait for residual motion to settle."""
+        self.run_command(0.0, 0.0, duration)
+
+    def snapshot(self):
+        """Copy the latest poses at a motion boundary."""
+        return dict(self.latest)
+
+    def report_imu_static(self, sample_start):
+        """Print stationary gyroscope and gravity statistics."""
+        gyro = self.imu_angular_z[sample_start:]
+        acceleration = self.imu_acceleration_z[sample_start:]
+        if len(gyro) < 20:
+            raise RuntimeError("Not enough stationary IMU samples")
+        print(
+            "IMU_STATIC"
+            f" samples={len(gyro)}"
+            f" gyro_z_mean={statistics.fmean(gyro):.6f}"
+            f" gyro_z_stddev={statistics.pstdev(gyro):.6f}"
+            f" accel_z_mean={statistics.fmean(acceleration):.6f}",
+            flush=True,
+        )
+
+    def report_motion(self, scenario, start, end):
+        """Print each estimator's error against relative Gazebo truth."""
+        truth = relative_pose(start["truth"], end["truth"])
+        print(
+            "MOTION"
+            f" scenario={scenario}"
+            f" truth_distance={math.hypot(truth.x, truth.y):.6f}"
+            f" truth_yaw_deg={math.degrees(truth.yaw):.6f}",
+            flush=True,
+        )
+        results = {}
+        for source in ("wheel", "odom", "slam"):
+            if source not in start or source not in end:
+                continue
+            estimate = relative_pose(start[source], end[source])
+            translation_error, yaw_error = pose_error(truth, estimate)
+            results[source] = (translation_error, yaw_error)
+            print(
+                "RESULT"
+                f" scenario={scenario}"
+                f" source={source}"
+                f" translation_error={translation_error:.6f}"
+                f" yaw_error_deg={math.degrees(yaw_error):.6f}",
+                flush=True,
+            )
+        return results
+
+
+def parse_arguments():
+    """Parse the regression profile and expected odometry source."""
+    parser = argparse.ArgumentParser(
+        description="Compare wheel, wheel+IMU EKF, SLAM, and Gazebo truth."
+    )
+    parser.add_argument(
+        "--odometry-mode",
+        choices=("wheel", "wheel_imu"),
+        default="wheel_imu",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("normal", "slip"),
+        default="normal",
+    )
+    parser.add_argument("--require-slam", action="store_true")
+    return parser.parse_args(remove_ros_args()[1:])
+
+
+def main():
+    """Run the stationary, straight, and rotation checks."""
+    arguments = parse_arguments()
+    rclpy.init()
+    node = ImuFusionRegression(
+        arguments.odometry_mode,
+        arguments.require_slam,
+    )
+    exit_code = 0
+    try:
+        node.wait_for_inputs()
+        node.stop_and_settle(2.0)
+        stationary_sample_start = len(node.imu_angular_z)
+        node.stop_and_settle(2.0)
+        node.report_imu_static(stationary_sample_start)
+
+        straight_start = node.snapshot()
+        node.run_command(0.25, 0.0, 6.0)
+        node.stop_and_settle()
+        straight_end = node.snapshot()
+        node.report_motion(
+            f"{arguments.profile}_straight",
+            straight_start,
+            straight_end,
+        )
+
+        rotation_start = node.snapshot()
+        node.run_command(0.0, 0.60, 4.0)
+        node.stop_and_settle()
+        rotation_end = node.snapshot()
+        node.report_motion(
+            f"{arguments.profile}_rotation",
+            rotation_start,
+            rotation_end,
+        )
+    except (RuntimeError, ValueError) as error:
+        node.get_logger().error(str(error))
+        exit_code = 1
+    finally:
+        command = Twist()
+        for _ in range(5):
+            node.command_publisher.publish(command)
+            rclpy.spin_once(node, timeout_sec=0.02)
+        node.destroy_node()
+        rclpy.shutdown()
+    raise SystemExit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

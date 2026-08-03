@@ -1,5 +1,31 @@
 <?xml version="1.0"?>
 <robot name="slam_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="sensor_variant" default="2d"/>
+  <xacro:arg name="odometry_mode" default="wheel"/>
+  <xacro:arg name="left_wheel_friction" default="1.2"/>
+  <xacro:arg name="right_wheel_friction" default="1.2"/>
+  <xacro:arg name="lidar_3d_x" default="-0.07"/>
+  <xacro:arg name="lidar_3d_y" default="0.0"/>
+  <xacro:arg name="lidar_3d_z" default="0.18"/>
+  <xacro:arg name="lidar_3d_roll" default="0.0"/>
+  <xacro:arg name="lidar_3d_pitch" default="0.0"/>
+  <xacro:arg name="lidar_3d_yaw" default="0.0"/>
+  <xacro:arg name="lidar_3d_horizontal_samples" default="720"/>
+  <xacro:arg name="lidar_3d_horizontal_min_angle" default="-3.141592653589793"/>
+  <xacro:arg name="lidar_3d_horizontal_max_angle" default="3.1328660073298216"/>
+  <xacro:arg name="lidar_3d_vertical_samples" default="16"/>
+  <xacro:arg name="lidar_3d_vertical_min_angle" default="-0.2617993877991494"/>
+  <xacro:arg name="lidar_3d_vertical_max_angle" default="0.2617993877991494"/>
+  <xacro:arg name="lidar_3d_update_rate" default="10.0"/>
+  <xacro:arg name="lidar_3d_minimum_range" default="0.20"/>
+  <xacro:arg name="lidar_3d_maximum_range" default="20.0"/>
+  <xacro:arg name="lidar_3d_noise_stddev" default="0.01"/>
+  <xacro:arg name="imu_update_rate" default="100.0"/>
+  <xacro:arg name="imu_angular_velocity_noise_stddev" default="0.002"/>
+  <xacro:arg name="imu_angular_velocity_bias_stddev" default="0.0002"/>
+  <xacro:arg name="imu_linear_acceleration_noise_stddev" default="0.02"/>
+  <xacro:arg name="imu_linear_acceleration_bias_stddev" default="0.005"/>
+
   <xacro:include filename="$(find slam_robot_description)/urdf/materials.xacro"/>
   <xacro:include filename="$(find slam_robot_description)/urdf/inertial_macros.xacro"/>
 
@@ -33,6 +59,19 @@
   <xacro:property name="lidar_mount_radius" value="0.025"/>
   <xacro:property name="lidar_mount_height" value="0.10"/>
   <xacro:property name="lidar_mount_mass" value="0.12"/>
+
+  <!-- The 2D and 3D LiDAR variants are mutually exclusive. -->
+  <xacro:property name="lidar_3d_mount_radius" value="0.028"/>
+  <xacro:property name="lidar_3d_mount_height" value="0.085"/>
+  <xacro:property name="lidar_3d_mount_mass" value="0.10"/>
+  <xacro:property name="lidar_3d_radius" value="0.055"/>
+  <xacro:property name="lidar_3d_height" value="0.07"/>
+  <xacro:property name="lidar_3d_mass" value="0.32"/>
+
+  <xacro:property name="imu_length" value="0.04"/>
+  <xacro:property name="imu_width" value="0.03"/>
+  <xacro:property name="imu_height" value="0.015"/>
+  <xacro:property name="imu_mass" value="0.02"/>
 
   <link name="base_footprint"/>
 
@@ -134,7 +173,33 @@
       rpy="0 0 0"/>
   </joint>
 
-  <link name="lidar_mount_link">
+  <link name="imu_link">
+    <visual>
+      <geometry>
+        <box size="${imu_length} ${imu_width} ${imu_height}"/>
+      </geometry>
+      <material name="accent_orange"/>
+    </visual>
+    <inertial>
+      <mass value="${imu_mass}"/>
+      <inertia
+        ixx="${imu_mass * (imu_width * imu_width + imu_height * imu_height) / 12.0}"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="${imu_mass * (imu_length * imu_length + imu_height * imu_height) / 12.0}"
+        iyz="0.0"
+        izz="${imu_mass * (imu_length * imu_length + imu_width * imu_width) / 12.0}"/>
+    </inertial>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:unless value="${'$(arg sensor_variant)' == '3d'}">
+    <link name="lidar_mount_link">
     <visual>
       <geometry>
         <cylinder radius="${lidar_mount_radius}" length="${lidar_mount_height}"/>
@@ -150,17 +215,17 @@
       mass="${lidar_mount_mass}"
       radius="${lidar_mount_radius}"
       length="${lidar_mount_height}"/>
-  </link>
+    </link>
 
-  <joint name="lidar_mount_joint" type="fixed">
+    <joint name="lidar_mount_joint" type="fixed">
     <parent link="base_link"/>
     <child link="lidar_mount_link"/>
     <origin
       xyz="${-drive_axle_offset} 0 ${base_height / 2.0 + lidar_mount_height / 2.0}"
       rpy="0 0 0"/>
-  </joint>
+    </joint>
 
-  <link name="lidar_link">
+    <link name="lidar_link">
     <visual>
       <geometry>
         <cylinder radius="${lidar_radius}" length="${lidar_height}"/>
@@ -176,13 +241,68 @@
       mass="${lidar_mass}"
       radius="${lidar_radius}"
       length="${lidar_height}"/>
-  </link>
+    </link>
 
-  <joint name="lidar_joint" type="fixed">
-    <parent link="lidar_mount_link"/>
-    <child link="lidar_link"/>
-    <origin xyz="0 0 ${(lidar_mount_height + lidar_height) / 2.0}" rpy="0 0 0"/>
-  </joint>
+    <joint name="lidar_joint" type="fixed">
+      <parent link="lidar_mount_link"/>
+      <child link="lidar_link"/>
+      <origin xyz="0 0 ${(lidar_mount_height + lidar_height) / 2.0}" rpy="0 0 0"/>
+    </joint>
+  </xacro:unless>
+
+  <xacro:if value="${'$(arg sensor_variant)' == '3d'}">
+    <link name="lidar_3d_mount_link">
+      <visual>
+        <geometry>
+          <cylinder radius="${lidar_3d_mount_radius}" length="${lidar_3d_mount_height}"/>
+        </geometry>
+        <material name="accent_orange"/>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="${lidar_3d_mount_radius}" length="${lidar_3d_mount_height}"/>
+        </geometry>
+      </collision>
+      <xacro:cylinder_inertial
+        mass="${lidar_3d_mount_mass}"
+        radius="${lidar_3d_mount_radius}"
+        length="${lidar_3d_mount_height}"/>
+    </link>
+
+    <joint name="lidar_3d_mount_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="lidar_3d_mount_link"/>
+      <origin
+        xyz="$(arg lidar_3d_x) $(arg lidar_3d_y) ${float('$(arg lidar_3d_z)') - (lidar_3d_mount_height + lidar_3d_height) / 2.0}"
+        rpy="$(arg lidar_3d_roll) $(arg lidar_3d_pitch) $(arg lidar_3d_yaw)"/>
+    </joint>
+
+    <link name="lidar_3d_link">
+      <visual>
+        <geometry>
+          <cylinder radius="${lidar_3d_radius}" length="${lidar_3d_height}"/>
+        </geometry>
+        <material name="sensor_gray"/>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="${lidar_3d_radius}" length="${lidar_3d_height}"/>
+        </geometry>
+      </collision>
+      <xacro:cylinder_inertial
+        mass="${lidar_3d_mass}"
+        radius="${lidar_3d_radius}"
+        length="${lidar_3d_height}"/>
+    </link>
+
+    <joint name="lidar_3d_joint" type="fixed">
+      <parent link="lidar_3d_mount_link"/>
+      <child link="lidar_3d_link"/>
+      <origin
+        xyz="0 0 ${(lidar_3d_mount_height + lidar_3d_height) / 2.0}"
+        rpy="0 0 0"/>
+    </joint>
+  </xacro:if>
 
   <xacro:include filename="$(find slam_robot_description)/urdf/gazebo.xacro"/>
 </robot>

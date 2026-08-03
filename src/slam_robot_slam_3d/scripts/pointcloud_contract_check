@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+
+import time
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import PointCloud2
+
+
+POINT_TIME_FIELDS = {
+    'offset_time',
+    't',
+    'time',
+    'timestamp',
+    'timestamp_0',
+}
+
+
+def validate_cloud_metadata(
+    field_names,
+    frame_id,
+    width,
+    height,
+    point_step,
+    row_step,
+    data_size,
+    expected_frame,
+    minimum_points,
+    require_point_time,
+):
+    '''Validate metadata needed by the 3D LiDAR odometry input contract.'''
+    errors = []
+    names = set(field_names)
+    missing_xyz = sorted({'x', 'y', 'z'} - names)
+    if missing_xyz:
+        errors.append('missing coordinate fields: ' + ', '.join(missing_xyz))
+
+    if expected_frame and frame_id != expected_frame:
+        errors.append(
+            f'frame_id is {frame_id!r}, expected {expected_frame!r}'
+        )
+
+    point_count = width * height
+    if point_count < minimum_points:
+        errors.append(
+            f'cloud has {point_count} points, expected at least {minimum_points}'
+        )
+
+    if point_step <= 0:
+        errors.append('point_step must be positive')
+    if width > 0 and row_step < point_step * width:
+        errors.append('row_step is smaller than point_step * width')
+    if height > 0 and data_size < row_step * height:
+        errors.append('data buffer is smaller than row_step * height')
+
+    point_time_fields = sorted(names & POINT_TIME_FIELDS)
+    if require_point_time and not point_time_fields:
+        errors.append(
+            'no per-point time field found; accepted aliases are '
+            + ', '.join(sorted(POINT_TIME_FIELDS))
+        )
+
+    return errors, point_time_fields
+
+
+class PointCloudContractChecker(Node):
+    def __init__(self):
+        super().__init__('pointcloud_contract_check')
+        self.declare_parameter('topic', '/lidar_3d/points')
+        self.declare_parameter('expected_frame', 'lidar_3d_link')
+        self.declare_parameter('minimum_points', 100)
+        self.declare_parameter('require_point_time', False)
+        self.declare_parameter('timeout_sec', 30.0)
+
+        self.topic = self.get_parameter('topic').value
+        self.expected_frame = self.get_parameter('expected_frame').value
+        self.minimum_points = self.get_parameter('minimum_points').value
+        self.require_point_time = self.get_parameter('require_point_time').value
+        self.timeout_sec = self.get_parameter('timeout_sec').value
+        self.result = None
+
+        self.subscription = self.create_subscription(
+            PointCloud2,
+            self.topic,
+            self._cloud_callback,
+            qos_profile_sensor_data,
+        )
+        self.get_logger().info(
+            f'Waiting up to {self.timeout_sec:.1f} s for {self.topic}'
+        )
+
+    def _cloud_callback(self, message):
+        field_names = [field.name for field in message.fields]
+        errors, point_time_fields = validate_cloud_metadata(
+            field_names=field_names,
+            frame_id=message.header.frame_id,
+            width=message.width,
+            height=message.height,
+            point_step=message.point_step,
+            row_step=message.row_step,
+            data_size=len(message.data),
+            expected_frame=self.expected_frame,
+            minimum_points=self.minimum_points,
+            require_point_time=self.require_point_time,
+        )
+
+        if errors:
+            for error in errors:
+                self.get_logger().error(error)
+            self.result = 2
+        else:
+            self.get_logger().info(
+                'PointCloud2 contract passed: '
+                f'frame={message.header.frame_id}, '
+                f'size={message.width}x{message.height}, '
+                'fields=' + ','.join(field_names)
+            )
+            if point_time_fields:
+                self.get_logger().info(
+                    'Per-point time channel detected: '
+                    + ', '.join(point_time_fields)
+                )
+            else:
+                self.get_logger().warning(
+                    'No per-point time channel: accepted for the Gazebo LO '
+                    'baseline because deskew is explicitly disabled; this is '
+                    'not a full LIO deskew validation.'
+                )
+            self.result = 0
+
+        self.destroy_subscription(self.subscription)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = PointCloudContractChecker()
+    deadline = time.monotonic() + node.timeout_sec
+
+    try:
+        while rclpy.ok() and node.result is None:
+            if time.monotonic() >= deadline:
+                node.get_logger().error(
+                    f'Timed out waiting for PointCloud2 on {node.topic}'
+                )
+                node.result = 3
+                break
+            rclpy.spin_once(node, timeout_sec=0.1)
+        return node.result if node.result is not None else 4
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

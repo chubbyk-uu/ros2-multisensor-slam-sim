@@ -8,7 +8,12 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import Command, LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    Command,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -31,6 +36,16 @@ def generate_launch_description():
     bridge_config_path = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "config", "bridge.yaml"]
     )
+    wheel_imu_bridge_config_path = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_gazebo"),
+            "config",
+            "bridge_wheel_imu.yaml",
+        ]
+    )
+    ekf_config_path = PathJoinSubstitution(
+        [FindPackageShare("slam_robot_gazebo"), "config", "ekf_2d.yaml"]
+    )
     rviz_config_path = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "rviz", "simulation.rviz"]
     )
@@ -41,10 +56,109 @@ def generate_launch_description():
     world = LaunchConfiguration("world")
     gui = LaunchConfiguration("gui")
     rviz = LaunchConfiguration("rviz")
+    rviz_config = LaunchConfiguration("rviz_config")
     use_wsl_gpu = LaunchConfiguration("use_wsl_gpu")
     wsl_gpu_adapter = LaunchConfiguration("wsl_gpu_adapter")
+    sensor_variant = LaunchConfiguration("sensor_variant")
+    odometry_mode = LaunchConfiguration("odometry_mode")
+    left_wheel_friction = LaunchConfiguration("left_wheel_friction")
+    right_wheel_friction = LaunchConfiguration("right_wheel_friction")
+    lidar_3d_x = LaunchConfiguration("lidar_3d_x")
+    lidar_3d_y = LaunchConfiguration("lidar_3d_y")
+    lidar_3d_z = LaunchConfiguration("lidar_3d_z")
+    lidar_3d_roll = LaunchConfiguration("lidar_3d_roll")
+    lidar_3d_pitch = LaunchConfiguration("lidar_3d_pitch")
+    lidar_3d_yaw = LaunchConfiguration("lidar_3d_yaw")
+    lidar_3d_horizontal_samples = LaunchConfiguration(
+        "lidar_3d_horizontal_samples"
+    )
+    lidar_3d_horizontal_min_angle = LaunchConfiguration(
+        "lidar_3d_horizontal_min_angle"
+    )
+    lidar_3d_horizontal_max_angle = LaunchConfiguration(
+        "lidar_3d_horizontal_max_angle"
+    )
+    lidar_3d_vertical_samples = LaunchConfiguration("lidar_3d_vertical_samples")
+    lidar_3d_vertical_min_angle = LaunchConfiguration(
+        "lidar_3d_vertical_min_angle"
+    )
+    lidar_3d_vertical_max_angle = LaunchConfiguration(
+        "lidar_3d_vertical_max_angle"
+    )
+    lidar_3d_update_rate = LaunchConfiguration("lidar_3d_update_rate")
+    lidar_3d_minimum_range = LaunchConfiguration("lidar_3d_minimum_range")
+    lidar_3d_maximum_range = LaunchConfiguration("lidar_3d_maximum_range")
+    lidar_3d_noise_stddev = LaunchConfiguration("lidar_3d_noise_stddev")
+    imu_update_rate = LaunchConfiguration("imu_update_rate")
+    imu_angular_velocity_noise_stddev = LaunchConfiguration(
+        "imu_angular_velocity_noise_stddev"
+    )
+    imu_angular_velocity_bias_stddev = LaunchConfiguration(
+        "imu_angular_velocity_bias_stddev"
+    )
+    imu_linear_acceleration_noise_stddev = LaunchConfiguration(
+        "imu_linear_acceleration_noise_stddev"
+    )
+    imu_linear_acceleration_bias_stddev = LaunchConfiguration(
+        "imu_linear_acceleration_bias_stddev"
+    )
     robot_description = ParameterValue(
-        Command(["xacro ", model_path]),
+        Command(
+            [
+                "xacro ",
+                model_path,
+                " sensor_variant:=",
+                sensor_variant,
+                " odometry_mode:=",
+                odometry_mode,
+                " left_wheel_friction:=",
+                left_wheel_friction,
+                " right_wheel_friction:=",
+                right_wheel_friction,
+                " lidar_3d_x:=",
+                lidar_3d_x,
+                " lidar_3d_y:=",
+                lidar_3d_y,
+                " lidar_3d_z:=",
+                lidar_3d_z,
+                " lidar_3d_roll:=",
+                lidar_3d_roll,
+                " lidar_3d_pitch:=",
+                lidar_3d_pitch,
+                " lidar_3d_yaw:=",
+                lidar_3d_yaw,
+                " lidar_3d_horizontal_samples:=",
+                lidar_3d_horizontal_samples,
+                " lidar_3d_horizontal_min_angle:=",
+                lidar_3d_horizontal_min_angle,
+                " lidar_3d_horizontal_max_angle:=",
+                lidar_3d_horizontal_max_angle,
+                " lidar_3d_vertical_samples:=",
+                lidar_3d_vertical_samples,
+                " lidar_3d_vertical_min_angle:=",
+                lidar_3d_vertical_min_angle,
+                " lidar_3d_vertical_max_angle:=",
+                lidar_3d_vertical_max_angle,
+                " lidar_3d_update_rate:=",
+                lidar_3d_update_rate,
+                " lidar_3d_minimum_range:=",
+                lidar_3d_minimum_range,
+                " lidar_3d_maximum_range:=",
+                lidar_3d_maximum_range,
+                " lidar_3d_noise_stddev:=",
+                lidar_3d_noise_stddev,
+                " imu_update_rate:=",
+                imu_update_rate,
+                " imu_angular_velocity_noise_stddev:=",
+                imu_angular_velocity_noise_stddev,
+                " imu_angular_velocity_bias_stddev:=",
+                imu_angular_velocity_bias_stddev,
+                " imu_linear_acceleration_noise_stddev:=",
+                imu_linear_acceleration_noise_stddev,
+                " imu_linear_acceleration_bias_stddev:=",
+                imu_linear_acceleration_bias_stddev,
+            ]
+        ),
         value_type=str,
     )
 
@@ -79,6 +193,136 @@ def generate_launch_description():
                 "rviz",
                 default_value="true",
                 description="Start RViz with the robot and laser scan displays.",
+            ),
+            DeclareLaunchArgument(
+                "rviz_config",
+                default_value=rviz_config_path,
+                description="Absolute path to the RViz configuration file.",
+            ),
+            DeclareLaunchArgument(
+                "sensor_variant",
+                default_value="2d",
+                description="LiDAR model variant: 2d or 3d.",
+            ),
+            DeclareLaunchArgument(
+                "odometry_mode",
+                default_value="wheel",
+                description="Odometry source: wheel or wheel_imu.",
+            ),
+            DeclareLaunchArgument(
+                "left_wheel_friction",
+                default_value="1.2",
+                description="Left drive-wheel friction coefficient.",
+            ),
+            DeclareLaunchArgument(
+                "right_wheel_friction",
+                default_value="1.2",
+                description="Right drive-wheel friction coefficient.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_x",
+                default_value="-0.07",
+                description="3D LiDAR sensing origin x in base_link, in metres.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_y",
+                default_value="0.0",
+                description="3D LiDAR sensing origin y in base_link, in metres.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_z",
+                default_value="0.18",
+                description="3D LiDAR sensing origin z in base_link, in metres.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_roll",
+                default_value="0.0",
+                description="3D LiDAR mounting roll in radians.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_pitch",
+                default_value="0.0",
+                description="3D LiDAR mounting pitch in radians.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_yaw",
+                default_value="0.0",
+                description="3D LiDAR mounting yaw in radians.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_horizontal_samples",
+                default_value="720",
+                description="Number of horizontal samples in each 3D scan.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_horizontal_min_angle",
+                default_value="-3.141592653589793",
+                description="Minimum horizontal scan angle in radians.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_horizontal_max_angle",
+                default_value="3.1328660073298216",
+                description="Maximum horizontal scan angle in radians.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_vertical_samples",
+                default_value="16",
+                description="Number of vertical scan channels.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_vertical_min_angle",
+                default_value="-0.2617993877991494",
+                description="Minimum vertical scan angle in radians.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_vertical_max_angle",
+                default_value="0.2617993877991494",
+                description="Maximum vertical scan angle in radians.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_update_rate",
+                default_value="10.0",
+                description="3D LiDAR update rate in Hz.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_minimum_range",
+                default_value="0.20",
+                description="3D LiDAR minimum range in metres.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_maximum_range",
+                default_value="20.0",
+                description="3D LiDAR maximum range in metres.",
+            ),
+            DeclareLaunchArgument(
+                "lidar_3d_noise_stddev",
+                default_value="0.01",
+                description="Gaussian range noise standard deviation in metres.",
+            ),
+            DeclareLaunchArgument(
+                "imu_update_rate",
+                default_value="100.0",
+                description="Raw IMU update rate in Hz.",
+            ),
+            DeclareLaunchArgument(
+                "imu_angular_velocity_noise_stddev",
+                default_value="0.002",
+                description="Gyroscope white-noise standard deviation in rad/s.",
+            ),
+            DeclareLaunchArgument(
+                "imu_angular_velocity_bias_stddev",
+                default_value="0.0002",
+                description="Gyroscope startup-bias standard deviation in rad/s.",
+            ),
+            DeclareLaunchArgument(
+                "imu_linear_acceleration_noise_stddev",
+                default_value="0.02",
+                description="Accelerometer white-noise standard deviation in m/s^2.",
+            ),
+            DeclareLaunchArgument(
+                "imu_linear_acceleration_bias_stddev",
+                default_value="0.005",
+                description="Accelerometer startup-bias standard deviation in m/s^2.",
             ),
             DeclareLaunchArgument(
                 "use_wsl_gpu",
@@ -134,6 +378,11 @@ def generate_launch_description():
                 executable="parameter_bridge",
                 name="ros_gz_bridge",
                 output="screen",
+                condition=UnlessCondition(
+                    PythonExpression(
+                        ["'", odometry_mode, "' == 'wheel_imu'"]
+                    )
+                ),
                 arguments=[
                     (
                         "/world/slam_world/create@"
@@ -147,12 +396,50 @@ def generate_launch_description():
                 parameters=[{"config_file": bridge_config_path}],
             ),
             Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                name="ros_gz_bridge",
+                output="screen",
+                condition=IfCondition(
+                    PythonExpression(
+                        ["'", odometry_mode, "' == 'wheel_imu'"]
+                    )
+                ),
+                arguments=[
+                    (
+                        "/world/slam_world/create@"
+                        "ros_gz_interfaces/srv/SpawnEntity"
+                    ),
+                    (
+                        "/world/slam_world/remove@"
+                        "ros_gz_interfaces/srv/DeleteEntity"
+                    ),
+                ],
+                parameters=[{"config_file": wheel_imu_bridge_config_path}],
+            ),
+            Node(
+                package="robot_localization",
+                executable="ekf_node",
+                name="ekf_filter_node",
+                output="screen",
+                condition=IfCondition(
+                    PythonExpression(
+                        ["'", odometry_mode, "' == 'wheel_imu'"]
+                    )
+                ),
+                parameters=[
+                    ekf_config_path,
+                    {"use_sim_time": True},
+                ],
+                remappings=[("odometry/filtered", "/odom")],
+            ),
+            Node(
                 package="rviz2",
                 executable="rviz2",
                 name="rviz2",
                 output="screen",
                 condition=IfCondition(rviz),
-                arguments=["-d", rviz_config_path],
+                arguments=["-d", rviz_config],
                 parameters=[{"use_sim_time": True}],
             ),
         ]

@@ -12,7 +12,8 @@
 6. 多传感器融合。
 
 2D 激光 SLAM、定位导航和自研 2D SLAM 基线均已完成。当前里程碑是保持
-2D 回归链路不退化，在独立 TF 和话题命名下接入 3D LiDAR 仿真。
+2D 回归链路不退化，在独立 TF 和话题命名下接入成熟 3D 激光里程计，
+并逐步建立 3D 回环建图和固定数据集回归。
 
 ## 2. 当前环境
 
@@ -25,7 +26,7 @@
 - `slam_toolbox`。
 - Nav2。
 
-已建立 description、gazebo、bringup、slam 和 navigation 五个 ROS 2 包；
+已建立 description、gazebo、bringup、slam、slam_3d 和 navigation 六个 ROS 2 包；
 机器人、仿真、2D LiDAR、SLAM Toolbox、地图保存、AMCL、Nav2 和自研
 C++ 2D SLAM 链路已经接通，并具备长闭环、快速旋转、退化走廊、重复
 结构、大场景和固定 rosbag 离线回归。
@@ -65,6 +66,10 @@ slam/
 │   │   ├── scripts/
 │   │   ├── src/
 │   │   └── test/
+│   ├── slam_robot_slam_3d/
+│   │   ├── launch/
+│   │   ├── scripts/
+│   │   └── test/
 │   └── slam_robot_navigation/
 │       ├── config/
 │       ├── launch/
@@ -80,6 +85,7 @@ slam/
 - `slam_robot_gazebo`：世界文件、Gazebo 系统和 ROS-Gazebo 桥接。
 - `slam_robot_bringup`：统一组织机器人、仿真和算法启动。
 - `slam_robot_slam`：`slam_toolbox` 配置、自研 C++ 2D SLAM、数据集与回归工具。
+- `slam_robot_slam_3d`：3D 点云输入检查、成熟算法适配与 3D 回归工具。
 - `slam_robot_navigation`：地图加载、AMCL 和 Nav2 配置。
 
 ## 4. 系统架构
@@ -393,36 +399,48 @@ TF 发布职责：
 - 地图重建版闭环停止后，自研位置与 Gazebo 真值的平面位置差约
   `0.003 m`。
 
-## 8. 第四阶段：3D 激光 SLAM（当前下一阶段）
+## 8. 第四阶段：3D 激光 SLAM（进行中）
 
 ### 8.1 3D LiDAR 模型与数据链路
 
-- [ ] 在 Xacro 中增加独立的 `lidar_3d_mount_link -> lidar_3d_link` 固定链，
-  保留现有 2D LiDAR，避免破坏 2D 回归基线。
-- [ ] 将线数、水平/垂直视场角、量程、更新频率、噪声和安装位姿参数化。
-- [ ] 在 Gazebo Sim 中加入 3D GPU LiDAR，并通过 `ros_gz_bridge` 发布
+- [x] 在 Xacro 中增加互斥的 `lidar_3d_mount_link -> lidar_3d_link` 固定链，
+  默认保留现有 2D LiDAR，避免破坏 2D 回归基线和额外堆叠遮挡。
+- [x] 将线数、水平/垂直视场角、量程、更新频率、噪声和安装位姿参数化。
+- [x] 在 Gazebo Sim 中加入 3D GPU LiDAR，并通过 `ros_gz_bridge` 发布
   `/lidar_3d/points`（`sensor_msgs/PointCloud2`）。
-- [ ] 增加独立的 3D 传感器启动开关和 RViz 配置；默认 2D 启动方式保持
+- [x] 增加独立的 3D 传感器入口和 RViz 配置；默认 2D 启动方式保持
   兼容，不额外承担 3D 点云开销。
-- [ ] 检查点云 `frame_id`、仿真时间戳、频率、字段、点数、有限性、量程和
+- [x] 检查点云 `frame_id`、仿真时间戳、频率、字段、点数、有限性、量程和
   TF 空间对齐。
-- [ ] 记录开启 3D LiDAR 前后的实时率、Gazebo Server CPU、GPU、带宽和
-  点云处理延迟，先满足稳定仿真再接算法。
+- [x] 记录互斥 2D/3D 配置的实时率、Gazebo Server CPU/RSS、桥接 CPU/RSS
+  和原始点云带宽，先满足稳定仿真再接算法。
+- [ ] 补充 GPU 占用的受控测量；点云算法延迟已记录首版 MOLA 基线。
 
 ### 8.2 IMU 与 3D SLAM 成熟基线
 
-- [ ] 增加 `imu_link` 和 `/imu/data_raw`，参数化频率、噪声和偏置。
-- [ ] 静止时检查重力方向、角速度零偏、协方差、时间戳和外参。
-- [ ] 调研并选择支持 ROS 2 Jazzy、可复现且维护活跃的成熟 3D/LIO 方案；
-  先跑通官方或上游示例，再适配本机器人，不直接从零自研前端。
-- [ ] 固化算法输入契约，明确点云、IMU、轮速、TF 与 `use_sim_time` 要求，
-  禁止 Gazebo 真值进入估计器。
+- [x] 增加 `imu_link` 和 `/imu/data_raw`，参数化频率、噪声和偏置。
+- [x] 静止时检查重力方向、角速度零偏、协方差、时间戳和外参。
+- [x] 提供不改变默认 2D 基线的可选轮速 + IMU 二维 EKF，并确保
+  `/odom` 与 `odom -> base_footprint` 始终只有一个发布者。
+- [x] 建立正常附着和单侧打滑的直行/旋转自动回归，量化轮式里程计、
+  融合里程计和自研 2D SLAM 相对真值的差异。
+- [x] 选择 ROS 2 Jazzy 官方二进制提供的 MOLA GICP 作为首条成熟基线；
+  保留官方六自由度能力，先以纯 LiDAR odometry 模式适配本机器人。
+- [x] 固化算法输入契约，检查点云字段、布局、点数、`frame_id` 和超时；
+  明确关闭无逐点时间点云的 deskew，禁止 Gazebo 真值进入估计器。
+- [x] 保持 TF 单一发布：MOLA 只发布 `map -> odom`，不发布自带的
+  footprint TF；底盘里程计和 `robot_state_publisher` 继续负责其余边。
+- [x] 完成首次直行加旋转验收，检查位姿质量、局部地图和 10 Hz 输出。
 - [ ] 建立包含立体结构和回环的 3D 世界，验证建图尺度、姿态、漂移、回环
   和资源占用。
 - [ ] 录制不含算法输出的固定 3D rosbag，并建立可重复离线回归。
 
 3D 阶段的首个验收点仅要求“模型、点云、TF 和性能正确”；达到该验收点
 后再确定具体 3D SLAM 算法和参数，避免同时排查传感器与算法问题。
+
+当前 Gazebo `PointCloud2` 只有 `x/y/z/intensity/ring`，没有厂家常见的
+逐点时间字段。MOLA 基线因此是明确关闭去畸变的几何 LO，不伪造时间戳；
+完整 LIO 将使用带真实逐点时间的厂家 rosbag 或 PCAP 验证。
 
 ## 9. 后续扩展
 
@@ -501,8 +519,10 @@ TF 发布职责：
 - [x] 增加大场景长时间仿真回归，验证 2400+ 节点、多次回环重建和资源上限。
 - [x] 增加固定 rosbag 的 2× 长时间离线回放回归，并记录数据集指纹。
 - [x] 冻结 2D SLAM 基线并完成进入 3D 前的文档一致性检查。
-- [ ] 增加参数化 3D LiDAR 模型、独立 TF、点云桥接和 RViz 显示。
-- [ ] 建立 3D LiDAR 频率、时间戳、点云字段、空间对齐和性能验收。
+- [x] 增加参数化、互斥的 3D LiDAR 模型、独立 TF、点云桥接和 RViz 显示。
+- [x] 建立 3D LiDAR 频率、时间戳、点云字段、空间对齐和基础性能验收。
+- [x] 增加参数化 IMU、可选二维 EKF 和正常/打滑对比回归。
+- [x] 接入 MOLA 官方 GICP 纯激光里程计，增加点云契约检查并完成首次运动验收。
 
 2026-07-30 工程审查整改：
 
