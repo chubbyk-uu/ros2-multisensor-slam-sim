@@ -18,6 +18,11 @@ ros2 launch slam_robot_gazebo simulation.launch.py gui:=false
 默认加载 `worlds/slam_world.sdf`，其中包含外围墙、非对称隔墙、箱体、圆柱路标和回环通道。
 2D LiDAR 通过 `/scan` 发布 720 点、10 Hz 的 360° `sensor_msgs/LaserScan`，坐标系为 `lidar_link`。
 
+`worlds/degenerate_corridor.sdf` 是自研 SLAM 的受控退化场景：33 m 长、
+2.6 m 净宽的平行墙走廊，中段在 LiDAR 量程内没有纵向几何特征，入口和
+出口各保留一个避开中心线的非对称锚点。可通过 bringup 包的
+`corridor_slam_regression.launch.py` 启动。
+
 `/ground_truth/odom` 由 Gazebo OdometryPublisher 根据世界位姿生成，父坐标系为 `world`，子坐标系为 `base_footprint`。它只用于算法误差评估，不能作为 SLAM 或导航输入。
 
 默认会打开 RViz；仅运行 Gazebo 时可传入 `rviz:=false`。

@@ -1,0 +1,464 @@
+#!/usr/bin/env python3
+
+"""Run a one-way degenerate-corridor regression for the custom 2D SLAM."""
+
+import argparse
+import math
+import sys
+import time
+
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import OccupancyGrid, Odometry, Path
+from rcl_interfaces.msg import Log
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+
+
+CRITICAL_LOG_FRAGMENTS = (
+    'Aborted occupancy grid rebuild',
+    'Aborted queued occupancy grid rebuild',
+    'Discarded incompatible loop closure result',
+    'Failed to create occupancy grid snapshot',
+    'Failed to start loop closure worker',
+    'Fatal SLAM node error',
+    'Loop closure committed but occupancy grid rebuild failed to start',
+    'Loop closure committed but pose graph path refresh failed',
+    'Loop closure worker failed',
+    'Rejected LaserScan after processing error',
+)
+
+
+def yaw_from_quaternion(orientation):
+    sin_yaw = 2.0 * (
+        orientation.w * orientation.z
+        + orientation.x * orientation.y
+    )
+    cos_yaw = 1.0 - 2.0 * (
+        orientation.y * orientation.y
+        + orientation.z * orientation.z
+    )
+    return math.atan2(sin_yaw, cos_yaw)
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def pose_from_odometry(message):
+    position = message.pose.pose.position
+    return (
+        position.x,
+        position.y,
+        yaw_from_quaternion(message.pose.pose.orientation),
+    )
+
+
+def relative_pose(start, finish):
+    dx = finish[0] - start[0]
+    dy = finish[1] - start[1]
+    cosine = math.cos(start[2])
+    sine = math.sin(start[2])
+    return (
+        cosine * dx + sine * dy,
+        -sine * dx + cosine * dy,
+        normalize_angle(finish[2] - start[2]),
+    )
+
+
+def stamp_to_seconds(stamp):
+    return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
+
+
+class CorridorRegression(Node):
+    def __init__(self):
+        super().__init__(
+            'corridor_regression',
+            parameter_overrides=[
+                Parameter('use_sim_time', value=True),
+            ],
+        )
+        self.poses = {}
+        self.starts = None
+        self.measuring = False
+        self.samples = 0
+        self.maximum_longitudinal_error = 0.0
+        self.maximum_lateral_error = 0.0
+        self.maximum_yaw_error = 0.0
+        self.matcher_stamp = None
+        self.maximum_matcher_gap = 0.0
+        self.latest_map = None
+        self.map_messages = 0
+        self.maximum_pose_graph_nodes = 0
+        self.loop_closures = []
+        self.match_rejection_warnings = 0
+        self.critical_logs = []
+
+        self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.create_subscription(
+            Odometry,
+            '/ground_truth/odom',
+            lambda message: self.store_pose('truth', message),
+            20,
+        )
+        self.create_subscription(
+            Odometry,
+            '/odom',
+            lambda message: self.store_pose('wheel', message),
+            20,
+        )
+        self.create_subscription(
+            Odometry,
+            '/custom_slam/laser_odom',
+            self.matcher_callback,
+            20,
+        )
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            OccupancyGrid,
+            '/custom_slam/map',
+            self.map_callback,
+            map_qos,
+        )
+        self.create_subscription(
+            Path,
+            '/custom_slam/pose_graph_path',
+            self.pose_graph_path_callback,
+            10,
+        )
+        self.create_subscription(Log, '/rosout', self.log_callback, 100)
+
+    def store_pose(self, name, message):
+        self.poses[name] = pose_from_odometry(message)
+
+    def matcher_callback(self, message):
+        self.store_pose('matcher', message)
+        stamp = stamp_to_seconds(message.header.stamp)
+        if self.matcher_stamp is not None and stamp > self.matcher_stamp:
+            self.maximum_matcher_gap = max(
+                self.maximum_matcher_gap,
+                stamp - self.matcher_stamp,
+            )
+        self.matcher_stamp = stamp
+        if not self.measuring or self.starts is None:
+            return
+        if 'truth' not in self.poses:
+            return
+
+        truth = relative_pose(self.starts['truth'], self.poses['truth'])
+        matcher = relative_pose(
+            self.starts['matcher'],
+            self.poses['matcher'],
+        )
+        self.maximum_longitudinal_error = max(
+            self.maximum_longitudinal_error,
+            abs(matcher[0] - truth[0]),
+        )
+        self.maximum_lateral_error = max(
+            self.maximum_lateral_error,
+            abs(matcher[1] - truth[1]),
+        )
+        self.maximum_yaw_error = max(
+            self.maximum_yaw_error,
+            abs(normalize_angle(matcher[2] - truth[2])),
+        )
+        self.samples += 1
+
+    def map_callback(self, message):
+        self.latest_map = {
+            'width': message.info.width,
+            'height': message.info.height,
+            'resolution': message.info.resolution,
+        }
+        self.map_messages += 1
+
+    def pose_graph_path_callback(self, message):
+        self.maximum_pose_graph_nodes = max(
+            self.maximum_pose_graph_nodes,
+            len(message.poses),
+        )
+
+    def log_callback(self, message):
+        if message.name != 'scan_matcher_odometry':
+            return
+        if 'Accepted loop closure' in message.msg:
+            self.loop_closures.append(message.msg)
+        if 'Correlative match rejected' in message.msg:
+            self.match_rejection_warnings += 1
+        if any(
+            fragment in message.msg
+            for fragment in CRITICAL_LOG_FRAGMENTS
+        ):
+            self.critical_logs.append(message.msg)
+
+    def simulation_time(self):
+        return self.get_clock().now().nanoseconds * 1.0e-9
+
+    def wait_for_inputs(self, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if len(self.poses) == 3 and self.latest_map is not None:
+                return
+        raise RuntimeError(
+            'Timed out waiting for odometry and occupancy-grid topics'
+        )
+
+    def publish_command(self, linear):
+        command = Twist()
+        command.linear.x = linear
+        self.publisher.publish(command)
+
+    def settle(self, seconds):
+        started = self.simulation_time()
+        wall_started = time.monotonic()
+        wall_timeout = seconds * 5.0 + 10.0
+        while rclpy.ok() and self.simulation_time() - started < seconds:
+            if time.monotonic() - wall_started > wall_timeout:
+                raise RuntimeError(
+                    'Settle phase timed out while simulation time stalled'
+                )
+            self.publish_command(0.0)
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+    def drive(self, arguments):
+        wall_started = time.monotonic()
+        wall_timeout = arguments.distance / arguments.linear_speed * 5.0 + 30.0
+        next_report = arguments.report_interval
+        while rclpy.ok():
+            truth = relative_pose(
+                self.starts['truth'],
+                self.poses['truth'],
+            )
+            if truth[0] >= arguments.distance:
+                break
+            if time.monotonic() - wall_started > wall_timeout:
+                raise RuntimeError(
+                    'Corridor traversal timed out before reaching the target'
+                )
+            self.publish_command(arguments.linear_speed)
+            rclpy.spin_once(self, timeout_sec=0.025)
+            if truth[0] >= next_report:
+                print(
+                    f'  progress: {truth[0]:.1f}/{arguments.distance:.1f} m, '
+                    f'lateral={self.maximum_lateral_error:.3f} m, '
+                    f'yaw={math.degrees(self.maximum_yaw_error):.2f} deg, '
+                    f'nodes={self.maximum_pose_graph_nodes}',
+                    flush=True,
+                )
+                next_report += arguments.report_interval
+        self.publish_command(0.0)
+
+    def evaluate(self, arguments):
+        motions = {
+            name: relative_pose(self.starts[name], self.poses[name])
+            for name in self.starts
+        }
+        truth = motions['truth']
+        matcher = motions['matcher']
+        wheel = motions['wheel']
+        final_longitudinal_error = abs(matcher[0] - truth[0])
+        final_lateral_error = abs(matcher[1] - truth[1])
+        final_yaw_error = abs(normalize_angle(matcher[2] - truth[2]))
+        wheel_longitudinal_error = abs(wheel[0] - truth[0])
+        wheel_lateral_error = abs(wheel[1] - truth[1])
+        wheel_yaw_error = abs(normalize_angle(wheel[2] - truth[2]))
+        map_width = (
+            self.latest_map['width'] * self.latest_map['resolution']
+        )
+        map_height = (
+            self.latest_map['height'] * self.latest_map['resolution']
+        )
+
+        checks = {
+            'target_distance_reached': truth[0] >= arguments.distance,
+            'continuous_lateral_error_bounded': (
+                self.maximum_lateral_error
+                <= arguments.maximum_lateral_error
+            ),
+            'continuous_yaw_error_bounded': (
+                self.maximum_yaw_error
+                <= math.radians(arguments.maximum_yaw_error_degrees)
+            ),
+            'longitudinal_drift_not_runaway': (
+                self.maximum_longitudinal_error
+                <= arguments.maximum_longitudinal_drift
+            ),
+            'final_lateral_error_bounded': (
+                final_lateral_error
+                <= arguments.maximum_final_lateral_error
+            ),
+            'final_yaw_error_bounded': (
+                final_yaw_error
+                <= math.radians(arguments.maximum_final_yaw_error_degrees)
+            ),
+            'front_end_gap_bounded': (
+                self.maximum_matcher_gap
+                <= arguments.maximum_matcher_gap
+            ),
+            'match_rejections_bounded': (
+                self.match_rejection_warnings
+                <= arguments.maximum_match_rejections
+            ),
+            'no_loop_closure': not self.loop_closures,
+            'pose_graph_long_enough': (
+                self.maximum_pose_graph_nodes
+                >= arguments.minimum_keyframes
+            ),
+            'map_length_covered': map_width >= arguments.minimum_map_length,
+            'map_cross_track_bounded': (
+                map_height <= arguments.maximum_map_width
+            ),
+            'no_critical_slam_logs': not self.critical_logs,
+            'enough_error_samples': self.samples >= arguments.minimum_samples,
+        }
+
+        print('\ndegenerate corridor result')
+        print(
+            f'truth motion : x={truth[0]:.3f} y={truth[1]:.3f} '
+            f'yaw={math.degrees(truth[2]):.3f} deg'
+        )
+        print(
+            'wheel error  : '
+            f'longitudinal={wheel_longitudinal_error:.3f} m '
+            f'lateral={wheel_lateral_error:.3f} m '
+            f'yaw={math.degrees(wheel_yaw_error):.3f} deg'
+        )
+        print(
+            'matcher final: '
+            f'longitudinal={final_longitudinal_error:.3f} m '
+            f'lateral={final_lateral_error:.3f} m '
+            f'yaw={math.degrees(final_yaw_error):.3f} deg'
+        )
+        print(
+            'matcher peak : '
+            f'longitudinal={self.maximum_longitudinal_error:.3f} m '
+            f'lateral={self.maximum_lateral_error:.3f} m '
+            f'yaw={math.degrees(self.maximum_yaw_error):.3f} deg'
+        )
+        print(
+            f'front end   : gap={self.maximum_matcher_gap:.3f} s '
+            f'samples={self.samples} '
+            f'keyframes={self.maximum_pose_graph_nodes} '
+            f'rejections={self.match_rejection_warnings} '
+            f'loops={len(self.loop_closures)}'
+        )
+        print(
+            f'map extent  : {map_width:.2f} x {map_height:.2f} m '
+            f'({self.map_messages} messages)'
+        )
+        for name, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
+        return all(checks.values())
+
+    def run(self, arguments):
+        self.wait_for_inputs(arguments.startup_timeout)
+        self.settle(arguments.initial_settle_time)
+        self.starts = dict(self.poses)
+        self.matcher_stamp = None
+        self.maximum_matcher_gap = 0.0
+        self.measuring = True
+        print(
+            f'driving {arguments.distance:.1f} m through the corridor at '
+            f'{arguments.linear_speed:.2f} m/s',
+            flush=True,
+        )
+        self.drive(arguments)
+        self.settle(arguments.final_settle_time)
+        self.measuring = False
+        passed = self.evaluate(arguments)
+        print(
+            f"\ncorridor regression: {'PASS' if passed else 'FAIL'}"
+        )
+        return passed
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description='Run a custom-SLAM degenerate-corridor regression.'
+    )
+    parser.add_argument('--distance', type=float, default=25.0)
+    parser.add_argument('--linear-speed', type=float, default=0.40)
+    parser.add_argument('--initial-settle-time', type=float, default=2.0)
+    parser.add_argument('--final-settle-time', type=float, default=3.0)
+    parser.add_argument('--startup-timeout', type=float, default=15.0)
+    parser.add_argument('--report-interval', type=float, default=5.0)
+    parser.add_argument('--maximum-matcher-gap', type=float, default=0.25)
+    parser.add_argument('--maximum-lateral-error', type=float, default=0.10)
+    parser.add_argument(
+        '--maximum-yaw-error-degrees',
+        type=float,
+        default=2.0,
+    )
+    parser.add_argument(
+        '--maximum-longitudinal-drift',
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        '--maximum-final-lateral-error',
+        type=float,
+        default=0.08,
+    )
+    parser.add_argument(
+        '--maximum-final-yaw-error-degrees',
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument('--maximum-match-rejections', type=int, default=2)
+    parser.add_argument('--minimum-keyframes', type=int, default=200)
+    parser.add_argument('--minimum-map-length', type=float, default=28.0)
+    parser.add_argument('--maximum-map-width', type=float, default=4.0)
+    parser.add_argument('--minimum-samples', type=int, default=500)
+    arguments, ros_arguments = parser.parse_known_args()
+    if ros_arguments:
+        sys.argv = [sys.argv[0], *ros_arguments]
+    numeric_values = (
+        arguments.distance,
+        arguments.linear_speed,
+        arguments.startup_timeout,
+        arguments.report_interval,
+        arguments.maximum_matcher_gap,
+        arguments.maximum_lateral_error,
+        arguments.maximum_yaw_error_degrees,
+        arguments.maximum_longitudinal_drift,
+        arguments.maximum_final_lateral_error,
+        arguments.maximum_final_yaw_error_degrees,
+        arguments.minimum_map_length,
+        arguments.maximum_map_width,
+    )
+    if (
+        any(not math.isfinite(value) or value <= 0.0 for value in numeric_values)
+        or arguments.initial_settle_time < 0.0
+        or arguments.final_settle_time < 0.0
+        or arguments.maximum_match_rejections < 0
+        or arguments.minimum_keyframes < 1
+        or arguments.minimum_samples < 1
+    ):
+        parser.error('Distances, speeds, timeouts and thresholds must be valid')
+    return arguments
+
+
+def main():
+    arguments = parse_arguments()
+    rclpy.init()
+    node = CorridorRegression()
+    exit_code = 1
+    try:
+        exit_code = 0 if node.run(arguments) else 1
+    except (KeyboardInterrupt, RuntimeError) as error:
+        print(f'corridor regression failed: {error}', file=sys.stderr)
+    finally:
+        node.publish_command(0.0)
+        node.destroy_node()
+        rclpy.shutdown()
+    raise SystemExit(exit_code)
+
+
+if __name__ == '__main__':
+    main()

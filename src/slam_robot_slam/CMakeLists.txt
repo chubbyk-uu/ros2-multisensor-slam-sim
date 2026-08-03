@@ -206,6 +206,7 @@ ament_export_dependencies(Ceres sensor_msgs)
 
 install(
   PROGRAMS
+    scripts/corridor_regression
     scripts/loop_closure_regression
     scripts/rotation_regression
     scripts/save_slam_map

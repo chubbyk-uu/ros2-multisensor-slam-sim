@@ -1,0 +1,189 @@
+<?xml version="1.0"?>
+<sdf version="1.10">
+  <world name="slam_world">
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <gravity>0 0 -9.81</gravity>
+
+    <scene>
+      <ambient>0.45 0.45 0.45 1</ambient>
+      <background>0.75 0.80 0.85 1</background>
+      <shadows>false</shadows>
+      <grid>true</grid>
+    </scene>
+
+    <light name="sun" type="directional">
+      <cast_shadows>false</cast_shadows>
+      <pose>12 0 12 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.4 0.2 -1.0</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="ground_link">
+        <collision name="ground_collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 20</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode><mu>1.0</mu><mu2>1.0</mu2></ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="ground_visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 20</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.64 0.64 0.64 1</ambient>
+            <diffuse>0.72 0.72 0.72 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!--
+      The robot starts at x=0 and drives along +x. The 33 m parallel-wall
+      corridor contains a deliberately feature-poor middle section. Sparse,
+      asymmetric entrance and exit landmarks make recovery observable without
+      leaking useful longitudinal structure into the middle of the corridor.
+    -->
+    <model name="degenerate_corridor">
+      <static>true</static>
+      <link name="corridor_link">
+        <collision name="north_wall_collision">
+          <pose>13.5 1.40 0.60 0 0 0</pose>
+          <geometry><box><size>33.0 0.20 1.20</size></box></geometry>
+        </collision>
+        <visual name="north_wall_visual">
+          <pose>13.5 1.40 0.60 0 0 0</pose>
+          <geometry><box><size>33.0 0.20 1.20</size></box></geometry>
+          <material>
+            <ambient>0.82 0.84 0.88 1</ambient>
+            <diffuse>0.82 0.84 0.88 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="south_wall_collision">
+          <pose>13.5 -1.40 0.60 0 0 0</pose>
+          <geometry><box><size>33.0 0.20 1.20</size></box></geometry>
+        </collision>
+        <visual name="south_wall_visual">
+          <pose>13.5 -1.40 0.60 0 0 0</pose>
+          <geometry><box><size>33.0 0.20 1.20</size></box></geometry>
+          <material>
+            <ambient>0.82 0.84 0.88 1</ambient>
+            <diffuse>0.82 0.84 0.88 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="entrance_wall_collision">
+          <pose>-3.0 0 0.60 0 0 0</pose>
+          <geometry><box><size>0.20 3.0 1.20</size></box></geometry>
+        </collision>
+        <visual name="entrance_wall_visual">
+          <pose>-3.0 0 0.60 0 0 0</pose>
+          <geometry><box><size>0.20 3.0 1.20</size></box></geometry>
+          <material>
+            <ambient>0.52 0.65 0.80 1</ambient>
+            <diffuse>0.52 0.65 0.80 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="exit_wall_collision">
+          <pose>30.0 0 0.60 0 0 0</pose>
+          <geometry><box><size>0.20 3.0 1.20</size></box></geometry>
+        </collision>
+        <visual name="exit_wall_visual">
+          <pose>30.0 0 0.60 0 0 0</pose>
+          <geometry><box><size>0.20 3.0 1.20</size></box></geometry>
+          <material>
+            <ambient>0.52 0.65 0.80 1</ambient>
+            <diffuse>0.52 0.65 0.80 1</diffuse>
+          </material>
+        </visual>
+
+        <!-- Entrance anchor: visible only near the beginning. -->
+        <collision name="entrance_anchor_collision">
+          <pose>1.5 0.92 0.50 0 0 0</pose>
+          <geometry><cylinder><radius>0.18</radius><length>1.0</length></cylinder></geometry>
+        </collision>
+        <visual name="entrance_anchor_visual">
+          <pose>1.5 0.92 0.50 0 0 0</pose>
+          <geometry><cylinder><radius>0.18</radius><length>1.0</length></cylinder></geometry>
+          <material>
+            <ambient>0.20 0.62 0.34 1</ambient>
+            <diffuse>0.20 0.62 0.34 1</diffuse>
+          </material>
+        </visual>
+
+        <!-- Exit anchor: asymmetric and clear of the centerline. -->
+        <collision name="exit_anchor_collision">
+          <pose>25.8 -0.90 0.45 0 0 0.25</pose>
+          <geometry><box><size>0.55 0.35 0.90</size></box></geometry>
+        </collision>
+        <visual name="exit_anchor_visual">
+          <pose>25.8 -0.90 0.45 0 0 0.25</pose>
+          <geometry><box><size>0.55 0.35 0.90</size></box></geometry>
+          <material>
+            <ambient>0.88 0.48 0.18 1</ambient>
+            <diffuse>0.88 0.48 0.18 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <gui fullscreen="false">
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="state" type="string">docked</property>
+        </gz-gui>
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.4 0.4 0.4</ambient_light>
+        <background_color>0.75 0.80 0.85</background_color>
+        <camera_pose>10 -8 8 0 0.55 0.55</camera_pose>
+        <camera_clip><near>0.10</near><far>1000</far></camera_clip>
+      </plugin>
+      <plugin filename="GzSceneManager" name="Scene Manager"/>
+      <plugin filename="WorldControl" name="World control">
+        <gz-gui>
+          <title>World control</title>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="state" type="string">docked</property>
+        </gz-gui>
+        <play_pause>true</play_pause>
+        <step>true</step>
+        <start_paused>false</start_paused>
+      </plugin>
+    </gui>
+  </world>
+</sdf>

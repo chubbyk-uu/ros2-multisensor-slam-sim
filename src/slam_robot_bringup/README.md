@@ -32,3 +32,12 @@ ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
 当前入口启动 Gazebo、C++ 激光预处理节点和专用 RViz，不启动 SLAM Toolbox，也不发布 `/map` 或 `map -> odom`。
+
+无界面启动自研 SLAM 退化长走廊回归环境：
+
+```bash
+ros2 launch slam_robot_bringup corridor_slam_regression.launch.py
+```
+
+需要人工观察时可增加 `gui:=true use_rviz:=true`。启动完成后，在另一个
+终端运行 `ros2 run slam_robot_slam corridor_regression`。
