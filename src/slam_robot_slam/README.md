@@ -344,6 +344,39 @@ Gazebo、RViz 或消息桥。真值仅用于测试驾驶与评估，不进入 SL
 `1.000`。位姿图/激光 Path 峰值为 `2000 / 4746`，地图范围
 `26.20 × 20.20 m`，无拒配或严重日志。
 
+录制固定大场景参考包：
+
+```bash
+# 终端 1
+ros2 launch slam_robot_bringup large_scale_dataset_recording.launch.py \
+  output:="${SLAM_WS}/bags/large_scale_reference"
+
+# 终端 2
+ros2 run slam_robot_slam large_scale_regression
+```
+
+专用入口只记录 `/clock`、`/scan`、`/odom`、真值、机器人描述和
+`/tf_static`，不会记录自研输出或包含旧 `map -> odom` 的动态 `/tf`。
+路线通过后在录制终端按一次 `Ctrl+C`，等待 MCAP 完成刷盘。
+
+运行固定包离线回归：
+
+```bash
+# 终端 1：必须先启动判定器
+ros2 run slam_robot_slam large_scale_bag_regression
+
+# 终端 2
+ros2 launch slam_robot_slam play_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/large_scale_reference" \
+  rate:=2.0 use_rviz:=false
+```
+
+2026-08-03 的 543.352 s 参考包在 271.7 s 墙钟内完成 2× 回放；5434 帧
+扫描产生 5433 帧匹配，当前算法重新检测 42 条回环并完成 30 次地图重建。
+最终误差 `0.120 m / 0.063°`，峰值 `0.230 m / 0.619°`，最大前端间隔
+`0.100 s`，无拒配或严重日志。数据包指纹和完整复现说明见仓库根目录的
+`docs/datasets.md`。
+
 重建期间再次收到回环时，当前重建不会归零；节点会冻结当前版本并将
 最新优化快照排队。当前版本完成后再处理最新版本，因此长时间运行也会
 持续产出完整地图。地图与 Path 定时器使用仿真时钟；两条 Path 以 2 Hz

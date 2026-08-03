@@ -1,0 +1,673 @@
+#!/usr/bin/env python3
+
+"""Evaluate custom 2D SLAM while replaying the fixed large-scale rosbag."""
+
+import argparse
+from bisect import bisect_left
+from collections import deque
+import math
+import re
+import sys
+import time
+
+from nav_msgs.msg import OccupancyGrid, Odometry, Path
+from rcl_interfaces.msg import Log
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import (
+    DurabilityPolicy,
+    qos_profile_sensor_data,
+    QoSProfile,
+    ReliabilityPolicy,
+)
+from sensor_msgs.msg import LaserScan
+
+
+LOOP_CLOSURE_PATTERN = re.compile(
+    r'Accepted loop closure (\d+) -> (\d+): score=([\d.]+)'
+    r'.*worker ([\d.]+) ms'
+)
+MAP_REBUILD_PATTERN = re.compile(
+    r'Completed occupancy grid rebuild from (\d+) optimized keyframes '
+    r'in ([\d.]+) ms'
+)
+POSE_GRAPH_PATTERN = re.compile(
+    r'Pose graph contains (\d+) nodes and (\d+) constraints'
+)
+CRITICAL_LOG_FRAGMENTS = (
+    'Aborted occupancy grid rebuild',
+    'Aborted queued occupancy grid rebuild',
+    'Discarded incompatible loop closure result',
+    'Failed to create occupancy grid snapshot',
+    'Failed to start loop closure worker',
+    'Fatal SLAM node error',
+    'Loop closure committed but occupancy grid rebuild failed to start',
+    'Loop closure committed but pose graph path refresh failed',
+    'Loop closure worker failed',
+    'Rejected LaserScan after processing error',
+)
+
+
+def yaw_from_quaternion(orientation):
+    sin_yaw = 2.0 * (
+        orientation.w * orientation.z
+        + orientation.x * orientation.y
+    )
+    cos_yaw = 1.0 - 2.0 * (
+        orientation.y * orientation.y
+        + orientation.z * orientation.z
+    )
+    return math.atan2(sin_yaw, cos_yaw)
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def stamp_to_seconds(stamp):
+    return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
+
+
+def pose_from_odometry(message):
+    position = message.pose.pose.position
+    return (
+        position.x,
+        position.y,
+        yaw_from_quaternion(message.pose.pose.orientation),
+    )
+
+
+def relative_pose(start, finish):
+    dx = finish[0] - start[0]
+    dy = finish[1] - start[1]
+    cosine = math.cos(start[2])
+    sine = math.sin(start[2])
+    return (
+        cosine * dx + sine * dy,
+        -sine * dx + cosine * dy,
+        normalize_angle(finish[2] - start[2]),
+    )
+
+
+def interpolate_pose(first, second, ratio):
+    yaw_delta = normalize_angle(second[2] - first[2])
+    return (
+        first[0] + ratio * (second[0] - first[0]),
+        first[1] + ratio * (second[1] - first[1]),
+        normalize_angle(first[2] + ratio * yaw_delta),
+    )
+
+
+class LargeScaleBagRegression(Node):
+    def __init__(self):
+        super().__init__(
+            'large_scale_bag_regression',
+            parameter_overrides=[Parameter('use_sim_time', value=True)],
+        )
+        self.truth_stamps = []
+        self.truth_poses = []
+        self.wheel_samples = []
+        self.pending_matchers = deque()
+        self.matcher_start = None
+        self.truth_start = None
+        self.final_matcher = None
+        self.final_matcher_truth = None
+        self.maximum_translation_error = 0.0
+        self.maximum_yaw_error = 0.0
+        self.matcher_messages = 0
+        self.matcher_stamp = None
+        self.maximum_matcher_gap = 0.0
+        self.scan_messages = 0
+        self.first_scan_stamp = None
+        self.latest_scan_stamp = None
+        self.truth_messages = 0
+        self.wheel_messages = 0
+        self.map_messages = 0
+        self.latest_map = None
+        self.maximum_pose_graph_nodes = 0
+        self.maximum_pose_graph_path_poses = 0
+        self.maximum_laser_path_poses = 0
+        self.loop_closures = []
+        self.map_rebuilds = []
+        self.match_rejection_warnings = 0
+        self.critical_logs = []
+        self.first_input_wall = None
+        self.last_input_wall = None
+
+        self.create_subscription(
+            LaserScan,
+            '/scan',
+            self.scan_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            Odometry,
+            '/ground_truth/odom',
+            self.truth_callback,
+            100,
+        )
+        self.create_subscription(
+            Odometry,
+            '/odom',
+            self.wheel_callback,
+            100,
+        )
+        self.create_subscription(
+            Odometry,
+            '/custom_slam/laser_odom',
+            self.matcher_callback,
+            50,
+        )
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            OccupancyGrid,
+            '/custom_slam/map',
+            self.map_callback,
+            map_qos,
+        )
+        self.create_subscription(
+            Path,
+            '/custom_slam/pose_graph_path',
+            self.pose_graph_path_callback,
+            10,
+        )
+        self.create_subscription(
+            Path,
+            '/custom_slam/laser_path',
+            self.laser_path_callback,
+            10,
+        )
+        self.create_subscription(Log, '/rosout', self.log_callback, 200)
+
+    def mark_input(self):
+        now = time.monotonic()
+        if self.first_input_wall is None:
+            self.first_input_wall = now
+        self.last_input_wall = now
+
+    def scan_callback(self, message):
+        self.mark_input()
+        stamp = stamp_to_seconds(message.header.stamp)
+        if self.first_scan_stamp is None:
+            self.first_scan_stamp = stamp
+        self.latest_scan_stamp = stamp
+        self.scan_messages += 1
+
+    def truth_callback(self, message):
+        self.mark_input()
+        stamp = stamp_to_seconds(message.header.stamp)
+        pose = pose_from_odometry(message)
+        if not self.truth_stamps or stamp > self.truth_stamps[-1]:
+            self.truth_stamps.append(stamp)
+            self.truth_poses.append(pose)
+            self.truth_messages += 1
+        self.process_pending_matchers()
+
+    def wheel_callback(self, message):
+        self.mark_input()
+        stamp = stamp_to_seconds(message.header.stamp)
+        pose = pose_from_odometry(message)
+        if not self.wheel_samples or stamp > self.wheel_samples[-1][0]:
+            self.wheel_samples.append((stamp, pose))
+            self.wheel_messages += 1
+
+    def matcher_callback(self, message):
+        stamp = stamp_to_seconds(message.header.stamp)
+        if self.matcher_stamp is not None and stamp > self.matcher_stamp:
+            self.maximum_matcher_gap = max(
+                self.maximum_matcher_gap,
+                stamp - self.matcher_stamp,
+            )
+        self.matcher_stamp = stamp
+        self.pending_matchers.append((stamp, pose_from_odometry(message)))
+        self.process_pending_matchers()
+
+    def truth_pose_at(self, stamp):
+        if not self.truth_stamps:
+            return None
+        index = bisect_left(self.truth_stamps, stamp)
+        if index == 0:
+            return self.truth_poses[0]
+        if index >= len(self.truth_stamps):
+            return None
+        first_stamp = self.truth_stamps[index - 1]
+        second_stamp = self.truth_stamps[index]
+        if second_stamp <= first_stamp:
+            return self.truth_poses[index]
+        ratio = (stamp - first_stamp) / (second_stamp - first_stamp)
+        return interpolate_pose(
+            self.truth_poses[index - 1],
+            self.truth_poses[index],
+            ratio,
+        )
+
+    def process_pending_matchers(self, flush=False):
+        while self.pending_matchers:
+            stamp, matcher = self.pending_matchers[0]
+            truth = self.truth_pose_at(stamp)
+            if truth is None:
+                if not flush:
+                    return
+                if not self.truth_poses:
+                    return
+                truth = self.truth_poses[-1]
+            self.pending_matchers.popleft()
+            if self.matcher_start is None:
+                self.matcher_start = matcher
+                self.truth_start = truth
+            truth_motion = relative_pose(self.truth_start, truth)
+            matcher_motion = relative_pose(self.matcher_start, matcher)
+            self.maximum_translation_error = max(
+                self.maximum_translation_error,
+                math.hypot(
+                    matcher_motion[0] - truth_motion[0],
+                    matcher_motion[1] - truth_motion[1],
+                ),
+            )
+            self.maximum_yaw_error = max(
+                self.maximum_yaw_error,
+                abs(normalize_angle(matcher_motion[2] - truth_motion[2])),
+            )
+            self.final_matcher = matcher
+            self.final_matcher_truth = truth
+            self.matcher_messages += 1
+
+    def map_callback(self, message):
+        self.latest_map = {
+            'width': message.info.width,
+            'height': message.info.height,
+            'resolution': message.info.resolution,
+        }
+        self.map_messages += 1
+
+    def pose_graph_path_callback(self, message):
+        self.maximum_pose_graph_path_poses = max(
+            self.maximum_pose_graph_path_poses,
+            len(message.poses),
+        )
+
+    def laser_path_callback(self, message):
+        self.maximum_laser_path_poses = max(
+            self.maximum_laser_path_poses,
+            len(message.poses),
+        )
+
+    def log_callback(self, message):
+        if message.name != 'scan_matcher_odometry':
+            return
+        loop_match = LOOP_CLOSURE_PATTERN.search(message.msg)
+        if loop_match:
+            event = {
+                'candidate': int(loop_match.group(1)),
+                'current': int(loop_match.group(2)),
+                'score': float(loop_match.group(3)),
+                'worker_ms': float(loop_match.group(4)),
+            }
+            self.loop_closures.append(event)
+            print(
+                f"  loop {event['candidate']} -> {event['current']}: "
+                f"score={event['score']:.3f}, "
+                f"worker={event['worker_ms']:.1f} ms",
+                flush=True,
+            )
+        rebuild_match = MAP_REBUILD_PATTERN.search(message.msg)
+        if rebuild_match:
+            event = {
+                'keyframes': int(rebuild_match.group(1)),
+                'elapsed_ms': float(rebuild_match.group(2)),
+            }
+            self.map_rebuilds.append(event)
+        graph_match = POSE_GRAPH_PATTERN.search(message.msg)
+        if graph_match:
+            self.maximum_pose_graph_nodes = max(
+                self.maximum_pose_graph_nodes,
+                int(graph_match.group(1)),
+            )
+        if 'Correlative match rejected' in message.msg:
+            self.match_rejection_warnings += 1
+        if any(fragment in message.msg for fragment in CRITICAL_LOG_FRAGMENTS):
+            self.critical_logs.append(message.msg)
+
+    def dataset_duration(self):
+        if self.first_scan_stamp is None or self.latest_scan_stamp is None:
+            return 0.0
+        return self.latest_scan_stamp - self.first_scan_stamp
+
+    def wait_for_playback(self, arguments):
+        print(
+            'waiting for fixed rosbag playback; start play_slam_data.launch.py '
+            'in another terminal',
+            flush=True,
+        )
+        startup_deadline = time.monotonic() + arguments.startup_timeout
+        while rclpy.ok() and self.first_scan_stamp is None:
+            if time.monotonic() > startup_deadline:
+                raise RuntimeError('Timed out waiting for the first bag scan')
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+        wall_started = self.first_input_wall
+        next_report = arguments.report_interval
+        while rclpy.ok():
+            rclpy.spin_once(self, timeout_sec=0.1)
+            duration = self.dataset_duration()
+            if duration >= next_report:
+                print(
+                    f'  replay: {duration:.1f} s, scans={self.scan_messages}, '
+                    f'matcher={self.matcher_messages}, '
+                    f'nodes={self.maximum_pose_graph_nodes}, '
+                    f'loops={len(self.loop_closures)}',
+                    flush=True,
+                )
+                next_report += arguments.report_interval
+            if (
+                duration >= arguments.minimum_dataset_duration
+                and self.last_input_wall is not None
+                and time.monotonic() - self.last_input_wall
+                >= arguments.completion_silence
+            ):
+                break
+            if time.monotonic() - wall_started > arguments.wall_timeout:
+                raise RuntimeError('Offline rosbag regression timed out')
+
+        self.process_pending_matchers(flush=True)
+
+    def wheel_error(self):
+        if len(self.wheel_samples) < 2:
+            return math.inf, math.inf
+        first_stamp, first_wheel = self.wheel_samples[0]
+        last_stamp, last_wheel = self.wheel_samples[-1]
+        first_truth = self.truth_pose_at(first_stamp)
+        last_truth = self.truth_pose_at(last_stamp)
+        if first_truth is None:
+            first_truth = self.truth_poses[0]
+        if last_truth is None:
+            last_truth = self.truth_poses[-1]
+        truth_motion = relative_pose(first_truth, last_truth)
+        wheel_motion = relative_pose(first_wheel, last_wheel)
+        return (
+            math.hypot(
+                wheel_motion[0] - truth_motion[0],
+                wheel_motion[1] - truth_motion[1],
+            ),
+            abs(normalize_angle(wheel_motion[2] - truth_motion[2])),
+        )
+
+    def evaluate(self, arguments):
+        if self.final_matcher is None or self.latest_map is None:
+            raise RuntimeError('Playback ended without SLAM output and map')
+        truth_motion = relative_pose(
+            self.truth_start,
+            self.final_matcher_truth,
+        )
+        matcher_motion = relative_pose(
+            self.matcher_start,
+            self.final_matcher,
+        )
+        final_translation_error = math.hypot(
+            matcher_motion[0] - truth_motion[0],
+            matcher_motion[1] - truth_motion[1],
+        )
+        final_yaw_error = abs(
+            normalize_angle(matcher_motion[2] - truth_motion[2])
+        )
+        wheel_translation_error, wheel_yaw_error = self.wheel_error()
+        map_width = self.latest_map['width'] * self.latest_map['resolution']
+        map_height = self.latest_map['height'] * self.latest_map['resolution']
+        duration = self.dataset_duration()
+        replay_wall = self.last_input_wall - self.first_input_wall
+        effective_rate = duration / replay_wall if replay_wall > 0.0 else 0.0
+        maximum_worker_ms = max(
+            (event['worker_ms'] for event in self.loop_closures),
+            default=math.inf,
+        )
+        maximum_rebuild_ms = max(
+            (event['elapsed_ms'] for event in self.map_rebuilds),
+            default=math.inf,
+        )
+        latest_loop_node = max(
+            (event['current'] for event in self.loop_closures),
+            default=-1,
+        )
+        latest_rebuild_keyframes = max(
+            (event['keyframes'] for event in self.map_rebuilds),
+            default=0,
+        )
+
+        checks = {
+            'dataset_duration_reached': (
+                duration >= arguments.minimum_dataset_duration
+            ),
+            'scan_messages_complete': (
+                self.scan_messages >= arguments.minimum_scan_messages
+            ),
+            'truth_messages_complete': (
+                self.truth_messages >= arguments.minimum_truth_messages
+            ),
+            'wheel_messages_complete': (
+                self.wheel_messages >= arguments.minimum_wheel_messages
+            ),
+            'matcher_messages_complete': (
+                self.matcher_messages >= arguments.minimum_matcher_messages
+            ),
+            'wheel_odometry_input_healthy': (
+                wheel_translation_error
+                <= arguments.maximum_wheel_translation_error
+                and wheel_yaw_error
+                <= math.radians(arguments.maximum_wheel_yaw_error_degrees)
+            ),
+            'continuous_translation_error_bounded': (
+                self.maximum_translation_error
+                <= arguments.maximum_translation_error
+            ),
+            'continuous_yaw_error_bounded': (
+                self.maximum_yaw_error
+                <= math.radians(arguments.maximum_yaw_error_degrees)
+            ),
+            'final_translation_error_bounded': (
+                final_translation_error
+                <= arguments.maximum_final_translation_error
+            ),
+            'final_yaw_error_bounded': (
+                final_yaw_error
+                <= math.radians(arguments.maximum_final_yaw_error_degrees)
+            ),
+            'front_end_gap_bounded': (
+                self.maximum_matcher_gap <= arguments.maximum_matcher_gap
+            ),
+            'match_rejections_bounded': (
+                self.match_rejection_warnings
+                <= arguments.maximum_match_rejections
+            ),
+            'multiple_loop_closures': (
+                len(self.loop_closures) >= arguments.minimum_loop_closures
+            ),
+            'map_rebuilds_completed': (
+                len(self.map_rebuilds) >= arguments.minimum_map_rebuilds
+            ),
+            'latest_loop_rebuild_published': (
+                latest_loop_node >= 0
+                and latest_rebuild_keyframes >= latest_loop_node + 1
+            ),
+            'loop_worker_latency_bounded': (
+                maximum_worker_ms <= arguments.maximum_loop_worker_ms
+            ),
+            'map_rebuild_latency_bounded': (
+                maximum_rebuild_ms <= arguments.maximum_map_rebuild_ms
+            ),
+            'pose_graph_long_enough': (
+                self.maximum_pose_graph_nodes >= arguments.minimum_keyframes
+            ),
+            'pose_graph_path_cap_exercised': (
+                self.maximum_pose_graph_nodes
+                > arguments.pose_graph_path_limit
+                and self.maximum_pose_graph_path_poses
+                >= arguments.minimum_pose_graph_path_poses
+            ),
+            'pose_graph_path_cap_respected': (
+                self.maximum_pose_graph_path_poses
+                <= arguments.pose_graph_path_limit
+            ),
+            'laser_path_cap_respected': (
+                self.maximum_laser_path_poses <= arguments.laser_path_limit
+            ),
+            'map_extent_large_enough': (
+                map_width >= arguments.minimum_map_width
+                and map_height >= arguments.minimum_map_height
+            ),
+            'map_published_repeatedly': (
+                self.map_messages >= arguments.minimum_map_messages
+            ),
+            'effective_replay_rate_reached': (
+                effective_rate >= arguments.minimum_effective_replay_rate
+            ),
+            'no_critical_slam_logs': not self.critical_logs,
+        }
+
+        print('\nfixed-bag offline regression result')
+        print(
+            f'dataset      : duration={duration:.1f} s, '
+            f'wall={replay_wall:.1f} s, rate={effective_rate:.3f}x'
+        )
+        print(
+            f'input        : scans={self.scan_messages}, '
+            f'truth={self.truth_messages}, wheel={self.wheel_messages}'
+        )
+        print(
+            f'matcher      : messages={self.matcher_messages}, '
+            f'final={final_translation_error:.3f} m / '
+            f'{math.degrees(final_yaw_error):.3f} deg, '
+            f'peak={self.maximum_translation_error:.3f} m / '
+            f'{math.degrees(self.maximum_yaw_error):.3f} deg'
+        )
+        print(
+            f'wheel error  : {wheel_translation_error:.3f} m / '
+            f'{math.degrees(wheel_yaw_error):.3f} deg'
+        )
+        print(
+            f'graph        : nodes={self.maximum_pose_graph_nodes}, '
+            f'loops={len(self.loop_closures)}, rebuilds={len(self.map_rebuilds)}, '
+            f'path peaks={self.maximum_pose_graph_path_poses}/'
+            f'{self.maximum_laser_path_poses}'
+        )
+        print(
+            f'latency      : front gap={self.maximum_matcher_gap:.3f} s, '
+            f'loop worker={maximum_worker_ms:.1f} ms, '
+            f'map rebuild={maximum_rebuild_ms:.1f} ms'
+        )
+        print(
+            f'map          : {map_width:.2f} x {map_height:.2f} m, '
+            f'messages={self.map_messages}, '
+            f'rejections={self.match_rejection_warnings}'
+        )
+        for name, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
+        if self.critical_logs:
+            print('critical SLAM logs:')
+            for message in self.critical_logs:
+                print(f'  - {message}')
+        return all(checks.values())
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description='Evaluate custom SLAM against the fixed large rosbag.'
+    )
+    parser.add_argument('--startup-timeout', type=float, default=30.0)
+    parser.add_argument('--wall-timeout', type=float, default=900.0)
+    parser.add_argument('--completion-silence', type=float, default=5.0)
+    parser.add_argument('--report-interval', type=float, default=50.0)
+    parser.add_argument('--minimum-dataset-duration', type=float, default=490.0)
+    parser.add_argument('--minimum-scan-messages', type=int, default=4800)
+    parser.add_argument('--minimum-truth-messages', type=int, default=24000)
+    parser.add_argument('--minimum-wheel-messages', type=int, default=24000)
+    parser.add_argument('--minimum-matcher-messages', type=int, default=4800)
+    parser.add_argument('--maximum-wheel-translation-error', type=float, default=1.0)
+    parser.add_argument('--maximum-wheel-yaw-error-degrees', type=float, default=12.0)
+    parser.add_argument('--maximum-translation-error', type=float, default=0.60)
+    parser.add_argument('--maximum-yaw-error-degrees', type=float, default=4.0)
+    parser.add_argument('--maximum-final-translation-error', type=float, default=0.25)
+    parser.add_argument('--maximum-final-yaw-error-degrees', type=float, default=2.0)
+    parser.add_argument('--maximum-matcher-gap', type=float, default=0.35)
+    parser.add_argument('--maximum-match-rejections', type=int, default=10)
+    parser.add_argument('--minimum-loop-closures', type=int, default=30)
+    parser.add_argument('--minimum-map-rebuilds', type=int, default=20)
+    parser.add_argument('--maximum-loop-worker-ms', type=float, default=5000.0)
+    parser.add_argument('--maximum-map-rebuild-ms', type=float, default=20000.0)
+    parser.add_argument('--minimum-keyframes', type=int, default=2200)
+    parser.add_argument('--minimum-pose-graph-path-poses', type=int, default=1900)
+    parser.add_argument('--pose-graph-path-limit', type=int, default=2000)
+    parser.add_argument('--laser-path-limit', type=int, default=5000)
+    parser.add_argument('--minimum-map-width', type=float, default=25.0)
+    parser.add_argument('--minimum-map-height', type=float, default=19.0)
+    parser.add_argument('--minimum-map-messages', type=int, default=500)
+    parser.add_argument('--minimum-effective-replay-rate', type=float, default=1.5)
+    arguments, ros_arguments = parser.parse_known_args()
+    if ros_arguments:
+        sys.argv = [sys.argv[0], *ros_arguments]
+
+    positive_values = (
+        arguments.startup_timeout,
+        arguments.wall_timeout,
+        arguments.completion_silence,
+        arguments.report_interval,
+        arguments.minimum_dataset_duration,
+        arguments.maximum_wheel_translation_error,
+        arguments.maximum_wheel_yaw_error_degrees,
+        arguments.maximum_translation_error,
+        arguments.maximum_yaw_error_degrees,
+        arguments.maximum_final_translation_error,
+        arguments.maximum_final_yaw_error_degrees,
+        arguments.maximum_matcher_gap,
+        arguments.maximum_loop_worker_ms,
+        arguments.maximum_map_rebuild_ms,
+        arguments.minimum_map_width,
+        arguments.minimum_map_height,
+        arguments.minimum_effective_replay_rate,
+    )
+    integer_values = (
+        arguments.minimum_scan_messages,
+        arguments.minimum_truth_messages,
+        arguments.minimum_wheel_messages,
+        arguments.minimum_matcher_messages,
+        arguments.minimum_loop_closures,
+        arguments.minimum_map_rebuilds,
+        arguments.minimum_keyframes,
+        arguments.minimum_pose_graph_path_poses,
+        arguments.pose_graph_path_limit,
+        arguments.laser_path_limit,
+        arguments.minimum_map_messages,
+    )
+    if (
+        any(not math.isfinite(value) or value <= 0.0 for value in positive_values)
+        or any(value < 1 for value in integer_values)
+        or arguments.maximum_match_rejections < 0
+        or arguments.minimum_pose_graph_path_poses
+        > arguments.pose_graph_path_limit
+    ):
+        parser.error('Dataset thresholds must be finite and positive')
+    return arguments
+
+
+def main():
+    arguments = parse_arguments()
+    rclpy.init()
+    node = LargeScaleBagRegression()
+    exit_code = 1
+    try:
+        node.wait_for_playback(arguments)
+        exit_code = 0 if node.evaluate(arguments) else 1
+    except (KeyboardInterrupt, RuntimeError) as error:
+        print(f'fixed-bag regression failed: {error}', file=sys.stderr)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+    raise SystemExit(exit_code)
+
+
+if __name__ == '__main__':
+    main()

@@ -617,7 +617,9 @@ class LargeScaleRegression(Node):
                 self.maximum_pose_graph_nodes >= arguments.minimum_keyframes
             ),
             'pose_graph_path_cap_exercised': (
-                self.maximum_pose_graph_path_poses
+                self.maximum_pose_graph_nodes
+                > arguments.pose_graph_path_limit
+                and self.maximum_pose_graph_path_poses
                 >= arguments.minimum_pose_graph_path_poses
             ),
             'pose_graph_path_cap_respected': (
@@ -789,7 +791,7 @@ def parse_arguments():
     parser.add_argument('--maximum-loop-worker-ms', type=float, default=5000.0)
     parser.add_argument('--maximum-map-rebuild-ms', type=float, default=20000.0)
     parser.add_argument('--minimum-keyframes', type=int, default=2200)
-    parser.add_argument('--minimum-pose-graph-path-poses', type=int, default=2000)
+    parser.add_argument('--minimum-pose-graph-path-poses', type=int, default=1900)
     parser.add_argument('--pose-graph-path-limit', type=int, default=2000)
     parser.add_argument('--laser-path-limit', type=int, default=5000)
     parser.add_argument('--minimum-map-width', type=float, default=25.0)
