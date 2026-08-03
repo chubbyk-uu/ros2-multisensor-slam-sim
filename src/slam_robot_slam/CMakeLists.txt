@@ -57,6 +57,19 @@ target_include_directories(point_to_line_icp
 target_link_libraries(point_to_line_icp pose2d)
 target_compile_options(point_to_line_icp PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(translation_observability
+  src/translation_observability.cpp
+)
+target_include_directories(translation_observability
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+target_compile_options(
+  translation_observability
+  PRIVATE -Wall -Wextra -Wpedantic
+)
+
 add_library(correlative_scan_matcher
   src/correlative_scan_matcher.cpp
 )
@@ -68,6 +81,7 @@ target_include_directories(correlative_scan_matcher
 target_link_libraries(
   correlative_scan_matcher
   pose2d
+  translation_observability
 )
 target_compile_options(
   correlative_scan_matcher
@@ -157,6 +171,7 @@ target_link_libraries(
   pose_graph_2d
   loop_closure_detector
   loop_closure_processor
+  translation_observability
 )
 ament_target_dependencies(
   scan_matcher_odometry_node
@@ -195,6 +210,7 @@ install(
     pose2d
     pose_graph_2d
     scan_matcher_odometry_node
+    translation_observability
   EXPORT export_slam_robot_slam
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -263,6 +279,15 @@ if(BUILD_TESTING)
     correlative_scan_matcher
     laser_scan_preprocessor
     pose2d
+  )
+
+  ament_add_gtest(
+    test_translation_observability
+    test/test_translation_observability.cpp
+  )
+  target_link_libraries(
+    test_translation_observability
+    translation_observability
   )
 
   ament_add_gtest(

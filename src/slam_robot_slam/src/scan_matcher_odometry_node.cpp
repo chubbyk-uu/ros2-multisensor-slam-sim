@@ -264,10 +264,22 @@ public:
       declare_parameter<double>("matcher.rotation_penalty_weight", 0.10);
     matcher_parameters_.degeneracy_handling_enabled =
       declare_parameter<bool>("matcher.degeneracy.enabled", true);
-    matcher_parameters_.minimum_translation_information =
+    const auto normal_half_window =
+      declare_parameter<int64_t>(
+      "matcher.degeneracy.normal_half_window", 3);
+    translation_observability_parameters_.maximum_neighbor_distance_base =
       declare_parameter<double>(
-      "matcher.degeneracy.minimum_translation_information", 1.0);
-    matcher_parameters_.minimum_translation_information_ratio =
+      "matcher.degeneracy.maximum_neighbor_distance_base", 0.05);
+    translation_observability_parameters_.maximum_neighbor_distance_ratio =
+      declare_parameter<double>(
+      "matcher.degeneracy.maximum_neighbor_distance_ratio", 0.05);
+    const auto minimum_translation_normal_count =
+      declare_parameter<int64_t>(
+      "matcher.degeneracy.minimum_normal_count", 20);
+    translation_observability_parameters_.minimum_effective_normal_count =
+      declare_parameter<double>(
+      "matcher.degeneracy.minimum_effective_normal_count", 5.0);
+    translation_observability_parameters_.minimum_information_ratio =
       declare_parameter<double>(
       "matcher.degeneracy.minimum_information_ratio", 0.05);
     matcher_parameters_.weak_direction_correction_scale =
@@ -344,6 +356,8 @@ public:
       !isFiniteNonNegative(path_minimum_translation_) ||
       !isFiniteNonNegative(path_minimum_rotation_) ||
       minimum_matched_points < 1 || map_ray_stride < 1 ||
+      normal_half_window < 1 ||
+      minimum_translation_normal_count < 1 ||
       !isFinitePositive(map_publish_period) ||
       map_rebuild_keyframes_per_cycle < 1 ||
       !isFinitePositive(map_rebuild_period) ||
@@ -374,6 +388,11 @@ public:
       throw std::invalid_argument("Invalid scan matcher node parameters");
     }
     point_stride_ = static_cast<std::size_t>(point_stride);
+    translation_observability_parameters_.beam_index_step = point_stride_;
+    translation_observability_parameters_.normal_half_window =
+      static_cast<std::size_t>(normal_half_window);
+    translation_observability_parameters_.minimum_normal_count =
+      static_cast<std::size_t>(minimum_translation_normal_count);
     maximum_local_keyframes_ =
       static_cast<std::size_t>(maximum_local_keyframes);
     matcher_parameters_.minimum_matched_points =
@@ -394,6 +413,8 @@ public:
       static_cast<std::size_t>(minimum_loop_matched_points);
     validateCorrelativeScanMatcherParameters(matcher_parameters_);
     validateCorrelativeScanMatcherParameters(loop_matcher_parameters_);
+    validateTranslationObservabilityParameters(
+      translation_observability_parameters_);
     pose_graph_optimization_options_.maximum_iterations =
       static_cast<int>(optimization_maximum_iterations);
     map_ray_stride_ = static_cast<std::size_t>(map_ray_stride);
@@ -610,7 +631,7 @@ private:
           result->translation_observable_rank < 2U;
         const bool suppression_applied =
           filter_applied &&
-          matcher_parameters_.weak_direction_correction_scale < 1.0;
+          result->applied_weak_direction_correction_scale < 1.0;
         appendDiagnosticValue(
           status, "success", result->success ? "true" : "false");
         appendDiagnosticValue(
@@ -640,6 +661,9 @@ private:
           status, "translation_information_ratio",
           std::to_string(result->translation_information_ratio));
         appendDiagnosticValue(
+          status, "translation_normal_count",
+          std::to_string(result->translation_normal_count));
+        appendDiagnosticValue(
           status, "weak_translation_direction_x",
           std::to_string(result->weak_translation_direction.x));
         appendDiagnosticValue(
@@ -658,9 +682,13 @@ private:
           status, "weak_direction_suppression_applied",
           suppression_applied ? "true" : "false");
         appendDiagnosticValue(
-          status, "weak_direction_correction_scale",
+          status, "configured_weak_direction_correction_scale",
           std::to_string(
             matcher_parameters_.weak_direction_correction_scale));
+        appendDiagnosticValue(
+          status, "applied_weak_direction_correction_scale",
+          std::to_string(
+            result->applied_weak_direction_correction_scale));
       }
 
       diagnostics.status.push_back(std::move(status));
@@ -868,17 +896,19 @@ private:
       return;
     }
 
-    const auto laser_points = projectLaserScan(
+    const auto laser_points = projectOrderedLaserScan(
       *scan, minimum_range_, maximum_range_, point_stride_);
+    std::vector<ScanPoint2D> base_scan_points;
+    base_scan_points.reserve(laser_points.size());
     std::vector<Point2D> base_points;
     base_points.reserve(laser_points.size());
-    std::transform(
-      laser_points.begin(),
-      laser_points.end(),
-      std::back_inserter(base_points),
-      [&base_from_laser](const Point2D & point) {
-        return transformPoint(base_from_laser, point);
-      });
+    for (const auto & laser_point : laser_points) {
+      const Point2D base_point =
+        transformPoint(base_from_laser, laser_point.point);
+      base_scan_points.push_back(
+        ScanPoint2D{base_point, laser_point.beam_index, laser_point.range});
+      base_points.push_back(base_point);
+    }
     if (base_points.size() < matcher_parameters_.minimum_matched_points) {
       ++front_end_diagnostic_counters_.insufficient_point_scans;
       publishFrontEndDiagnostic(
@@ -921,11 +951,15 @@ private:
     }
 
     const auto reference_points = buildLocalReferencePoints();
+    const TranslationObservability translation_observability =
+      estimateNormalTranslationObservability(
+      base_scan_points, translation_observability_parameters_);
     const CorrelativeScanMatcherResult result = matchCorrelative(
       reference_points,
       base_points,
       predicted_pose,
-      matcher_parameters_);
+      matcher_parameters_,
+      &translation_observability);
 
     ++front_end_diagnostic_counters_.match_attempts;
     if (result.success) {
@@ -942,7 +976,7 @@ private:
     }
     if (matcher_parameters_.degeneracy_handling_enabled &&
       result.translation_observable_rank < 2U &&
-      matcher_parameters_.weak_direction_correction_scale < 1.0)
+      result.applied_weak_direction_correction_scale < 1.0)
     {
       ++front_end_diagnostic_counters_.suppressed_matches;
     }
@@ -971,13 +1005,14 @@ private:
         *get_clock(),
         5000,
         "Correlative match score=%.3f points=%zu support=%.1f%% "
-        "candidates=%zu rank=%zu info=(%.2f, %.2f) "
+        "candidates=%zu rank=%zu normals=%zu info=(%.2f, %.2f) "
         "correction=(%.4f m, %.3f deg)",
         result.score,
         result.matched_points,
         result.support_fraction * 100.0,
         result.evaluated_candidates,
         result.translation_observable_rank,
+        result.translation_normal_count,
         result.minimum_translation_information,
         result.maximum_translation_information,
         std::hypot(correction.x, correction.y),
@@ -1803,6 +1838,7 @@ private:
   PoseGraphOptimizationOptions pose_graph_optimization_options_;
   CorrelativeScanMatcherParameters matcher_parameters_;
   CorrelativeScanMatcherParameters loop_matcher_parameters_;
+  TranslationObservabilityParameters translation_observability_parameters_;
   OccupancyGridMapParameters map_parameters_;
   std::unique_ptr<OccupancyGridMap> occupancy_grid_map_;
   std::unique_ptr<OccupancyGridMap> pending_rebuild_map_;

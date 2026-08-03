@@ -63,6 +63,30 @@ TEST(LaserScanPreprocessor, AppliesPointStrideBeforeProjection)
   EXPECT_NEAR(points[2].y, 0.0, 1e-5);
 }
 
+TEST(LaserScanPreprocessor, PreservesOriginalBeamIndexAndRange)
+{
+  auto scan = makeScan();
+  scan.angle_min = 0.0F;
+  scan.angle_increment = static_cast<float>(kQuarterPi);
+  scan.ranges = {
+    1.0F,
+    std::numeric_limits<float>::infinity(),
+    3.0F,
+    4.0F,
+    5.0F};
+
+  const auto points =
+    slam_robot_slam::projectOrderedLaserScan(scan, 0.10, 12.0, 2U);
+
+  ASSERT_EQ(points.size(), 3U);
+  EXPECT_EQ(points[0].beam_index, 0U);
+  EXPECT_FLOAT_EQ(points[0].range, 1.0F);
+  EXPECT_EQ(points[1].beam_index, 2U);
+  EXPECT_FLOAT_EQ(points[1].range, 3.0F);
+  EXPECT_EQ(points[2].beam_index, 4U);
+  EXPECT_FLOAT_EQ(points[2].range, 5.0F);
+}
+
 TEST(LaserScanPreprocessor, RejectsZeroStride)
 {
   const auto scan = makeScan();

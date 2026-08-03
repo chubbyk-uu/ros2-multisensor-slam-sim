@@ -6,12 +6,19 @@
 
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "slam_robot_slam/point2d.hpp"
+#include "slam_robot_slam/scan_point2d.hpp"
 
 namespace slam_robot_slam
 {
 
 bool hasValidLaserScanMetadata(
   const sensor_msgs::msg::LaserScan & scan);
+
+std::vector<ScanPoint2D> projectOrderedLaserScan(
+  const sensor_msgs::msg::LaserScan & scan,
+  double minimum_range,
+  double maximum_range,
+  std::size_t point_stride);
 
 std::vector<Point2D> projectLaserScan(
   const sensor_msgs::msg::LaserScan & scan,

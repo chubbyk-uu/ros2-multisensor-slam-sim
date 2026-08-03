@@ -55,8 +55,8 @@ ros2 run slam_robot_slam save_slam_map \
 - 轮式里程计位姿预测和移动阈值过滤。
 - Karto 风格的相关栅格粗到细搜索。
 - 当前扫描到最近 20 个关键帧局部子图的匹配。
-- 根据最佳匹配附近响应曲面的二维 Hessian 识别平移弱观测方向，并仅在
-  该方向保留轮式里程计预测。
+- 从保留原始光束索引的当前扫描估计局部表面法向，以归一化点到线平移
+  Hessian 识别弱观测方向，并按信息比值连续融合激光修正与里程计预测。
 - 匹配分数、最少重合点和失败回退机制。
 - 将相关分数限定在有局部子图支撑的点上，并独立检查支撑点占比。
 - 基于关键帧的射线清空、末端占用和 log-odds 概率更新。
@@ -165,10 +165,14 @@ base_footprint -> lidar_link  robot_state_publisher
 | `output.pose_rotation_stddev` | `0.05` | 输出偏航角标准差，单位 rad |
 | `output.degenerate_translation_stddev` | `0.30` | 退化方向的位置标准差，单位 m |
 | `matcher_diagnostics_topic` | `/custom_slam/matcher_diagnostics` | 前端诊断话题 |
-| `matcher.degeneracy.enabled` | `true` | 启用局部响应曲面平移可观测性处理 |
-| `matcher.degeneracy.minimum_translation_information` | `1.0` | 单个平移方向的最小绝对信息量 |
-| `matcher.degeneracy.minimum_information_ratio` | `0.05` | 最小/最大平移信息量比值下限 |
-| `matcher.degeneracy.weak_direction_correction_scale` | `0.0` | 弱方向保留的激光匹配修正比例 |
+| `matcher.degeneracy.enabled` | `true` | 启用扫描法向平移可观测性处理 |
+| `matcher.degeneracy.normal_half_window` | `3` | 局部直线拟合在中心光束两侧使用的连续点数 |
+| `matcher.degeneracy.maximum_neighbor_distance_base` | `0.05` | 同一表面相邻点距离的固定容差，单位 m |
+| `matcher.degeneracy.maximum_neighbor_distance_ratio` | `0.05` | 随量程增长的相邻点距离容差比例 |
+| `matcher.degeneracy.minimum_normal_count` | `20` | 有效局部表面法向的最低数量 |
+| `matcher.degeneracy.minimum_effective_normal_count` | `5.0` | 单方向最低有效法向数量 |
+| `matcher.degeneracy.minimum_information_ratio` | `0.05` | 弱/强方向有效法向数量比下限 |
+| `matcher.degeneracy.weak_direction_correction_scale` | `0.0` | 弱方向激光修正比例的配置下限 |
 | `map.hit_probability` | `0.70` | 命中单元的概率更新 |
 | `map.miss_probability` | `0.40` | 射线穿过单元的空闲概率更新 |
 | `map.minimum_probability` | `0.12` | log-odds 累积下限 |
@@ -280,14 +284,17 @@ ros2 run slam_robot_slam corridor_regression --return-trip
 前端消息间隔、拒配、错误回环、关键帧数量、地图覆盖范围、关键日志及
 真实匹配尝试的诊断计数是否自洽。`matcher_diagnostics` 将扫描分类为初始化、
 点数不足、运动不足、匹配接受或匹配拒绝；只有后两类才计入匹配次数和
-rank 直方图。真实匹配还报告两个平移信息特征值、比值、弱方向角、是否
-执行退化过滤及累计计数。回归工具据此打印信息比值与弱方向角直方图，
+rank 直方图。真实匹配还报告两个有效法向特征值、法向数量、比值、弱
+方向角、是否执行退化过滤、实际连续修正比例及累计计数。回归工具据此
+打印信息比值与弱方向角直方图，
 不再从可能重复发布的里程计协方差反推退化检测次数。
 
 完全平行墙在行进方向上没有几何约束，前端检测到一维退化后保留该方向的
-轮式里程计预测；横向与航向仍由激光相关匹配校正。当前响应曲面检测器会
-受光束端点采样和局部子图深度影响，诊断接口用于在替换检测器前准确量化
-这一问题，本阶段不改变既有匹配行为。
+轮式里程计预测；横向与航向仍由激光相关匹配校正。法向只在原始光束索引
+连续、相邻距离满足量程自适应门限的局部窗口内拟合，不会跨过被量程过滤
+的光束、门口或物体边缘。弱方向实际修正比例为
+`max(配置下限, min(1, information_ratio / 0.05))`，避免单阈值硬开关在
+临界区反复推拉位姿。
 
 往返模式额外验证返回位置闭合、强/弱观测协方差切换、真实回环接受和
 地图重建完成。测试驾驶器使用 Gazebo 真值维持目标航向，以隔离差速底盘

@@ -90,7 +90,11 @@ scan_matcher_odometry:
       rotation_penalty_weight: 0.10
       degeneracy:
         enabled: true
-        minimum_translation_information: 1.0
+        normal_half_window: 3
+        maximum_neighbor_distance_base: 0.05
+        maximum_neighbor_distance_ratio: 0.05
+        minimum_normal_count: 20
+        minimum_effective_normal_count: 5.0
         minimum_information_ratio: 0.05
         weak_direction_correction_scale: 0.0
       minimum_score: 0.35

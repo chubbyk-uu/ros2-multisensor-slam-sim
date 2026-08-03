@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <stdexcept>
 
 namespace slam_robot_slam
@@ -20,7 +21,7 @@ bool hasValidLaserScanMetadata(
          scan.range_max > scan.range_min;
 }
 
-std::vector<Point2D> projectLaserScan(
+std::vector<ScanPoint2D> projectOrderedLaserScan(
   const sensor_msgs::msg::LaserScan & scan,
   const double minimum_range,
   const double maximum_range,
@@ -43,7 +44,7 @@ std::vector<Point2D> projectLaserScan(
   const double effective_maximum =
     std::min(maximum_range, static_cast<double>(scan.range_max));
 
-  std::vector<Point2D> points;
+  std::vector<ScanPoint2D> points;
   if (effective_minimum > effective_maximum || scan.ranges.empty()) {
     return points;
   }
@@ -62,11 +63,31 @@ std::vector<Point2D> projectLaserScan(
       static_cast<double>(scan.angle_min) +
       static_cast<double>(index) * static_cast<double>(scan.angle_increment);
     points.push_back(
-      Point2D{
-        static_cast<float>(range * std::cos(angle)),
-        static_cast<float>(range * std::sin(angle))});
+      ScanPoint2D{
+        Point2D{
+          static_cast<float>(range * std::cos(angle)),
+          static_cast<float>(range * std::sin(angle))},
+        index,
+        static_cast<float>(range)});
   }
 
+  return points;
+}
+
+std::vector<Point2D> projectLaserScan(
+  const sensor_msgs::msg::LaserScan & scan,
+  const double minimum_range,
+  const double maximum_range,
+  const std::size_t point_stride)
+{
+  const auto ordered_points = projectOrderedLaserScan(
+    scan, minimum_range, maximum_range, point_stride);
+  std::vector<Point2D> points;
+  points.reserve(ordered_points.size());
+  std::transform(
+    ordered_points.begin(), ordered_points.end(),
+    std::back_inserter(points),
+    [](const ScanPoint2D & point) {return point.point;});
   return points;
 }
 

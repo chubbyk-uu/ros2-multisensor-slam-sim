@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "slam_robot_slam/pose2d.hpp"
+#include "slam_robot_slam/translation_observability.hpp"
 
 namespace slam_robot_slam
 {
@@ -24,8 +25,6 @@ struct CorrelativeScanMatcherParameters
   double translation_penalty_weight{0.10};
   double rotation_penalty_weight{0.10};
   bool degeneracy_handling_enabled{false};
-  double minimum_translation_information{1.0};
-  double minimum_translation_information_ratio{0.05};
   double weak_direction_correction_scale{0.0};
   double minimum_score{0.35};
   double minimum_support_fraction{0.25};
@@ -46,6 +45,8 @@ struct CorrelativeScanMatcherResult
   double maximum_translation_information{0.0};
   double translation_information_ratio{1.0};
   Point2D weak_translation_direction{1.0F, 0.0F};
+  std::size_t translation_normal_count{0U};
+  double applied_weak_direction_correction_scale{1.0};
 };
 
 void validateCorrelativeScanMatcherParameters(
@@ -55,7 +56,8 @@ CorrelativeScanMatcherResult matchCorrelative(
   const std::vector<Point2D> & reference_points,
   const std::vector<Point2D> & current_points,
   const Pose2D & predicted_pose,
-  const CorrelativeScanMatcherParameters & parameters);
+  const CorrelativeScanMatcherParameters & parameters,
+  const TranslationObservability * current_frame_observability = nullptr);
 
 }  // namespace slam_robot_slam
 
