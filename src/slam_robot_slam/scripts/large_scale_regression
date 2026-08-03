@@ -1,0 +1,886 @@
+#!/usr/bin/env python3
+
+"""Run a large-map, long-duration regression for the custom 2D SLAM."""
+
+import argparse
+import math
+import os
+from pathlib import Path
+import re
+import sys
+import time
+
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import OccupancyGrid, Odometry, Path as PathMessage
+from rcl_interfaces.msg import Log
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+
+
+LOOP_CLOSURE_PATTERN = re.compile(
+    r'Accepted loop closure (\d+) -> (\d+): score=([\d.]+)'
+    r'.*worker ([\d.]+) ms'
+)
+MAP_REBUILD_PATTERN = re.compile(
+    r'Completed occupancy grid rebuild from (\d+) optimized keyframes '
+    r'in ([\d.]+) ms'
+)
+POSE_GRAPH_PATTERN = re.compile(
+    r'Pose graph contains (\d+) nodes and (\d+) constraints'
+)
+CRITICAL_LOG_FRAGMENTS = (
+    'Aborted occupancy grid rebuild',
+    'Aborted queued occupancy grid rebuild',
+    'Discarded incompatible loop closure result',
+    'Failed to create occupancy grid snapshot',
+    'Failed to start loop closure worker',
+    'Fatal SLAM node error',
+    'Loop closure committed but occupancy grid rebuild failed to start',
+    'Loop closure committed but pose graph path refresh failed',
+    'Loop closure worker failed',
+    'Rejected LaserScan after processing error',
+)
+
+
+def yaw_from_quaternion(orientation):
+    sin_yaw = 2.0 * (
+        orientation.w * orientation.z
+        + orientation.x * orientation.y
+    )
+    cos_yaw = 1.0 - 2.0 * (
+        orientation.y * orientation.y
+        + orientation.z * orientation.z
+    )
+    return math.atan2(sin_yaw, cos_yaw)
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def stamp_to_seconds(stamp):
+    return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
+
+
+def pose_from_odometry(message):
+    position = message.pose.pose.position
+    return (
+        position.x,
+        position.y,
+        yaw_from_quaternion(message.pose.pose.orientation),
+    )
+
+
+def relative_pose(start, finish):
+    dx = finish[0] - start[0]
+    dy = finish[1] - start[1]
+    cosine = math.cos(start[2])
+    sine = math.sin(start[2])
+    return (
+        cosine * dx + sine * dy,
+        -sine * dx + cosine * dy,
+        normalize_angle(finish[2] - start[2]),
+    )
+
+
+def transform_route_point(origin, point):
+    cosine = math.cos(origin[2])
+    sine = math.sin(origin[2])
+    return (
+        origin[0] + cosine * point[0] - sine * point[1],
+        origin[1] + sine * point[0] + cosine * point[1],
+    )
+
+
+class LargeScaleRegression(Node):
+    def __init__(self):
+        super().__init__(
+            'large_scale_regression',
+            parameter_overrides=[Parameter('use_sim_time', value=True)],
+        )
+        self.poses = {}
+        self.starts = None
+        self.latest_map = None
+        self.map_messages = 0
+        self.matcher_stamp = None
+        self.maximum_matcher_gap = 0.0
+        self.maximum_pose_graph_nodes = 0
+        self.maximum_pose_graph_path_poses = 0
+        self.maximum_laser_path_poses = 0
+        self.loop_closures = []
+        self.map_rebuilds = []
+        self.match_rejection_warnings = 0
+        self.critical_logs = []
+        self.measuring = False
+        self.error_samples = 0
+        self.maximum_translation_error = 0.0
+        self.maximum_yaw_error = 0.0
+        self.truth_distance = 0.0
+        self.previous_truth_pose = None
+        self.completed_waypoints = 0
+        self.route_sim_seconds = 0.0
+        self.route_wall_seconds = 0.0
+
+        self.process_pid = None
+        self.clock_ticks = float(os.sysconf('SC_CLK_TCK'))
+        self.process_samples = 0
+        self.initial_process_cpu = None
+        self.initial_process_wall = None
+        self.latest_process_cpu = None
+        self.latest_process_wall = None
+        self.previous_process_cpu = None
+        self.previous_process_wall = None
+        self.initial_rss_mb = None
+        self.latest_rss_mb = None
+        self.peak_rss_mb = 0.0
+        self.maximum_process_cpu_percent = 0.0
+        self.next_process_sample_wall = 0.0
+
+        self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.create_subscription(
+            Odometry,
+            '/ground_truth/odom',
+            self.truth_callback,
+            50,
+        )
+        self.create_subscription(
+            Odometry,
+            '/odom',
+            lambda message: self.store_pose('wheel', message),
+            50,
+        )
+        self.create_subscription(
+            Odometry,
+            '/custom_slam/laser_odom',
+            self.matcher_callback,
+            20,
+        )
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            OccupancyGrid,
+            '/custom_slam/map',
+            self.map_callback,
+            map_qos,
+        )
+        self.create_subscription(
+            PathMessage,
+            '/custom_slam/pose_graph_path',
+            self.pose_graph_path_callback,
+            10,
+        )
+        self.create_subscription(
+            PathMessage,
+            '/custom_slam/laser_path',
+            self.laser_path_callback,
+            10,
+        )
+        self.create_subscription(Log, '/rosout', self.log_callback, 200)
+
+    def store_pose(self, name, message):
+        self.poses[name] = pose_from_odometry(message)
+
+    def truth_callback(self, message):
+        pose = pose_from_odometry(message)
+        self.poses['truth'] = pose
+        if self.measuring and self.previous_truth_pose is not None:
+            step = math.hypot(
+                pose[0] - self.previous_truth_pose[0],
+                pose[1] - self.previous_truth_pose[1],
+            )
+            if step < 0.25:
+                self.truth_distance += step
+        self.previous_truth_pose = pose
+
+    def matcher_callback(self, message):
+        self.store_pose('matcher', message)
+        stamp = stamp_to_seconds(message.header.stamp)
+        if self.matcher_stamp is not None and stamp > self.matcher_stamp:
+            self.maximum_matcher_gap = max(
+                self.maximum_matcher_gap,
+                stamp - self.matcher_stamp,
+            )
+        self.matcher_stamp = stamp
+        if not self.measuring or self.starts is None or 'truth' not in self.poses:
+            return
+        truth = relative_pose(self.starts['truth'], self.poses['truth'])
+        matcher = relative_pose(self.starts['matcher'], self.poses['matcher'])
+        self.maximum_translation_error = max(
+            self.maximum_translation_error,
+            math.hypot(matcher[0] - truth[0], matcher[1] - truth[1]),
+        )
+        self.maximum_yaw_error = max(
+            self.maximum_yaw_error,
+            abs(normalize_angle(matcher[2] - truth[2])),
+        )
+        self.error_samples += 1
+
+    def map_callback(self, message):
+        self.latest_map = {
+            'width': message.info.width,
+            'height': message.info.height,
+            'resolution': message.info.resolution,
+        }
+        self.map_messages += 1
+
+    def pose_graph_path_callback(self, message):
+        self.maximum_pose_graph_path_poses = max(
+            self.maximum_pose_graph_path_poses,
+            len(message.poses),
+        )
+
+    def laser_path_callback(self, message):
+        self.maximum_laser_path_poses = max(
+            self.maximum_laser_path_poses,
+            len(message.poses),
+        )
+
+    def log_callback(self, message):
+        if message.name != 'scan_matcher_odometry':
+            return
+        loop_match = LOOP_CLOSURE_PATTERN.search(message.msg)
+        if loop_match:
+            event = {
+                'candidate': int(loop_match.group(1)),
+                'current': int(loop_match.group(2)),
+                'score': float(loop_match.group(3)),
+                'worker_ms': float(loop_match.group(4)),
+            }
+            self.loop_closures.append(event)
+            print(
+                f"  loop {event['candidate']} -> {event['current']}: "
+                f"score={event['score']:.3f}, "
+                f"worker={event['worker_ms']:.1f} ms",
+                flush=True,
+            )
+        rebuild_match = MAP_REBUILD_PATTERN.search(message.msg)
+        if rebuild_match:
+            event = {
+                'keyframes': int(rebuild_match.group(1)),
+                'elapsed_ms': float(rebuild_match.group(2)),
+            }
+            self.map_rebuilds.append(event)
+            print(
+                f"  map rebuild: {event['keyframes']} keyframes in "
+                f"{event['elapsed_ms']:.1f} ms",
+                flush=True,
+            )
+        graph_match = POSE_GRAPH_PATTERN.search(message.msg)
+        if graph_match:
+            self.maximum_pose_graph_nodes = max(
+                self.maximum_pose_graph_nodes,
+                int(graph_match.group(1)),
+            )
+        if 'Correlative match rejected' in message.msg:
+            self.match_rejection_warnings += 1
+        if any(fragment in message.msg for fragment in CRITICAL_LOG_FRAGMENTS):
+            self.critical_logs.append(message.msg)
+
+    def simulation_time(self):
+        return self.get_clock().now().nanoseconds * 1.0e-9
+
+    def spin_once(self, timeout_sec=0.025):
+        rclpy.spin_once(self, timeout_sec=timeout_sec)
+        self.sample_process_metrics()
+
+    def find_slam_process(self):
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                command = (entry / 'cmdline').read_bytes().replace(b'\0', b' ')
+            except OSError:
+                continue
+            if b'/scan_matcher_odometry_node' in command:
+                self.process_pid = int(entry.name)
+                print(
+                    f'  monitoring scan_matcher_odometry PID {self.process_pid}',
+                    flush=True,
+                )
+                return True
+        return False
+
+    def read_process_sample(self):
+        if self.process_pid is None:
+            return None
+        process_directory = Path('/proc') / str(self.process_pid)
+        try:
+            stat_text = (process_directory / 'stat').read_text()
+            status_text = (process_directory / 'status').read_text()
+        except OSError:
+            return None
+        closing_parenthesis = stat_text.rfind(')')
+        if closing_parenthesis < 0:
+            return None
+        fields = stat_text[closing_parenthesis + 2:].split()
+        if len(fields) <= 12:
+            return None
+        cpu_seconds = (float(fields[11]) + float(fields[12])) / self.clock_ticks
+        status = {}
+        for line in status_text.splitlines():
+            if ':' not in line:
+                continue
+            name, value = line.split(':', 1)
+            status[name] = value.strip().split()[0]
+        try:
+            rss_mb = float(status['VmRSS']) / 1024.0
+            high_water_mb = float(status.get('VmHWM', status['VmRSS'])) / 1024.0
+        except (KeyError, ValueError):
+            return None
+        return cpu_seconds, rss_mb, high_water_mb
+
+    def sample_process_metrics(self, force=False):
+        now = time.monotonic()
+        if not force and now < self.next_process_sample_wall:
+            return
+        self.next_process_sample_wall = now + 1.0
+        if self.process_pid is None and not self.find_slam_process():
+            return
+        sample = self.read_process_sample()
+        if sample is None:
+            return
+        cpu_seconds, rss_mb, high_water_mb = sample
+        if self.initial_process_cpu is None:
+            self.initial_process_cpu = cpu_seconds
+            self.initial_process_wall = now
+            self.initial_rss_mb = rss_mb
+        if (
+            self.previous_process_cpu is not None
+            and now > self.previous_process_wall
+        ):
+            cpu_percent = 100.0 * (
+                cpu_seconds - self.previous_process_cpu
+            ) / (now - self.previous_process_wall)
+            self.maximum_process_cpu_percent = max(
+                self.maximum_process_cpu_percent,
+                cpu_percent,
+            )
+        self.previous_process_cpu = cpu_seconds
+        self.previous_process_wall = now
+        self.latest_process_cpu = cpu_seconds
+        self.latest_process_wall = now
+        self.latest_rss_mb = rss_mb
+        self.peak_rss_mb = max(self.peak_rss_mb, high_water_mb)
+        self.process_samples += 1
+
+    def reset_process_metrics(self):
+        self.process_samples = 0
+        self.initial_process_cpu = None
+        self.initial_process_wall = None
+        self.latest_process_cpu = None
+        self.latest_process_wall = None
+        self.previous_process_cpu = None
+        self.previous_process_wall = None
+        self.initial_rss_mb = None
+        self.latest_rss_mb = None
+        self.peak_rss_mb = 0.0
+        self.maximum_process_cpu_percent = 0.0
+        self.next_process_sample_wall = 0.0
+        self.sample_process_metrics(force=True)
+
+    def average_process_cpu_percent(self):
+        if (
+            self.initial_process_cpu is None
+            or self.latest_process_cpu is None
+            or self.latest_process_wall <= self.initial_process_wall
+        ):
+            return None
+        return 100.0 * (
+            self.latest_process_cpu - self.initial_process_cpu
+        ) / (self.latest_process_wall - self.initial_process_wall)
+
+    def wait_for_inputs(self, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.spin_once(timeout_sec=0.1)
+            if len(self.poses) == 3 and self.latest_map is not None:
+                return
+        raise RuntimeError('Timed out waiting for odometry and map topics')
+
+    def wait_for_process_metrics(self, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.sample_process_metrics(force=True)
+            if self.process_pid is not None and self.initial_rss_mb is not None:
+                return
+            self.spin_once(timeout_sec=0.1)
+        raise RuntimeError('Timed out locating the custom SLAM process in /proc')
+
+    def publish_command(self, linear, angular=0.0):
+        command = Twist()
+        command.linear.x = linear
+        command.angular.z = angular
+        self.publisher.publish(command)
+
+    def settle(self, seconds):
+        started = self.simulation_time()
+        wall_started = time.monotonic()
+        wall_timeout = seconds * 5.0 + 10.0
+        while rclpy.ok() and self.simulation_time() - started < seconds:
+            if time.monotonic() - wall_started > wall_timeout:
+                raise RuntimeError('Settle phase timed out while simulation stalled')
+            self.publish_command(0.0)
+            self.spin_once(timeout_sec=0.05)
+
+    def rotate_to_yaw(self, target_yaw, arguments, label):
+        wall_started = time.monotonic()
+        while rclpy.ok():
+            error = normalize_angle(target_yaw - self.poses['truth'][2])
+            if abs(error) <= arguments.yaw_tolerance:
+                break
+            if time.monotonic() - wall_started > arguments.turn_timeout:
+                raise RuntimeError(f'{label} rotation timed out')
+            speed = min(
+                arguments.angular_speed,
+                max(arguments.minimum_angular_speed, abs(error) * 1.5),
+            )
+            self.publish_command(0.0, math.copysign(speed, error))
+            self.spin_once()
+        self.publish_command(0.0)
+
+    def drive_to_route_point(self, point, arguments, label):
+        target = transform_route_point(self.starts['truth'], point)
+        initial_dx = target[0] - self.poses['truth'][0]
+        initial_dy = target[1] - self.poses['truth'][1]
+        initial_distance = math.hypot(initial_dx, initial_dy)
+        desired_yaw = math.atan2(initial_dy, initial_dx)
+        self.rotate_to_yaw(desired_yaw, arguments, label)
+
+        wall_started = time.monotonic()
+        wall_timeout = initial_distance / arguments.linear_speed * 5.0 + 30.0
+        next_report = arguments.report_interval
+        while rclpy.ok():
+            dx = target[0] - self.poses['truth'][0]
+            dy = target[1] - self.poses['truth'][1]
+            distance = math.hypot(dx, dy)
+            if distance <= arguments.position_tolerance:
+                break
+            if time.monotonic() - wall_started > wall_timeout:
+                raise RuntimeError(f'{label} traversal timed out')
+            desired_yaw = math.atan2(dy, dx)
+            heading_error = normalize_angle(
+                desired_yaw - self.poses['truth'][2]
+            )
+            angular = max(
+                -arguments.maximum_heading_correction,
+                min(
+                    arguments.maximum_heading_correction,
+                    arguments.heading_control_gain * heading_error,
+                ),
+            )
+            linear = min(
+                arguments.linear_speed,
+                max(arguments.minimum_linear_speed, 1.2 * distance),
+            )
+            linear *= max(0.35, math.cos(heading_error))
+            self.publish_command(linear, angular)
+            self.spin_once()
+
+            progress = initial_distance - distance
+            if progress >= next_report:
+                average_cpu = self.average_process_cpu_percent()
+                cpu_text = 'n/a' if average_cpu is None else f'{average_cpu:.1f}%'
+                print(
+                    f'  {label}: {progress:.1f}/{initial_distance:.1f} m, '
+                    f'nodes={self.maximum_pose_graph_nodes}, '
+                    f'loops={len(self.loop_closures)}, '
+                    f'CPU={cpu_text}, RSS={self.peak_rss_mb:.1f} MiB',
+                    flush=True,
+                )
+                next_report += arguments.report_interval
+        self.publish_command(0.0)
+        self.completed_waypoints += 1
+
+    def build_route(self, laps):
+        route = [(10.0, 0.0)]
+        lap = [
+            (10.0, 7.0),
+            (-10.0, 7.0),
+            (-10.0, -7.0),
+            (10.0, -7.0),
+            (10.0, 0.0),
+        ]
+        for _ in range(laps):
+            route.extend(lap)
+        route.append((0.0, 0.0))
+        return route
+
+    def evaluate(self, arguments, route):
+        self.sample_process_metrics(force=True)
+        motions = {
+            name: relative_pose(self.starts[name], self.poses[name])
+            for name in self.starts
+        }
+        truth = motions['truth']
+        matcher = motions['matcher']
+        wheel = motions['wheel']
+        final_translation_error = math.hypot(
+            matcher[0] - truth[0],
+            matcher[1] - truth[1],
+        )
+        final_yaw_error = abs(normalize_angle(matcher[2] - truth[2]))
+        wheel_translation_error = math.hypot(
+            wheel[0] - truth[0],
+            wheel[1] - truth[1],
+        )
+        wheel_yaw_error = abs(normalize_angle(wheel[2] - truth[2]))
+        map_width = self.latest_map['width'] * self.latest_map['resolution']
+        map_height = self.latest_map['height'] * self.latest_map['resolution']
+        average_cpu = self.average_process_cpu_percent()
+        rss_growth = (
+            self.peak_rss_mb - self.initial_rss_mb
+            if self.initial_rss_mb is not None else math.inf
+        )
+        real_time_factor = (
+            self.route_sim_seconds / self.route_wall_seconds
+            if self.route_wall_seconds > 0.0 else 0.0
+        )
+        maximum_worker_ms = max(
+            (event['worker_ms'] for event in self.loop_closures),
+            default=math.inf,
+        )
+        maximum_rebuild_ms = max(
+            (event['elapsed_ms'] for event in self.map_rebuilds),
+            default=math.inf,
+        )
+        latest_loop_node = max(
+            (event['current'] for event in self.loop_closures),
+            default=-1,
+        )
+        latest_rebuild_keyframes = max(
+            (event['keyframes'] for event in self.map_rebuilds),
+            default=0,
+        )
+
+        checks = {
+            'all_waypoints_reached': self.completed_waypoints == len(route),
+            'route_distance_reached': (
+                self.truth_distance >= arguments.minimum_route_distance
+            ),
+            'truth_route_closed': (
+                math.hypot(truth[0], truth[1])
+                <= arguments.maximum_truth_closure_error
+                and abs(truth[2])
+                <= math.radians(arguments.maximum_truth_yaw_error_degrees)
+            ),
+            'wheel_odometry_input_healthy': (
+                wheel_translation_error
+                <= arguments.maximum_wheel_translation_error
+                and wheel_yaw_error
+                <= math.radians(arguments.maximum_wheel_yaw_error_degrees)
+            ),
+            'continuous_translation_error_bounded': (
+                self.maximum_translation_error
+                <= arguments.maximum_translation_error
+            ),
+            'continuous_yaw_error_bounded': (
+                self.maximum_yaw_error
+                <= math.radians(arguments.maximum_yaw_error_degrees)
+            ),
+            'final_translation_error_bounded': (
+                final_translation_error
+                <= arguments.maximum_final_translation_error
+            ),
+            'final_yaw_error_bounded': (
+                final_yaw_error
+                <= math.radians(arguments.maximum_final_yaw_error_degrees)
+            ),
+            'front_end_gap_bounded': (
+                self.maximum_matcher_gap <= arguments.maximum_matcher_gap
+            ),
+            'match_rejections_bounded': (
+                self.match_rejection_warnings
+                <= arguments.maximum_match_rejections
+            ),
+            'multiple_loop_closures': (
+                len(self.loop_closures) >= arguments.minimum_loop_closures
+            ),
+            'map_rebuilds_completed': (
+                len(self.map_rebuilds) >= arguments.minimum_map_rebuilds
+            ),
+            'latest_loop_rebuild_published': (
+                latest_loop_node >= 0
+                and latest_rebuild_keyframes >= latest_loop_node + 1
+            ),
+            'loop_worker_latency_bounded': (
+                maximum_worker_ms <= arguments.maximum_loop_worker_ms
+            ),
+            'map_rebuild_latency_bounded': (
+                maximum_rebuild_ms <= arguments.maximum_map_rebuild_ms
+            ),
+            'pose_graph_long_enough': (
+                self.maximum_pose_graph_nodes >= arguments.minimum_keyframes
+            ),
+            'pose_graph_path_cap_exercised': (
+                self.maximum_pose_graph_path_poses
+                >= arguments.minimum_pose_graph_path_poses
+            ),
+            'pose_graph_path_cap_respected': (
+                self.maximum_pose_graph_path_poses
+                <= arguments.pose_graph_path_limit
+            ),
+            'laser_path_cap_respected': (
+                self.maximum_laser_path_poses <= arguments.laser_path_limit
+            ),
+            'map_extent_large_enough': (
+                map_width >= arguments.minimum_map_width
+                and map_height >= arguments.minimum_map_height
+            ),
+            'map_published_repeatedly': (
+                self.map_messages >= arguments.minimum_map_messages
+            ),
+            'enough_error_samples': (
+                self.error_samples >= arguments.minimum_error_samples
+            ),
+            'process_metrics_available': (
+                self.process_samples >= arguments.minimum_process_samples
+                and average_cpu is not None
+            ),
+            'average_slam_cpu_bounded': (
+                average_cpu is not None
+                and average_cpu <= arguments.maximum_average_cpu_percent
+            ),
+            'peak_slam_cpu_bounded': (
+                self.maximum_process_cpu_percent
+                <= arguments.maximum_peak_cpu_percent
+            ),
+            'peak_slam_rss_bounded': (
+                self.peak_rss_mb <= arguments.maximum_peak_rss_mb
+            ),
+            'slam_rss_growth_bounded': (
+                rss_growth <= arguments.maximum_rss_growth_mb
+            ),
+            'simulation_real_time_factor_bounded': (
+                real_time_factor >= arguments.minimum_real_time_factor
+            ),
+            'no_critical_slam_logs': not self.critical_logs,
+        }
+
+        print('\nlarge-scale long-duration regression result')
+        print(
+            f'route        : {self.truth_distance:.1f} m, '
+            f'{self.route_sim_seconds:.1f} sim s / '
+            f'{self.route_wall_seconds:.1f} wall s, RTF={real_time_factor:.3f}'
+        )
+        print(
+            f'truth closure: {math.hypot(truth[0], truth[1]):.3f} m / '
+            f'{math.degrees(abs(truth[2])):.3f} deg'
+        )
+        print(
+            f'wheel error  : {wheel_translation_error:.3f} m / '
+            f'{math.degrees(wheel_yaw_error):.3f} deg'
+        )
+        print(
+            f'matcher      : final={final_translation_error:.3f} m / '
+            f'{math.degrees(final_yaw_error):.3f} deg, '
+            f'peak={self.maximum_translation_error:.3f} m / '
+            f'{math.degrees(self.maximum_yaw_error):.3f} deg'
+        )
+        print(
+            f'graph        : nodes={self.maximum_pose_graph_nodes}, '
+            f'loops={len(self.loop_closures)}, rebuilds={len(self.map_rebuilds)}, '
+            f'path peaks={self.maximum_pose_graph_path_poses}/'
+            f'{self.maximum_laser_path_poses}'
+        )
+        print(
+            f'latency      : front gap={self.maximum_matcher_gap:.3f} s, '
+            f'loop worker={maximum_worker_ms:.1f} ms, '
+            f'map rebuild={maximum_rebuild_ms:.1f} ms'
+        )
+        average_cpu_text = 'n/a' if average_cpu is None else f'{average_cpu:.1f}%'
+        print(
+            f'process      : PID={self.process_pid}, samples={self.process_samples}, '
+            f'CPU avg/peak={average_cpu_text}/'
+            f'{self.maximum_process_cpu_percent:.1f}%, '
+            f'RSS initial/peak/final={self.initial_rss_mb:.1f}/'
+            f'{self.peak_rss_mb:.1f}/{self.latest_rss_mb:.1f} MiB'
+        )
+        print(
+            f'map          : {map_width:.2f} x {map_height:.2f} m, '
+            f'messages={self.map_messages}, rejections='
+            f'{self.match_rejection_warnings}'
+        )
+        for name, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
+        if self.critical_logs:
+            print('critical SLAM logs:')
+            for message in self.critical_logs:
+                print(f'  - {message}')
+        return all(checks.values())
+
+    def run(self, arguments):
+        self.wait_for_inputs(arguments.startup_timeout)
+        self.wait_for_process_metrics(arguments.startup_timeout)
+        self.settle(arguments.initial_settle_time)
+        self.starts = dict(self.poses)
+        self.matcher_stamp = None
+        self.maximum_matcher_gap = 0.0
+        self.previous_truth_pose = self.poses['truth']
+        self.reset_process_metrics()
+        self.measuring = True
+
+        route = self.build_route(arguments.laps)
+        print(
+            f'starting large warehouse route: laps={arguments.laps}, '
+            f'waypoints={len(route)}, expected distance about '
+            f'{10.0 + arguments.laps * 68.0 + 10.0:.1f} m',
+            flush=True,
+        )
+        sim_started = self.simulation_time()
+        wall_started = time.monotonic()
+        for index, point in enumerate(route, start=1):
+            self.drive_to_route_point(
+                point,
+                arguments,
+                f'waypoint {index}/{len(route)}',
+            )
+        self.rotate_to_yaw(
+            self.starts['truth'][2],
+            arguments,
+            'final heading closure',
+        )
+        self.route_sim_seconds = self.simulation_time() - sim_started
+        self.route_wall_seconds = time.monotonic() - wall_started
+        self.settle(arguments.final_settle_time)
+        self.measuring = False
+        passed = self.evaluate(arguments, route)
+        print(
+            f"\nlarge-scale regression: {'PASS' if passed else 'FAIL'}"
+        )
+        return passed
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description='Run the custom-SLAM large-scale long-duration regression.'
+    )
+    parser.add_argument('--laps', type=int, default=2)
+    parser.add_argument('--linear-speed', type=float, default=0.35)
+    parser.add_argument('--minimum-linear-speed', type=float, default=0.10)
+    parser.add_argument('--angular-speed', type=float, default=0.50)
+    parser.add_argument('--minimum-angular-speed', type=float, default=0.12)
+    parser.add_argument('--heading-control-gain', type=float, default=2.0)
+    parser.add_argument('--maximum-heading-correction', type=float, default=0.25)
+    parser.add_argument('--position-tolerance', type=float, default=0.08)
+    parser.add_argument('--yaw-tolerance', type=float, default=0.02)
+    parser.add_argument('--turn-timeout', type=float, default=45.0)
+    parser.add_argument('--initial-settle-time', type=float, default=2.0)
+    parser.add_argument('--final-settle-time', type=float, default=20.0)
+    parser.add_argument('--startup-timeout', type=float, default=20.0)
+    parser.add_argument('--report-interval', type=float, default=5.0)
+    parser.add_argument('--minimum-route-distance', type=float, default=150.0)
+    parser.add_argument('--maximum-truth-closure-error', type=float, default=0.20)
+    parser.add_argument('--maximum-truth-yaw-error-degrees', type=float, default=2.0)
+    parser.add_argument('--maximum-wheel-translation-error', type=float, default=1.0)
+    parser.add_argument('--maximum-wheel-yaw-error-degrees', type=float, default=12.0)
+    parser.add_argument('--maximum-translation-error', type=float, default=0.60)
+    parser.add_argument('--maximum-yaw-error-degrees', type=float, default=4.0)
+    parser.add_argument('--maximum-final-translation-error', type=float, default=0.20)
+    parser.add_argument('--maximum-final-yaw-error-degrees', type=float, default=2.0)
+    parser.add_argument('--maximum-matcher-gap', type=float, default=0.35)
+    parser.add_argument('--maximum-match-rejections', type=int, default=10)
+    parser.add_argument('--minimum-loop-closures', type=int, default=8)
+    parser.add_argument('--minimum-map-rebuilds', type=int, default=8)
+    parser.add_argument('--maximum-loop-worker-ms', type=float, default=5000.0)
+    parser.add_argument('--maximum-map-rebuild-ms', type=float, default=20000.0)
+    parser.add_argument('--minimum-keyframes', type=int, default=2200)
+    parser.add_argument('--minimum-pose-graph-path-poses', type=int, default=2000)
+    parser.add_argument('--pose-graph-path-limit', type=int, default=2000)
+    parser.add_argument('--laser-path-limit', type=int, default=5000)
+    parser.add_argument('--minimum-map-width', type=float, default=25.0)
+    parser.add_argument('--minimum-map-height', type=float, default=19.0)
+    parser.add_argument('--minimum-map-messages', type=int, default=300)
+    parser.add_argument('--minimum-error-samples', type=int, default=4000)
+    parser.add_argument('--minimum-process-samples', type=int, default=300)
+    parser.add_argument('--maximum-average-cpu-percent', type=float, default=85.0)
+    parser.add_argument('--maximum-peak-cpu-percent', type=float, default=180.0)
+    parser.add_argument('--maximum-peak-rss-mb', type=float, default=512.0)
+    parser.add_argument('--maximum-rss-growth-mb', type=float, default=384.0)
+    parser.add_argument('--minimum-real-time-factor', type=float, default=0.75)
+    arguments, ros_arguments = parser.parse_known_args()
+    if ros_arguments:
+        sys.argv = [sys.argv[0], *ros_arguments]
+
+    positive_values = (
+        arguments.linear_speed,
+        arguments.minimum_linear_speed,
+        arguments.angular_speed,
+        arguments.minimum_angular_speed,
+        arguments.heading_control_gain,
+        arguments.maximum_heading_correction,
+        arguments.position_tolerance,
+        arguments.yaw_tolerance,
+        arguments.turn_timeout,
+        arguments.startup_timeout,
+        arguments.report_interval,
+        arguments.minimum_route_distance,
+        arguments.maximum_truth_closure_error,
+        arguments.maximum_truth_yaw_error_degrees,
+        arguments.maximum_wheel_translation_error,
+        arguments.maximum_wheel_yaw_error_degrees,
+        arguments.maximum_translation_error,
+        arguments.maximum_yaw_error_degrees,
+        arguments.maximum_final_translation_error,
+        arguments.maximum_final_yaw_error_degrees,
+        arguments.maximum_matcher_gap,
+        arguments.maximum_loop_worker_ms,
+        arguments.maximum_map_rebuild_ms,
+        arguments.minimum_map_width,
+        arguments.minimum_map_height,
+        arguments.maximum_average_cpu_percent,
+        arguments.maximum_peak_cpu_percent,
+        arguments.maximum_peak_rss_mb,
+        arguments.maximum_rss_growth_mb,
+        arguments.minimum_real_time_factor,
+    )
+    integer_values = (
+        arguments.laps,
+        arguments.minimum_loop_closures,
+        arguments.minimum_map_rebuilds,
+        arguments.minimum_keyframes,
+        arguments.minimum_pose_graph_path_poses,
+        arguments.pose_graph_path_limit,
+        arguments.laser_path_limit,
+        arguments.minimum_map_messages,
+        arguments.minimum_error_samples,
+        arguments.minimum_process_samples,
+    )
+    if (
+        any(not math.isfinite(value) or value <= 0.0 for value in positive_values)
+        or any(value < 1 for value in integer_values)
+        or arguments.initial_settle_time < 0.0
+        or arguments.final_settle_time < 0.0
+        or arguments.maximum_match_rejections < 0
+        or arguments.minimum_linear_speed > arguments.linear_speed
+        or arguments.minimum_angular_speed > arguments.angular_speed
+        or arguments.minimum_pose_graph_path_poses
+        > arguments.pose_graph_path_limit
+        or arguments.minimum_real_time_factor > 1.5
+    ):
+        parser.error('Route values and regression thresholds must be valid')
+    return arguments
+
+
+def main():
+    arguments = parse_arguments()
+    rclpy.init()
+    node = LargeScaleRegression()
+    exit_code = 1
+    try:
+        exit_code = 0 if node.run(arguments) else 1
+    except (KeyboardInterrupt, RuntimeError) as error:
+        print(f'large-scale regression failed: {error}', file=sys.stderr)
+    finally:
+        node.publish_command(0.0)
+        node.destroy_node()
+        rclpy.shutdown()
+    raise SystemExit(exit_code)
+
+
+if __name__ == '__main__':
+    main()

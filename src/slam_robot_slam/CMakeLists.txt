@@ -207,6 +207,7 @@ ament_export_dependencies(Ceres sensor_msgs)
 install(
   PROGRAMS
     scripts/corridor_regression
+    scripts/large_scale_regression
     scripts/loop_closure_regression
     scripts/repeated_structure_regression
     scripts/rotation_regression

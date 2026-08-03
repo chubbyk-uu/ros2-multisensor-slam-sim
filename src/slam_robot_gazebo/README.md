@@ -28,6 +28,11 @@ ros2 launch slam_robot_gazebo simulation.launch.py gui:=false
 往返路线使用；该场景通过 `repeated_structure_slam_regression.launch.py`
 验证相似地点不会触发假回环，同时真正返回后仍能建立闭环。
 
+`worlds/large_warehouse.sdf` 是约 `26 × 20 m` 的非对称仓储场景，外围
+留有 3 m 宽的矩形回归路线，内部布置错列货架、立柱和独特锚点。通过
+`large_scale_slam_regression.launch.py` 可执行两圈约 155 m 的长时间
+回归，验证关键帧、Path、回环重建和资源占用随运行时间增长时的稳定性。
+
 `/ground_truth/odom` 由 Gazebo OdometryPublisher 根据世界位姿生成，父坐标系为 `world`，子坐标系为 `base_footprint`。它只用于算法误差评估，不能作为 SLAM 或导航输入。
 
 默认会打开 RViz；仅运行 Gazebo 时可传入 `rviz:=false`。

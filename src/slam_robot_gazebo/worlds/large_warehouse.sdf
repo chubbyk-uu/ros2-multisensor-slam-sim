@@ -1,0 +1,142 @@
+<?xml version="1.0"?>
+<sdf version="1.10">
+  <world name="slam_world">
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <gravity>0 0 -9.81</gravity>
+
+    <scene>
+      <ambient>0.45 0.45 0.45 1</ambient>
+      <background>0.75 0.80 0.85 1</background>
+      <shadows>false</shadows>
+      <grid>true</grid>
+    </scene>
+
+    <light name="sun" type="directional">
+      <cast_shadows>false</cast_shadows>
+      <pose>12 -4 16 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.4 0.2 -1.0</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="ground_link">
+        <collision name="ground_collision">
+          <pose>0 0 -0.05 0 0 0</pose>
+          <geometry><box><size>32 26 0.10</size></box></geometry>
+        </collision>
+        <visual name="ground_visual">
+          <pose>0 0 -0.05 0 0 0</pose>
+          <geometry><box><size>32 26 0.10</size></box></geometry>
+          <material>
+            <ambient>0.66 0.68 0.70 1</ambient>
+            <diffuse>0.66 0.68 0.70 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!--
+      The regression route starts at the origin, reaches x=10, and then
+      follows the rectangle bounded by x=+-10 and y=+-7. Shelves and columns
+      are intentionally asymmetric while leaving a three-metre perimeter
+      aisle. Two laps exercise thousands of keyframes and repeated closures.
+    -->
+    <model name="warehouse_shell">
+      <static>true</static>
+      <link name="shell_link">
+        <collision name="north_wall_collision"><pose>0 10 0.75 0 0 0</pose><geometry><box><size>26 0.20 1.50</size></box></geometry></collision>
+        <visual name="north_wall_visual"><pose>0 10 0.75 0 0 0</pose><geometry><box><size>26 0.20 1.50</size></box></geometry></visual>
+        <collision name="south_wall_collision"><pose>0 -10 0.75 0 0 0</pose><geometry><box><size>26 0.20 1.50</size></box></geometry></collision>
+        <visual name="south_wall_visual"><pose>0 -10 0.75 0 0 0</pose><geometry><box><size>26 0.20 1.50</size></box></geometry></visual>
+        <collision name="east_wall_collision"><pose>13 0 0.75 0 0 0</pose><geometry><box><size>0.20 20.2 1.50</size></box></geometry></collision>
+        <visual name="east_wall_visual"><pose>13 0 0.75 0 0 0</pose><geometry><box><size>0.20 20.2 1.50</size></box></geometry></visual>
+        <collision name="west_wall_collision"><pose>-13 0 0.75 0 0 0</pose><geometry><box><size>0.20 20.2 1.50</size></box></geometry></collision>
+        <visual name="west_wall_visual"><pose>-13 0 0.75 0 0 0</pose><geometry><box><size>0.20 20.2 1.50</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <model name="warehouse_features">
+      <static>true</static>
+      <link name="features_link">
+        <!-- Staggered shelf rows keep the central eastbound aisle clear. -->
+        <collision name="rack_nw_collision"><pose>-7.2 3.2 0.65 0 0 0.08</pose><geometry><box><size>3.6 0.65 1.30</size></box></geometry></collision>
+        <visual name="rack_nw_visual"><pose>-7.2 3.2 0.65 0 0 0.08</pose><geometry><box><size>3.6 0.65 1.30</size></box></geometry></visual>
+        <collision name="rack_nc_collision"><pose>-1.8 3.7 0.65 0 0 -0.06</pose><geometry><box><size>3.2 0.65 1.30</size></box></geometry></collision>
+        <visual name="rack_nc_visual"><pose>-1.8 3.7 0.65 0 0 -0.06</pose><geometry><box><size>3.2 0.65 1.30</size></box></geometry></visual>
+        <collision name="rack_ne_collision"><pose>4.6 3.0 0.65 0 0 0.12</pose><geometry><box><size>4.0 0.65 1.30</size></box></geometry></collision>
+        <visual name="rack_ne_visual"><pose>4.6 3.0 0.65 0 0 0.12</pose><geometry><box><size>4.0 0.65 1.30</size></box></geometry></visual>
+        <collision name="rack_sw_collision"><pose>-6.0 -3.5 0.65 0 0 -0.10</pose><geometry><box><size>4.4 0.65 1.30</size></box></geometry></collision>
+        <visual name="rack_sw_visual"><pose>-6.0 -3.5 0.65 0 0 -0.10</pose><geometry><box><size>4.4 0.65 1.30</size></box></geometry></visual>
+        <collision name="rack_sc_collision"><pose>0.4 -3.0 0.65 0 0 0.05</pose><geometry><box><size>3.0 0.65 1.30</size></box></geometry></collision>
+        <visual name="rack_sc_visual"><pose>0.4 -3.0 0.65 0 0 0.05</pose><geometry><box><size>3.0 0.65 1.30</size></box></geometry></visual>
+        <collision name="rack_se_collision"><pose>6.3 -3.8 0.65 0 0 -0.08</pose><geometry><box><size>3.5 0.65 1.30</size></box></geometry></collision>
+        <visual name="rack_se_visual"><pose>6.3 -3.8 0.65 0 0 -0.08</pose><geometry><box><size>3.5 0.65 1.30</size></box></geometry></visual>
+
+        <!-- Unequal columns and boxes break rotational and translational symmetry. -->
+        <collision name="column_nw_collision"><pose>-11.3 5.2 0.60 0 0 0</pose><geometry><cylinder><radius>0.30</radius><length>1.20</length></cylinder></geometry></collision>
+        <visual name="column_nw_visual"><pose>-11.3 5.2 0.60 0 0 0</pose><geometry><cylinder><radius>0.30</radius><length>1.20</length></cylinder></geometry></visual>
+        <collision name="column_ne_collision"><pose>8.1 5.1 0.55 0 0 0</pose><geometry><cylinder><radius>0.24</radius><length>1.10</length></cylinder></geometry></collision>
+        <visual name="column_ne_visual"><pose>8.1 5.1 0.55 0 0 0</pose><geometry><cylinder><radius>0.24</radius><length>1.10</length></cylinder></geometry></visual>
+        <collision name="column_sw_collision"><pose>-8.4 -5.2 0.70 0 0 0</pose><geometry><cylinder><radius>0.38</radius><length>1.40</length></cylinder></geometry></collision>
+        <visual name="column_sw_visual"><pose>-8.4 -5.2 0.70 0 0 0</pose><geometry><cylinder><radius>0.38</radius><length>1.40</length></cylinder></geometry></visual>
+        <collision name="column_se_collision"><pose>11.3 -4.8 0.60 0 0 0</pose><geometry><cylinder><radius>0.28</radius><length>1.20</length></cylinder></geometry></collision>
+        <visual name="column_se_visual"><pose>11.3 -4.8 0.60 0 0 0</pose><geometry><cylinder><radius>0.28</radius><length>1.20</length></cylinder></geometry></visual>
+        <collision name="box_west_collision"><pose>-11.5 -1.8 0.55 0 0 0.32</pose><geometry><box><size>1.1 0.7 1.1</size></box></geometry></collision>
+        <visual name="box_west_visual"><pose>-11.5 -1.8 0.55 0 0 0.32</pose><geometry><box><size>1.1 0.7 1.1</size></box></geometry></visual>
+        <collision name="box_east_collision"><pose>11.5 2.0 0.45 0 0 -0.22</pose><geometry><box><size>0.8 1.2 0.9</size></box></geometry></collision>
+        <visual name="box_east_visual"><pose>11.5 2.0 0.45 0 0 -0.22</pose><geometry><box><size>0.8 1.2 0.9</size></box></geometry></visual>
+        <collision name="triangle_anchor_collision"><pose>2.5 5.2 0.50 0 0 0.45</pose><geometry><box><size>1.8 0.35 1.0</size></box></geometry></collision>
+        <visual name="triangle_anchor_visual"><pose>2.5 5.2 0.50 0 0 0.45</pose><geometry><box><size>1.8 0.35 1.0</size></box></geometry></visual>
+        <collision name="south_anchor_collision"><pose>-2.8 -5.2 0.45 0 0 -0.35</pose><geometry><box><size>0.5 1.5 0.9</size></box></geometry></collision>
+        <visual name="south_anchor_visual"><pose>-2.8 -5.2 0.45 0 0 -0.35</pose><geometry><box><size>0.5 1.5 0.9</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <gui fullscreen="false">
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="state" type="string">docked</property>
+        </gz-gui>
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.4 0.4 0.4</ambient_light>
+        <background_color>0.75 0.80 0.85</background_color>
+        <camera_pose>18 -24 24 0 0.62 2.25</camera_pose>
+        <camera_clip><near>0.10</near><far>1000</far></camera_clip>
+      </plugin>
+      <plugin filename="GzSceneManager" name="Scene Manager"/>
+      <plugin filename="WorldControl" name="World control">
+        <gz-gui>
+          <title>World control</title>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="state" type="string">docked</property>
+        </gz-gui>
+        <play_pause>true</play_pause>
+        <step>true</step>
+        <start_paused>false</start_paused>
+      </plugin>
+    </gui>
+  </world>
+</sdf>
