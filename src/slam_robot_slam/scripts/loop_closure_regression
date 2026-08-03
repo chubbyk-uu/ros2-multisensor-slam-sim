@@ -8,6 +8,7 @@ import re
 import sys
 import time
 
+from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rcl_interfaces.msg import Log
@@ -36,6 +37,7 @@ CRITICAL_LOG_FRAGMENTS = (
     "Loop closure worker failed",
     "Rejected LaserScan after processing error",
 )
+MATCHER_DIAGNOSTIC_NAME = 'scan_matcher_odometry/front_end_matcher'
 
 
 def yaw_from_quaternion(orientation):
@@ -96,6 +98,9 @@ class LoopClosureRegression(Node):
         self.loop_closures = []
         self.map_rebuilds = []
         self.critical_logs = []
+        self.match_attempts = 0
+        self.degenerate_events = 0
+        self.malformed_diagnostics = 0
         self.publisher = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_subscription(
             Odometry,
@@ -114,6 +119,12 @@ class LoopClosureRegression(Node):
             "/custom_slam/laser_odom",
             self.matcher_callback,
             20,
+        )
+        self.create_subscription(
+            DiagnosticArray,
+            '/custom_slam/matcher_diagnostics',
+            self.matcher_diagnostics_callback,
+            100,
         )
         self.create_subscription(
             OccupancyGrid,
@@ -141,6 +152,23 @@ class LoopClosureRegression(Node):
                 stamp - self.matcher_stamp,
             )
         self.matcher_stamp = stamp
+
+    def matcher_diagnostics_callback(self, message):
+        for status in message.status:
+            if (
+                status.name != MATCHER_DIAGNOSTIC_NAME
+                or not status.message.startswith('match_')
+            ):
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            try:
+                rank = int(values['translation_observable_rank'])
+            except (KeyError, ValueError):
+                self.malformed_diagnostics += 1
+                continue
+            self.match_attempts += 1
+            if rank < 2:
+                self.degenerate_events += 1
 
     def map_callback(self, message):
         self.map_messages += 1
@@ -292,6 +320,11 @@ class LoopClosureRegression(Node):
                 <= math.radians(arguments.maximum_yaw_error_degrees)
             ),
             "no_critical_slam_logs": not self.critical_logs,
+            "normal_matches_observed": self.match_attempts > 0,
+            "no_false_degeneracy": self.degenerate_events == 0,
+            "matcher_diagnostics_well_formed": (
+                self.malformed_diagnostics == 0
+            ),
         }
 
         print("\nlong loop-closure regression")
@@ -316,6 +349,11 @@ class LoopClosureRegression(Node):
         )
         print(
             f"front-end gap: maximum={self.maximum_matcher_gap:.3f} s"
+        )
+        print(
+            f"observability: matches={self.match_attempts} "
+            f"degenerate={self.degenerate_events} "
+            f"malformed={self.malformed_diagnostics}"
         )
         for name, passed in checks.items():
             print(f"  [{'PASS' if passed else 'FAIL'}] {name}")

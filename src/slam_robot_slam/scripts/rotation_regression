@@ -7,6 +7,7 @@ import math
 import sys
 import time
 
+from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rcl_interfaces.msg import Log
@@ -28,6 +29,7 @@ CRITICAL_LOG_FRAGMENTS = (
     'Loop closure worker failed',
     'Rejected LaserScan after processing error',
 )
+MATCHER_DIAGNOSTIC_NAME = 'scan_matcher_odometry/front_end_matcher'
 
 
 def yaw_from_quaternion(orientation):
@@ -98,6 +100,9 @@ class RotationRegression(Node):
         self.loop_closures = 0
         self.match_rejection_warnings = 0
         self.critical_logs = []
+        self.match_attempts = 0
+        self.degenerate_events = 0
+        self.malformed_diagnostics = 0
         self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
         self.create_subscription(
             Odometry,
@@ -116,6 +121,12 @@ class RotationRegression(Node):
             '/custom_slam/laser_odom',
             self.matcher_callback,
             20,
+        )
+        self.create_subscription(
+            DiagnosticArray,
+            '/custom_slam/matcher_diagnostics',
+            self.matcher_diagnostics_callback,
+            100,
         )
         map_qos = QoSProfile(
             depth=1,
@@ -148,6 +159,23 @@ class RotationRegression(Node):
                 stamp - self.matcher_stamp,
             )
         self.matcher_stamp = stamp
+
+    def matcher_diagnostics_callback(self, message):
+        for status in message.status:
+            if (
+                status.name != MATCHER_DIAGNOSTIC_NAME
+                or not status.message.startswith('match_')
+            ):
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            try:
+                rank = int(values['translation_observable_rank'])
+            except (KeyError, ValueError):
+                self.malformed_diagnostics += 1
+                continue
+            self.match_attempts += 1
+            if rank < 2:
+                self.degenerate_events += 1
 
     def map_callback(self, message):
         self.latest_map = map_statistics(message)
@@ -216,6 +244,9 @@ class RotationRegression(Node):
         nodes_before,
         loops_before,
         rejections_before,
+        matches_before,
+        degeneracy_before,
+        malformed_before,
         arguments,
     ):
         motions = {
@@ -250,6 +281,13 @@ class RotationRegression(Node):
             self.match_rejection_warnings - rejections_before
         )
         stage_nodes = self.maximum_pose_graph_nodes - nodes_before
+        stage_matches = self.match_attempts - matches_before
+        stage_degenerate_events = (
+            self.degenerate_events - degeneracy_before
+        )
+        stage_malformed_diagnostics = (
+            self.malformed_diagnostics - malformed_before
+        )
 
         checks = {
             'translation_drift_bounded': (
@@ -277,6 +315,11 @@ class RotationRegression(Node):
                 stage_nodes >= arguments.minimum_keyframes_per_stage
             ),
             'no_critical_slam_logs': not self.critical_logs,
+            'normal_matches_observed': stage_matches > 0,
+            'no_false_degeneracy': stage_degenerate_events == 0,
+            'matcher_diagnostics_well_formed': (
+                stage_malformed_diagnostics == 0
+            ),
         }
 
         print(f'\nrotation stage {speed:.2f} rad/s')
@@ -302,6 +345,11 @@ class RotationRegression(Node):
             f'keyframes={stage_nodes}, '
             f'rejections={stage_rejections}, loops={stage_loops}'
         )
+        print(
+            f'observability : matches={stage_matches}, '
+            f'degenerate={stage_degenerate_events}, '
+            f'malformed={stage_malformed_diagnostics}'
+        )
         for name, passed in checks.items():
             print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
         return {
@@ -315,6 +363,8 @@ class RotationRegression(Node):
             'keyframes': stage_nodes,
             'rejections': stage_rejections,
             'loops': stage_loops,
+            'matches': stage_matches,
+            'degenerate_events': stage_degenerate_events,
         }
 
     def run_stage(self, speed, arguments):
@@ -323,6 +373,9 @@ class RotationRegression(Node):
         nodes_before = self.maximum_pose_graph_nodes
         loops_before = self.loop_closures
         rejections_before = self.match_rejection_warnings
+        matches_before = self.match_attempts
+        degeneracy_before = self.degenerate_events
+        malformed_before = self.malformed_diagnostics
         self.maximum_matcher_gap = 0.0
         self.matcher_stamp = None
         duration = (
@@ -343,6 +396,9 @@ class RotationRegression(Node):
             nodes_before,
             loops_before,
             rejections_before,
+            matches_before,
+            degeneracy_before,
+            malformed_before,
             arguments,
         )
 
@@ -369,6 +425,9 @@ class RotationRegression(Node):
         warmup_passed = (
             self.loop_closures == 0
             and self.match_rejection_warnings == 0
+            and self.match_attempts > 0
+            and self.degenerate_events == 0
+            and self.malformed_diagnostics == 0
             and not self.critical_logs
         )
         print(
@@ -376,6 +435,9 @@ class RotationRegression(Node):
             f"{'PASS' if warmup_passed else 'FAIL'} "
             f'(rejections={self.match_rejection_warnings}, '
             f'loops={self.loop_closures}, '
+            f'matches={self.match_attempts}, '
+            f'degenerate={self.degenerate_events}, '
+            f'malformed={self.malformed_diagnostics}, '
             f'critical_logs={len(self.critical_logs)})'
         )
         results = [
