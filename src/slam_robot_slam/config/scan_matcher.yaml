@@ -18,6 +18,7 @@ scan_matcher_odometry:
     output:
       pose_translation_stddev: 0.05
       pose_rotation_stddev: 0.05
+      degenerate_translation_stddev: 0.30
     minimum_translation_for_update: 0.05
     minimum_rotation_for_update: 0.05
     maximum_local_keyframes: 20
@@ -86,6 +87,11 @@ scan_matcher_odometry:
       fine_angular_resolution: 0.005
       translation_penalty_weight: 0.10
       rotation_penalty_weight: 0.10
+      degeneracy:
+        enabled: true
+        minimum_translation_information: 1.0
+        minimum_information_ratio: 0.05
+        weak_direction_correction_scale: 0.0
       minimum_score: 0.35
       minimum_support_fraction: 0.25
       minimum_matched_points: 40

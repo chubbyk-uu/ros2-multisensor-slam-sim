@@ -23,6 +23,10 @@ struct CorrelativeScanMatcherParameters
   double fine_angular_resolution{0.005};
   double translation_penalty_weight{0.10};
   double rotation_penalty_weight{0.10};
+  bool degeneracy_handling_enabled{false};
+  double minimum_translation_information{1.0};
+  double minimum_translation_information_ratio{0.05};
+  double weak_direction_correction_scale{0.0};
   double minimum_score{0.35};
   double minimum_support_fraction{0.25};
   std::size_t minimum_matched_points{40U};
@@ -37,6 +41,11 @@ struct CorrelativeScanMatcherResult
   std::size_t supported_points{0U};
   double support_fraction{0.0};
   std::size_t evaluated_candidates{0U};
+  std::size_t translation_observable_rank{2U};
+  double minimum_translation_information{0.0};
+  double maximum_translation_information{0.0};
+  double translation_information_ratio{1.0};
+  Point2D weak_translation_direction{1.0F, 0.0F};
 };
 
 void validateCorrelativeScanMatcherParameters(

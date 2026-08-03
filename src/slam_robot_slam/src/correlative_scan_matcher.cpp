@@ -156,8 +156,18 @@ struct CandidateScore
 {
   Pose2D pose;
   double score{-std::numeric_limits<double>::infinity()};
+  double raw_score{0.0};
   std::size_t matched_points{0U};
   std::size_t supported_points{0U};
+};
+
+struct TranslationObservability
+{
+  std::size_t rank{2U};
+  double minimum_information{0.0};
+  double maximum_information{0.0};
+  double information_ratio{1.0};
+  Point2D weak_direction{1.0F, 0.0F};
 };
 
 CandidateScore scoreCandidate(
@@ -213,8 +223,120 @@ CandidateScore scoreCandidate(
   return CandidateScore{
     candidate,
     raw_score * penalty,
+    raw_score,
     matched_points,
     supported_points};
+}
+
+TranslationObservability estimateTranslationObservability(
+  const CorrelationGrid & grid,
+  const std::vector<Point2D> & current_points,
+  const Pose2D & pose,
+  const Pose2D & predicted_pose,
+  const CorrelativeScanMatcherParameters & parameters)
+{
+  const double step = parameters.grid_resolution;
+  const auto rawScoreAt =
+    [&grid, &current_points, &predicted_pose, &parameters](
+    const Pose2D & candidate) {
+      return scoreCandidate(
+        grid,
+        current_points,
+        candidate,
+        predicted_pose,
+        parameters).raw_score;
+    };
+  const double center = rawScoreAt(pose);
+  const double positive_x = rawScoreAt(
+    Pose2D{pose.x + step, pose.y, pose.yaw});
+  const double negative_x = rawScoreAt(
+    Pose2D{pose.x - step, pose.y, pose.yaw});
+  const double positive_y = rawScoreAt(
+    Pose2D{pose.x, pose.y + step, pose.yaw});
+  const double negative_y = rawScoreAt(
+    Pose2D{pose.x, pose.y - step, pose.yaw});
+  const double positive_x_positive_y = rawScoreAt(
+    Pose2D{pose.x + step, pose.y + step, pose.yaw});
+  const double positive_x_negative_y = rawScoreAt(
+    Pose2D{pose.x + step, pose.y - step, pose.yaw});
+  const double negative_x_positive_y = rawScoreAt(
+    Pose2D{pose.x - step, pose.y + step, pose.yaw});
+  const double negative_x_negative_y = rawScoreAt(
+    Pose2D{pose.x - step, pose.y - step, pose.yaw});
+
+  const double inverse_step_squared = 1.0 / (step * step);
+  const double information_xx = std::max(
+    0.0,
+    (2.0 * center - positive_x - negative_x) *
+    inverse_step_squared);
+  const double information_yy = std::max(
+    0.0,
+    (2.0 * center - positive_y - negative_y) *
+    inverse_step_squared);
+  const double information_xy = -(
+    positive_x_positive_y - positive_x_negative_y -
+    negative_x_positive_y + negative_x_negative_y) *
+    0.25 * inverse_step_squared;
+
+  const double trace = information_xx + information_yy;
+  const double difference = information_xx - information_yy;
+  const double discriminant = std::hypot(difference, 2.0 * information_xy);
+  const double maximum_information = std::max(0.0, 0.5 * (trace + discriminant));
+  const double minimum_information = std::max(0.0, 0.5 * (trace - discriminant));
+  const double maximum_direction_angle =
+    0.5 * std::atan2(2.0 * information_xy, difference);
+  const Point2D weak_direction{
+    static_cast<float>(-std::sin(maximum_direction_angle)),
+    static_cast<float>(std::cos(maximum_direction_angle))};
+  const double information_ratio =
+    maximum_information > std::numeric_limits<double>::epsilon() ?
+    minimum_information / maximum_information : 0.0;
+
+  std::size_t rank = 2U;
+  if (maximum_information < parameters.minimum_translation_information) {
+    rank = 0U;
+  } else if (
+    minimum_information < parameters.minimum_translation_information ||
+    information_ratio < parameters.minimum_translation_information_ratio)
+  {
+    rank = 1U;
+  }
+  return TranslationObservability{
+    rank,
+    minimum_information,
+    maximum_information,
+    information_ratio,
+    weak_direction};
+}
+
+Pose2D filterDegenerateTranslation(
+  const Pose2D & matched_pose,
+  const Pose2D & predicted_pose,
+  const TranslationObservability & observability,
+  const double weak_direction_correction_scale)
+{
+  if (observability.rank >= 2U) {
+    return matched_pose;
+  }
+  if (observability.rank == 0U) {
+    return Pose2D{
+      predicted_pose.x,
+      predicted_pose.y,
+      matched_pose.yaw};
+  }
+
+  const double correction_x = matched_pose.x - predicted_pose.x;
+  const double correction_y = matched_pose.y - predicted_pose.y;
+  const double weak_x = observability.weak_direction.x;
+  const double weak_y = observability.weak_direction.y;
+  const double weak_correction =
+    correction_x * weak_x + correction_y * weak_y;
+  const double removed_correction =
+    (1.0 - weak_direction_correction_scale) * weak_correction;
+  return Pose2D{
+    matched_pose.x - removed_correction * weak_x,
+    matched_pose.y - removed_correction * weak_y,
+    matched_pose.yaw};
 }
 
 CandidateScore searchWindow(
@@ -275,6 +397,9 @@ void validateCorrelativeScanMatcherParameters(
     !std::isfinite(parameters.fine_angular_resolution) ||
     !std::isfinite(parameters.translation_penalty_weight) ||
     !std::isfinite(parameters.rotation_penalty_weight) ||
+    !std::isfinite(parameters.minimum_translation_information) ||
+    !std::isfinite(parameters.minimum_translation_information_ratio) ||
+    !std::isfinite(parameters.weak_direction_correction_scale) ||
     !std::isfinite(parameters.minimum_score) ||
     !std::isfinite(parameters.minimum_support_fraction) ||
     parameters.grid_resolution <= 0.0 ||
@@ -289,6 +414,11 @@ void validateCorrelativeScanMatcherParameters(
     parameters.fine_angular_resolution <= 0.0 ||
     parameters.translation_penalty_weight < 0.0 ||
     parameters.rotation_penalty_weight < 0.0 ||
+    parameters.minimum_translation_information < 0.0 ||
+    parameters.minimum_translation_information_ratio < 0.0 ||
+    parameters.minimum_translation_information_ratio > 1.0 ||
+    parameters.weak_direction_correction_scale < 0.0 ||
+    parameters.weak_direction_correction_scale > 1.0 ||
     parameters.minimum_score < 0.0 ||
     parameters.minimum_score > 1.0 ||
     parameters.minimum_support_fraction <= 0.0 ||
@@ -357,6 +487,28 @@ CorrelativeScanMatcherResult matchCorrelative(
     parameters,
     result.evaluated_candidates);
 
+  const TranslationObservability observability =
+    estimateTranslationObservability(
+    grid,
+    current_points,
+    best.pose,
+    predicted_pose,
+    parameters);
+  if (parameters.degeneracy_handling_enabled &&
+    observability.rank < 2U)
+  {
+    best = scoreCandidate(
+      grid,
+      current_points,
+      filterDegenerateTranslation(
+        best.pose,
+        predicted_pose,
+        observability,
+        parameters.weak_direction_correction_scale),
+      predicted_pose,
+      parameters);
+  }
+
   result.pose = best.pose;
   result.score = best.score;
   result.matched_points = best.matched_points;
@@ -364,6 +516,13 @@ CorrelativeScanMatcherResult matchCorrelative(
   result.support_fraction =
     static_cast<double>(best.supported_points) /
     static_cast<double>(current_points.size());
+  result.translation_observable_rank = observability.rank;
+  result.minimum_translation_information =
+    observability.minimum_information;
+  result.maximum_translation_information =
+    observability.maximum_information;
+  result.translation_information_ratio = observability.information_ratio;
+  result.weak_translation_direction = observability.weak_direction;
   result.success =
     best.score >= parameters.minimum_score &&
     result.support_fraction >= parameters.minimum_support_fraction &&

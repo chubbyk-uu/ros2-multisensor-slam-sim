@@ -88,6 +88,8 @@ class CorridorRegression(Node):
         self.maximum_yaw_error = 0.0
         self.matcher_stamp = None
         self.maximum_matcher_gap = 0.0
+        self.degenerate_covariance_samples = 0
+        self.maximum_covariance_ratio = 1.0
         self.latest_map = None
         self.map_messages = 0
         self.maximum_pose_graph_nodes = 0
@@ -167,6 +169,23 @@ class CorridorRegression(Node):
             self.maximum_yaw_error,
             abs(normalize_angle(matcher[2] - truth[2])),
         )
+        covariance_xx = message.pose.covariance[0]
+        covariance_xy = message.pose.covariance[1]
+        covariance_yy = message.pose.covariance[7]
+        trace = covariance_xx + covariance_yy
+        discriminant = math.hypot(
+            covariance_xx - covariance_yy,
+            2.0 * covariance_xy,
+        )
+        maximum_variance = 0.5 * (trace + discriminant)
+        minimum_variance = 0.5 * (trace - discriminant)
+        covariance_ratio = maximum_variance / max(minimum_variance, 1.0e-12)
+        self.maximum_covariance_ratio = max(
+            self.maximum_covariance_ratio,
+            covariance_ratio,
+        )
+        if covariance_ratio >= self.arguments.minimum_covariance_ratio:
+            self.degenerate_covariance_samples += 1
         self.samples += 1
 
     def map_callback(self, message):
@@ -316,6 +335,10 @@ class CorridorRegression(Node):
             ),
             'no_critical_slam_logs': not self.critical_logs,
             'enough_error_samples': self.samples >= arguments.minimum_samples,
+            'degenerate_covariance_reported': (
+                self.degenerate_covariance_samples
+                >= arguments.minimum_degenerate_covariance_samples
+            ),
         }
 
         print('\ndegenerate corridor result')
@@ -349,6 +372,10 @@ class CorridorRegression(Node):
             f'loops={len(self.loop_closures)}'
         )
         print(
+            f'covariance  : max_ratio={self.maximum_covariance_ratio:.1f} '
+            f'degenerate_samples={self.degenerate_covariance_samples}'
+        )
+        print(
             f'map extent  : {map_width:.2f} x {map_height:.2f} m '
             f'({self.map_messages} messages)'
         )
@@ -357,6 +384,7 @@ class CorridorRegression(Node):
         return all(checks.values())
 
     def run(self, arguments):
+        self.arguments = arguments
         self.wait_for_inputs(arguments.startup_timeout)
         self.settle(arguments.initial_settle_time)
         self.starts = dict(self.poses)
@@ -398,7 +426,7 @@ def parse_arguments():
     parser.add_argument(
         '--maximum-longitudinal-drift',
         type=float,
-        default=1.0,
+        default=0.20,
     )
     parser.add_argument(
         '--maximum-final-lateral-error',
@@ -415,6 +443,12 @@ def parse_arguments():
     parser.add_argument('--minimum-map-length', type=float, default=28.0)
     parser.add_argument('--maximum-map-width', type=float, default=4.0)
     parser.add_argument('--minimum-samples', type=int, default=500)
+    parser.add_argument('--minimum-covariance-ratio', type=float, default=10.0)
+    parser.add_argument(
+        '--minimum-degenerate-covariance-samples',
+        type=int,
+        default=100,
+    )
     arguments, ros_arguments = parser.parse_known_args()
     if ros_arguments:
         sys.argv = [sys.argv[0], *ros_arguments]
@@ -431,6 +465,7 @@ def parse_arguments():
         arguments.maximum_final_yaw_error_degrees,
         arguments.minimum_map_length,
         arguments.maximum_map_width,
+        arguments.minimum_covariance_ratio,
     )
     if (
         any(not math.isfinite(value) or value <= 0.0 for value in numeric_values)
@@ -439,6 +474,8 @@ def parse_arguments():
         or arguments.maximum_match_rejections < 0
         or arguments.minimum_keyframes < 1
         or arguments.minimum_samples < 1
+        or arguments.minimum_covariance_ratio <= 1.0
+        or arguments.minimum_degenerate_covariance_samples < 1
     ):
         parser.error('Distances, speeds, timeouts and thresholds must be valid')
     return arguments

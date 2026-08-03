@@ -140,6 +140,9 @@ public:
     output_pose_rotation_stddev_ =
       declare_parameter<double>(
       "output.pose_rotation_stddev", 0.05);
+    output_degenerate_translation_stddev_ =
+      declare_parameter<double>(
+      "output.degenerate_translation_stddev", 0.30);
     minimum_translation_for_update_ =
       declare_parameter<double>("minimum_translation_for_update", 0.05);
     minimum_rotation_for_update_ =
@@ -253,6 +256,17 @@ public:
       declare_parameter<double>("matcher.translation_penalty_weight", 0.10);
     matcher_parameters_.rotation_penalty_weight =
       declare_parameter<double>("matcher.rotation_penalty_weight", 0.10);
+    matcher_parameters_.degeneracy_handling_enabled =
+      declare_parameter<bool>("matcher.degeneracy.enabled", true);
+    matcher_parameters_.minimum_translation_information =
+      declare_parameter<double>(
+      "matcher.degeneracy.minimum_translation_information", 1.0);
+    matcher_parameters_.minimum_translation_information_ratio =
+      declare_parameter<double>(
+      "matcher.degeneracy.minimum_information_ratio", 0.05);
+    matcher_parameters_.weak_direction_correction_scale =
+      declare_parameter<double>(
+      "matcher.degeneracy.weak_direction_correction_scale", 0.0);
     matcher_parameters_.minimum_score =
       declare_parameter<double>("matcher.minimum_score", 0.35);
     matcher_parameters_.minimum_support_fraction =
@@ -313,6 +327,9 @@ public:
       point_stride < 1 || !isFinitePositive(maximum_odom_age_) ||
       !isFinitePositive(output_pose_translation_stddev_) ||
       !isFinitePositive(output_pose_rotation_stddev_) ||
+      !isFinitePositive(output_degenerate_translation_stddev_) ||
+      output_degenerate_translation_stddev_ <
+      output_pose_translation_stddev_ ||
       !isFiniteNonNegative(minimum_translation_for_update_) ||
       !isFiniteNonNegative(minimum_rotation_for_update_) ||
       maximum_local_keyframes < 1 || maximum_path_poses_ < 1 ||
@@ -383,6 +400,7 @@ public:
       1.0 / sequential_rotation_stddev;
     loop_translation_weight_ = 1.0 / loop_translation_stddev;
     loop_rotation_weight_ = 1.0 / loop_rotation_stddev;
+    resetOutputPoseCovariance();
     occupancy_grid_map_ =
       std::make_unique<OccupancyGridMap>(map_parameters_);
 
@@ -734,6 +752,7 @@ private:
 
     if (result.success) {
       estimated_pose_ = result.pose;
+      updateOutputPoseCovariance(result);
       last_matched_pose_ = estimated_pose_;
       last_matched_odometry_pose_ = odometry_pose;
       addKeyframe(
@@ -749,12 +768,15 @@ private:
         *get_clock(),
         5000,
         "Correlative match score=%.3f points=%zu support=%.1f%% "
-        "candidates=%zu "
+        "candidates=%zu rank=%zu info=(%.2f, %.2f) "
         "correction=(%.4f m, %.3f deg)",
         result.score,
         result.matched_points,
         result.support_fraction * 100.0,
         result.evaluated_candidates,
+        result.translation_observable_rank,
+        result.minimum_translation_information,
+        result.maximum_translation_information,
         std::hypot(correction.x, correction.y),
         correction.yaw * 180.0 / 3.14159265358979323846);
     } else {
@@ -1417,14 +1439,13 @@ private:
     laser_odometry.pose.pose.position.y = estimated_pose_.y;
     laser_odometry.pose.pose.orientation =
       yawToQuaternion(estimated_pose_.yaw);
-    const double translation_variance =
-      output_pose_translation_stddev_ *
-      output_pose_translation_stddev_;
     const double rotation_variance =
       output_pose_rotation_stddev_ *
       output_pose_rotation_stddev_;
-    laser_odometry.pose.covariance[0] = translation_variance;
-    laser_odometry.pose.covariance[7] = translation_variance;
+    laser_odometry.pose.covariance[0] = output_pose_covariance_xx_;
+    laser_odometry.pose.covariance[1] = output_pose_covariance_xy_;
+    laser_odometry.pose.covariance[6] = output_pose_covariance_xy_;
+    laser_odometry.pose.covariance[7] = output_pose_covariance_yy_;
     laser_odometry.pose.covariance[14] = 1.0e6;
     laser_odometry.pose.covariance[21] = 1.0e6;
     laser_odometry.pose.covariance[28] = 1.0e6;
@@ -1490,6 +1511,45 @@ private:
     trimOldestInBatches(path.poses, maximum_poses);
   }
 
+  void resetOutputPoseCovariance()
+  {
+    const double variance =
+      output_pose_translation_stddev_ *
+      output_pose_translation_stddev_;
+    output_pose_covariance_xx_ = variance;
+    output_pose_covariance_xy_ = 0.0;
+    output_pose_covariance_yy_ = variance;
+  }
+
+  void updateOutputPoseCovariance(
+    const CorrelativeScanMatcherResult & result)
+  {
+    resetOutputPoseCovariance();
+    if (result.translation_observable_rank >= 2U) {
+      return;
+    }
+
+    const double regular_variance =
+      output_pose_translation_stddev_ *
+      output_pose_translation_stddev_;
+    const double degenerate_variance =
+      output_degenerate_translation_stddev_ *
+      output_degenerate_translation_stddev_;
+    if (result.translation_observable_rank == 0U) {
+      output_pose_covariance_xx_ = degenerate_variance;
+      output_pose_covariance_yy_ = degenerate_variance;
+      return;
+    }
+
+    const double weak_x = result.weak_translation_direction.x;
+    const double weak_y = result.weak_translation_direction.y;
+    const double additional_variance =
+      degenerate_variance - regular_variance;
+    output_pose_covariance_xx_ += additional_variance * weak_x * weak_x;
+    output_pose_covariance_xy_ += additional_variance * weak_x * weak_y;
+    output_pose_covariance_yy_ += additional_variance * weak_y * weak_y;
+  }
+
   void publishPathsIfDirty()
   {
     if (laser_path_dirty_) {
@@ -1511,6 +1571,10 @@ private:
   double maximum_odom_age_;
   double output_pose_translation_stddev_;
   double output_pose_rotation_stddev_;
+  double output_degenerate_translation_stddev_;
+  double output_pose_covariance_xx_{0.0};
+  double output_pose_covariance_xy_{0.0};
+  double output_pose_covariance_yy_{0.0};
   double minimum_translation_for_update_;
   double minimum_rotation_for_update_;
   std::size_t maximum_local_keyframes_;
