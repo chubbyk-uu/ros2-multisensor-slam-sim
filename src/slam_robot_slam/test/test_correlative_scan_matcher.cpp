@@ -1,5 +1,8 @@
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <random>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -32,7 +35,7 @@ std::vector<slam_robot_slam::Point2D> makeRoomCorner()
   return points;
 }
 
-std::vector<slam_robot_slam::Point2D> makeParallelCorridor(
+std::vector<slam_robot_slam::Point2D> makeUniformParallelCorridor(
   const double minimum_x,
   const double maximum_x)
 {
@@ -46,6 +49,95 @@ std::vector<slam_robot_slam::Point2D> makeParallelCorridor(
     points.push_back(slam_robot_slam::Point2D{x, 1.0F});
   }
   return points;
+}
+
+std::vector<slam_robot_slam::Point2D> makeAngularCorridorScan(
+  const slam_robot_slam::Pose2D & sensor_pose,
+  const double noise_stddev,
+  const std::uint32_t noise_seed)
+{
+  constexpr std::size_t kSamples = 720U;
+  constexpr std::size_t kPointStride = 2U;
+  constexpr double kPi = 3.14159265358979323846;
+  constexpr double kMinimumRange = 0.12;
+  constexpr double kMaximumRange = 12.0;
+  constexpr double kHalfWidth = 1.0;
+  std::mt19937 generator(noise_seed);
+  std::normal_distribution<double> noise(0.0, noise_stddev);
+  std::vector<slam_robot_slam::Point2D> points;
+  points.reserve(kSamples / kPointStride);
+  for (std::size_t index = 0U; index < kSamples; index += kPointStride) {
+    const double angle =
+      -kPi + 2.0 * kPi * static_cast<double>(index) /
+      static_cast<double>(kSamples);
+    const double world_angle = sensor_pose.yaw + angle;
+    const double direction_y = std::sin(world_angle);
+    if (std::abs(direction_y) < 1.0e-12) {
+      continue;
+    }
+    const double wall_y = direction_y > 0.0 ? kHalfWidth : -kHalfWidth;
+    const double ideal_range = (wall_y - sensor_pose.y) / direction_y;
+    if (ideal_range < kMinimumRange || ideal_range > kMaximumRange) {
+      continue;
+    }
+    const double measured_range = ideal_range + noise(generator);
+    if (measured_range < kMinimumRange || measured_range > kMaximumRange) {
+      continue;
+    }
+    points.push_back(
+      slam_robot_slam::Point2D{
+        static_cast<float>(measured_range * std::cos(angle)),
+        static_cast<float>(measured_range * std::sin(angle))});
+  }
+  return points;
+}
+
+std::vector<slam_robot_slam::Point2D> makeAngularCorridorSubmap(
+  const std::size_t keyframe_count,
+  const double noise_stddev,
+  const std::uint32_t noise_seed)
+{
+  std::vector<slam_robot_slam::Point2D> points;
+  for (std::size_t index = 0U; index < keyframe_count; ++index) {
+    const double x =
+      -0.05 * static_cast<double>(keyframe_count - index - 1U);
+    const slam_robot_slam::Pose2D keyframe_pose{x, 0.0, 0.0};
+    const auto scan = makeAngularCorridorScan(
+      keyframe_pose,
+      noise_stddev,
+      noise_seed + static_cast<std::uint32_t>(index));
+    points.reserve(points.size() + scan.size());
+    for (const auto & point : scan) {
+      points.push_back(
+        slam_robot_slam::transformPoint(keyframe_pose, point));
+    }
+  }
+  return points;
+}
+
+slam_robot_slam::CorrelativeScanMatcherParameters runtimeMatcherParameters()
+{
+  slam_robot_slam::CorrelativeScanMatcherParameters parameters;
+  parameters.grid_resolution = 0.02;
+  parameters.smear_deviation = 0.10;
+  parameters.linear_search_window = 0.15;
+  parameters.angular_search_window = 0.20;
+  parameters.coarse_linear_resolution = 0.04;
+  parameters.coarse_angular_resolution = 0.04;
+  parameters.fine_linear_window = 0.02;
+  parameters.fine_angular_window = 0.02;
+  parameters.fine_linear_resolution = 0.005;
+  parameters.fine_angular_resolution = 0.005;
+  parameters.translation_penalty_weight = 0.10;
+  parameters.rotation_penalty_weight = 0.10;
+  parameters.degeneracy_handling_enabled = true;
+  parameters.minimum_translation_information = 1.0;
+  parameters.minimum_translation_information_ratio = 0.05;
+  parameters.weak_direction_correction_scale = 0.0;
+  parameters.minimum_score = 0.35;
+  parameters.minimum_support_fraction = 0.25;
+  parameters.minimum_matched_points = 40U;
+  return parameters;
 }
 
 TEST(CorrelativeScanMatcher, RecoversPoseAgainstLocalMap)
@@ -87,10 +179,10 @@ TEST(CorrelativeScanMatcher, RecoversPoseAgainstLocalMap)
   EXPECT_GT(result.evaluated_candidates, 1000U);
 }
 
-TEST(CorrelativeScanMatcher, RetainsPredictionAlongDegenerateCorridor)
+TEST(CorrelativeScanMatcher, RetainsPredictionAlongIdealUniformCorridor)
 {
-  const auto reference = makeParallelCorridor(-20.0, 20.0);
-  const auto visible_world_points = makeParallelCorridor(-5.0, 5.0);
+  const auto reference = makeUniformParallelCorridor(-20.0, 20.0);
+  const auto visible_world_points = makeUniformParallelCorridor(-5.0, 5.0);
   const slam_robot_slam::Pose2D actual_pose{0.10, 0.06, 0.02};
   const auto current_from_world =
     slam_robot_slam::inversePose(actual_pose);
@@ -130,6 +222,60 @@ TEST(CorrelativeScanMatcher, RetainsPredictionAlongDegenerateCorridor)
   EXPECT_NEAR(result.pose.x, predicted_pose.x, 0.005);
   EXPECT_NEAR(result.pose.y, actual_pose.y, 0.011);
   EXPECT_NEAR(result.pose.yaw, actual_pose.yaw, 0.011);
+}
+
+TEST(CorrelativeScanMatcher, AngularSamplingExposesDepthAndNoiseCoupling)
+{
+  constexpr std::array<std::size_t, 3U> kKeyframeCounts{1U, 5U, 20U};
+  constexpr std::array<double, 4U> kNoiseStddevs{0.0, 0.0025, 0.005, 0.01};
+  const slam_robot_slam::Pose2D actual_pose{0.10, 0.0, 0.0};
+  std::size_t rank_one_cases = 0U;
+  std::size_t rank_two_cases = 0U;
+  std::size_t protected_rank_one_cases = 0U;
+  std::size_t biased_rank_two_cases = 0U;
+  for (const std::size_t keyframe_count : kKeyframeCounts) {
+    for (std::size_t noise_index = 0U;
+      noise_index < kNoiseStddevs.size(); ++noise_index)
+    {
+      const double noise_stddev = kNoiseStddevs[noise_index];
+      const std::uint32_t seed =
+        100U + static_cast<std::uint32_t>(10U * keyframe_count + noise_index);
+      const auto reference = makeAngularCorridorSubmap(
+        keyframe_count, noise_stddev, seed);
+      const auto current = makeAngularCorridorScan(
+        actual_pose, noise_stddev, seed + 1000U);
+      const auto result = slam_robot_slam::matchCorrelative(
+        reference,
+        current,
+        actual_pose,
+        runtimeMatcherParameters());
+
+      SCOPED_TRACE(
+        ::testing::Message() << "keyframes=" << keyframe_count <<
+          " noise=" << noise_stddev);
+      ASSERT_TRUE(result.success);
+      EXPECT_GT(result.score, 0.90);
+      EXPECT_GT(result.support_fraction, 0.95);
+      EXPECT_GT(std::abs(result.weak_translation_direction.x), 0.95F);
+      if (result.translation_observable_rank == 1U) {
+        ++rank_one_cases;
+        if (std::abs(result.pose.x - actual_pose.x) <= 0.005) {
+          ++protected_rank_one_cases;
+        }
+      } else if (result.translation_observable_rank == 2U) {
+        ++rank_two_cases;
+        if (result.pose.x < actual_pose.x - 0.01) {
+          ++biased_rank_two_cases;
+        }
+      }
+    }
+  }
+
+  EXPECT_GT(rank_one_cases, 0U);
+  EXPECT_GT(rank_two_cases, 0U);
+  EXPECT_EQ(rank_one_cases + rank_two_cases, 12U);
+  EXPECT_EQ(protected_rank_one_cases, rank_one_cases);
+  EXPECT_EQ(biased_rank_two_cases, rank_two_cases);
 }
 
 TEST(CorrelativeScanMatcher, PreservesTranslationCorrectionInCorner)

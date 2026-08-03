@@ -327,6 +327,8 @@ ros2 topic echo /ground_truth/odom --once
 - 根据相关分数和重合点数接受或拒绝匹配，失败时回退到里程计预测。
 - 根据最佳匹配附近的响应曲面估计平移可观测秩；平行走廊中只抑制弱
   方向的激光修正，保留横向和航向修正，并发布对应的各向异性协方差。
+  逐次匹配诊断和真实角采样测试已确认该检测器会受端点混叠影响，当前
+  只在约 60% 的走廊匹配中触发，后续将替换为基于扫描法向的几何判据。
 - 发布 `/custom_slam/laser_odom`、`/custom_slam/laser_path` 和
   `/custom_slam/aligned_scan_points`。
 - 只将初始化和匹配成功的关键帧写入 log-odds 占据栅格，并发布
