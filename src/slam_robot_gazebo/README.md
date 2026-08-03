@@ -23,6 +23,11 @@ ros2 launch slam_robot_gazebo simulation.launch.py gui:=false
 出口各保留一个避开中心线的非对称锚点。可通过 bringup 包的
 `corridor_slam_regression.launch.py` 启动。
 
+`worlds/repeated_rooms.sdf` 包含两间相距 8 m、主要墙体和四个大型路标
+完全重复的房间，并在每间房各保留一个微弱的独有特征。中心通道供自动
+往返路线使用；该场景通过 `repeated_structure_slam_regression.launch.py`
+验证相似地点不会触发假回环，同时真正返回后仍能建立闭环。
+
 `/ground_truth/odom` 由 Gazebo OdometryPublisher 根据世界位姿生成，父坐标系为 `world`，子坐标系为 `base_footprint`。它只用于算法误差评估，不能作为 SLAM 或导航输入。
 
 默认会打开 RViz；仅运行 Gazebo 时可传入 `rviz:=false`。

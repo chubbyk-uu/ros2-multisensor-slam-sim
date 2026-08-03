@@ -1,0 +1,153 @@
+<?xml version="1.0"?>
+<sdf version="1.10">
+  <world name="slam_world">
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <gravity>0 0 -9.81</gravity>
+
+    <scene>
+      <ambient>0.45 0.45 0.45 1</ambient>
+      <background>0.75 0.80 0.85 1</background>
+      <shadows>false</shadows>
+      <grid>true</grid>
+    </scene>
+
+    <light name="sun" type="directional">
+      <cast_shadows>false</cast_shadows>
+      <pose>8 0 12 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.4 0.2 -1.0</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="ground_link">
+        <collision name="ground_collision">
+          <geometry><box><size>24 12 0.10</size></box></geometry>
+          <pose>4 0 -0.05 0 0 0</pose>
+        </collision>
+        <visual name="ground_visual">
+          <geometry><box><size>24 12 0.10</size></box></geometry>
+          <pose>4 0 -0.05 0 0 0</pose>
+          <material>
+            <ambient>0.66 0.68 0.70 1</ambient>
+            <diffuse>0.66 0.68 0.70 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!--
+      Two 5 x 5 m rooms contain the same four large landmarks. Their centers
+      are eight metres apart, so accepting a loop while first entering room B
+      is necessarily a place-aliasing error. A small unique landmark in each
+      room preserves a weak global distinction. The centre line remains clear
+      for the automated out-and-back route.
+    -->
+    <model name="repeated_rooms">
+      <static>true</static>
+      <link name="structure_link">
+        <!-- Room A shell, centred at x=0. -->
+        <collision name="a_north_collision"><pose>0 2.5 0.6 0 0 0</pose><geometry><box><size>5.0 0.15 1.2</size></box></geometry></collision>
+        <visual name="a_north_visual"><pose>0 2.5 0.6 0 0 0</pose><geometry><box><size>5.0 0.15 1.2</size></box></geometry></visual>
+        <collision name="a_south_collision"><pose>0 -2.5 0.6 0 0 0</pose><geometry><box><size>5.0 0.15 1.2</size></box></geometry></collision>
+        <visual name="a_south_visual"><pose>0 -2.5 0.6 0 0 0</pose><geometry><box><size>5.0 0.15 1.2</size></box></geometry></visual>
+        <collision name="a_west_collision"><pose>-2.5 0 0.6 0 0 0</pose><geometry><box><size>0.15 5.0 1.2</size></box></geometry></collision>
+        <visual name="a_west_visual"><pose>-2.5 0 0.6 0 0 0</pose><geometry><box><size>0.15 5.0 1.2</size></box></geometry></visual>
+        <collision name="a_east_north_collision"><pose>2.5 1.575 0.6 0 0 0</pose><geometry><box><size>0.15 1.85 1.2</size></box></geometry></collision>
+        <visual name="a_east_north_visual"><pose>2.5 1.575 0.6 0 0 0</pose><geometry><box><size>0.15 1.85 1.2</size></box></geometry></visual>
+        <collision name="a_east_south_collision"><pose>2.5 -1.575 0.6 0 0 0</pose><geometry><box><size>0.15 1.85 1.2</size></box></geometry></collision>
+        <visual name="a_east_south_visual"><pose>2.5 -1.575 0.6 0 0 0</pose><geometry><box><size>0.15 1.85 1.2</size></box></geometry></visual>
+
+        <!-- Connector, 1.3 m clear width. -->
+        <collision name="connector_north_collision"><pose>4 0.725 0.6 0 0 0</pose><geometry><box><size>3.0 0.15 1.2</size></box></geometry></collision>
+        <visual name="connector_north_visual"><pose>4 0.725 0.6 0 0 0</pose><geometry><box><size>3.0 0.15 1.2</size></box></geometry></visual>
+        <collision name="connector_south_collision"><pose>4 -0.725 0.6 0 0 0</pose><geometry><box><size>3.0 0.15 1.2</size></box></geometry></collision>
+        <visual name="connector_south_visual"><pose>4 -0.725 0.6 0 0 0</pose><geometry><box><size>3.0 0.15 1.2</size></box></geometry></visual>
+
+        <!-- Room B shell, translated eight metres from room A. -->
+        <collision name="b_north_collision"><pose>8 2.5 0.6 0 0 0</pose><geometry><box><size>5.0 0.15 1.2</size></box></geometry></collision>
+        <visual name="b_north_visual"><pose>8 2.5 0.6 0 0 0</pose><geometry><box><size>5.0 0.15 1.2</size></box></geometry></visual>
+        <collision name="b_south_collision"><pose>8 -2.5 0.6 0 0 0</pose><geometry><box><size>5.0 0.15 1.2</size></box></geometry></collision>
+        <visual name="b_south_visual"><pose>8 -2.5 0.6 0 0 0</pose><geometry><box><size>5.0 0.15 1.2</size></box></geometry></visual>
+        <collision name="b_east_collision"><pose>10.5 0 0.6 0 0 0</pose><geometry><box><size>0.15 5.0 1.2</size></box></geometry></collision>
+        <visual name="b_east_visual"><pose>10.5 0 0.6 0 0 0</pose><geometry><box><size>0.15 5.0 1.2</size></box></geometry></visual>
+        <collision name="b_west_north_collision"><pose>5.5 1.575 0.6 0 0 0</pose><geometry><box><size>0.15 1.85 1.2</size></box></geometry></collision>
+        <visual name="b_west_north_visual"><pose>5.5 1.575 0.6 0 0 0</pose><geometry><box><size>0.15 1.85 1.2</size></box></geometry></visual>
+        <collision name="b_west_south_collision"><pose>5.5 -1.575 0.6 0 0 0</pose><geometry><box><size>0.15 1.85 1.2</size></box></geometry></collision>
+        <visual name="b_west_south_visual"><pose>5.5 -1.575 0.6 0 0 0</pose><geometry><box><size>0.15 1.85 1.2</size></box></geometry></visual>
+
+        <!-- Repeated landmark set in room A. -->
+        <collision name="a_cylinder_nw_collision"><pose>-1.15 1.25 0.45 0 0 0</pose><geometry><cylinder><radius>0.26</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name="a_cylinder_nw_visual"><pose>-1.15 1.25 0.45 0 0 0</pose><geometry><cylinder><radius>0.26</radius><length>0.9</length></cylinder></geometry></visual>
+        <collision name="a_cylinder_se_collision"><pose>1.15 -1.25 0.45 0 0 0</pose><geometry><cylinder><radius>0.26</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name="a_cylinder_se_visual"><pose>1.15 -1.25 0.45 0 0 0</pose><geometry><cylinder><radius>0.26</radius><length>0.9</length></cylinder></geometry></visual>
+        <collision name="a_box_sw_collision"><pose>-1.15 -1.25 0.40 0 0 0.25</pose><geometry><box><size>0.55 0.40 0.8</size></box></geometry></collision>
+        <visual name="a_box_sw_visual"><pose>-1.15 -1.25 0.40 0 0 0.25</pose><geometry><box><size>0.55 0.40 0.8</size></box></geometry></visual>
+        <collision name="a_box_ne_collision"><pose>1.15 1.25 0.40 0 0 -0.25</pose><geometry><box><size>0.55 0.40 0.8</size></box></geometry></collision>
+        <visual name="a_box_ne_visual"><pose>1.15 1.25 0.40 0 0 -0.25</pose><geometry><box><size>0.55 0.40 0.8</size></box></geometry></visual>
+
+        <!-- The same landmark set translated into room B. -->
+        <collision name="b_cylinder_nw_collision"><pose>6.85 1.25 0.45 0 0 0</pose><geometry><cylinder><radius>0.26</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name="b_cylinder_nw_visual"><pose>6.85 1.25 0.45 0 0 0</pose><geometry><cylinder><radius>0.26</radius><length>0.9</length></cylinder></geometry></visual>
+        <collision name="b_cylinder_se_collision"><pose>9.15 -1.25 0.45 0 0 0</pose><geometry><cylinder><radius>0.26</radius><length>0.9</length></cylinder></geometry></collision>
+        <visual name="b_cylinder_se_visual"><pose>9.15 -1.25 0.45 0 0 0</pose><geometry><cylinder><radius>0.26</radius><length>0.9</length></cylinder></geometry></visual>
+        <collision name="b_box_sw_collision"><pose>6.85 -1.25 0.40 0 0 0.25</pose><geometry><box><size>0.55 0.40 0.8</size></box></geometry></collision>
+        <visual name="b_box_sw_visual"><pose>6.85 -1.25 0.40 0 0 0.25</pose><geometry><box><size>0.55 0.40 0.8</size></box></geometry></visual>
+        <collision name="b_box_ne_collision"><pose>9.15 1.25 0.40 0 0 -0.25</pose><geometry><box><size>0.55 0.40 0.8</size></box></geometry></collision>
+        <visual name="b_box_ne_visual"><pose>9.15 1.25 0.40 0 0 -0.25</pose><geometry><box><size>0.55 0.40 0.8</size></box></geometry></visual>
+
+        <!-- Small non-repeated features used only as weak global anchors. -->
+        <collision name="a_unique_collision"><pose>-1.85 1.85 0.30 0 0 0</pose><geometry><cylinder><radius>0.12</radius><length>0.6</length></cylinder></geometry></collision>
+        <visual name="a_unique_visual"><pose>-1.85 1.85 0.30 0 0 0</pose><geometry><cylinder><radius>0.12</radius><length>0.6</length></cylinder></geometry></visual>
+        <collision name="b_unique_collision"><pose>9.85 -1.85 0.30 0 0 0.35</pose><geometry><box><size>0.65 0.18 0.6</size></box></geometry></collision>
+        <visual name="b_unique_visual"><pose>9.85 -1.85 0.30 0 0 0.35</pose><geometry><box><size>0.65 0.18 0.6</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <gui fullscreen="false">
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="state" type="string">docked</property>
+        </gz-gui>
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.4 0.4 0.4</ambient_light>
+        <background_color>0.75 0.80 0.85</background_color>
+        <camera_pose>4 -9 9 0 0.65 1.57</camera_pose>
+        <camera_clip><near>0.10</near><far>1000</far></camera_clip>
+      </plugin>
+      <plugin filename="GzSceneManager" name="Scene Manager"/>
+      <plugin filename="WorldControl" name="World control">
+        <gz-gui>
+          <title>World control</title>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="state" type="string">docked</property>
+        </gz-gui>
+        <play_pause>true</play_pause>
+        <step>true</step>
+        <start_paused>false</start_paused>
+      </plugin>
+    </gui>
+  </world>
+</sdf>

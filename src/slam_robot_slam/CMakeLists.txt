@@ -208,6 +208,7 @@ install(
   PROGRAMS
     scripts/corridor_regression
     scripts/loop_closure_regression
+    scripts/repeated_structure_regression
     scripts/rotation_regression
     scripts/save_slam_map
     scripts/scan_matcher_benchmark
