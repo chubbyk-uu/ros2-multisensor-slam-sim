@@ -44,6 +44,9 @@ ros2 launch slam_robot_bringup corridor_slam_regression.launch.py
 
 需要人工观察时可增加 `gui:=true use_rviz:=true`。启动完成后，在另一个
 终端运行 `ros2 run slam_robot_slam corridor_regression`。
+研究模式下可传入 `reject_degenerate_loop_closures:=false`，再用
+`corridor_regression --return-trip --expect-anisotropic-loop-closure`
+验证 rank 1 回环确实以各向异性平移信息进入位姿图；默认仍保守拒绝。
 
 其余自研 SLAM 专用入口：
 

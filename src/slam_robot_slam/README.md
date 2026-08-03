@@ -298,6 +298,12 @@ ros2 run slam_robot_slam corridor_regression
 
 # 在同一场景执行 25 m 出走、原地掉头和 25 m 返回
 ros2 run slam_robot_slam corridor_regression --return-trip
+
+# 覆盖研究模式：允许退化回环，并验证实际写入各向异性信息矩阵
+ros2 launch slam_robot_bringup corridor_slam_regression.launch.py \
+  reject_degenerate_loop_closures:=false
+ros2 run slam_robot_slam corridor_regression --return-trip \
+  --expect-anisotropic-loop-closure
 ```
 
 工具以 `0.40 m/s` 行驶约 25 m，连续测量纵向、横向和航向误差，并检查
@@ -305,7 +311,9 @@ ros2 run slam_robot_slam corridor_regression --return-trip
 真实匹配尝试的诊断计数是否自洽。`matcher_diagnostics` 将扫描分类为初始化、
 点数不足、运动不足、匹配接受或匹配拒绝；只有后两类才计入匹配次数和
 rank 直方图。真实匹配还报告两个有效法向特征值、法向数量、比值、弱
-方向角、是否执行退化过滤、实际连续修正比例及累计计数。回归工具据此
+方向角、是否执行退化过滤、实际连续修正比例及累计计数。rank 1 的修正
+比例同时受信息特征值比和绝对有效法向数约束，因此不会出现 rank 1 但
+修正比例仍为 1 的状态。回归工具据此
 打印信息比值与弱方向角直方图，
 不再从可能重复发布的里程计协方差反推退化检测次数。
 拒配或运动量低于匹配阈值时，输出协方差会按相邻里程计增量继续增长；
@@ -317,8 +325,8 @@ rank 直方图。真实匹配还报告两个有效法向特征值、法向数量
 轮式里程计预测；横向与航向仍由激光相关匹配校正。法向只在原始光束索引
 连续、相邻距离满足量程自适应门限的局部窗口内拟合，不会跨过被量程过滤
 的光束、门口或物体边缘。弱方向实际修正比例为
-`max(配置下限, min(1, information_ratio / 0.05))`，避免单阈值硬开关在
-临界区反复推拉位姿。
+`max(配置下限, min(1, information_ratio / 0.05,
+minimum_information / 5.0))`，避免单阈值硬开关在临界区反复推拉位姿。
 
 往返模式额外验证返回位置闭合、强/弱观测协方差切换、真实回环接受和
 地图重建完成。测试驾驶器使用 Gazebo 真值维持目标航向，以隔离差速底盘

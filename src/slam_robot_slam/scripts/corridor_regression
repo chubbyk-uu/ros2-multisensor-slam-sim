@@ -4,6 +4,7 @@
 
 import argparse
 import math
+import re
 import sys
 import time
 
@@ -31,6 +32,10 @@ CRITICAL_LOG_FRAGMENTS = (
 )
 
 MATCHER_DIAGNOSTIC_NAME = 'scan_matcher_odometry/front_end_matcher'
+LOOP_CLOSURE_PATTERN = re.compile(
+    r'Accepted loop closure (\d+) -> (\d+): .*'
+    r'rank=(\d+) translation_info=\[([\d.eE+-]+), ([\d.eE+-]+)\]'
+)
 DIAGNOSTIC_COUNTER_NAMES = (
     'event_sequence',
     'bootstrap_scans',
@@ -308,7 +313,25 @@ class CorridorRegression(Node):
         if message.name != 'scan_matcher_odometry':
             return
         if 'Accepted loop closure' in message.msg:
-            self.loop_closures.append(message.msg)
+            match = LOOP_CLOSURE_PATTERN.search(message.msg)
+            if match is None:
+                self.critical_logs.append(
+                    f'Malformed accepted loop closure log: {message.msg}'
+                )
+            else:
+                self.loop_closures.append(
+                    {
+                        'candidate': int(match.group(1)),
+                        'current': int(match.group(2)),
+                        'rank': int(match.group(3)),
+                        'minimum_translation_information': float(
+                            match.group(4)
+                        ),
+                        'maximum_translation_information': float(
+                            match.group(5)
+                        ),
+                    }
+                )
         if 'Completed occupancy grid rebuild' in message.msg:
             self.map_rebuilds.append(message.msg)
         if 'Correlative match rejected' in message.msg:
@@ -458,6 +481,17 @@ class CorridorRegression(Node):
             self.degenerate_segment_detections
             / max(self.degenerate_segment_matches, 1)
         )
+        rank_one_loop_closures = [
+            event for event in self.loop_closures
+            if event['rank'] == 1
+        ]
+        anisotropic_rank_one_loop_closures = [
+            event for event in rank_one_loop_closures
+            if event['maximum_translation_information'] > 0.0
+            and event['minimum_translation_information']
+            / event['maximum_translation_information']
+            <= arguments.maximum_anisotropic_loop_information_ratio
+        ]
 
         checks = {
             'outbound_distance_reached': (
@@ -550,6 +584,17 @@ class CorridorRegression(Node):
                     ),
                 }
             )
+        if arguments.expect_anisotropic_loop_closure:
+            checks.update(
+                {
+                    'rank_one_loop_closure_accepted': bool(
+                        rank_one_loop_closures
+                    ),
+                    'rank_one_loop_information_anisotropic': bool(
+                        anisotropic_rank_one_loop_closures
+                    ),
+                }
+            )
 
         print('\ndegenerate corridor result')
         print(
@@ -582,6 +627,22 @@ class CorridorRegression(Node):
             f'loops={len(self.loop_closures)} '
             f'rebuilds={len(self.map_rebuilds)}'
         )
+        if self.loop_closures:
+            loop_information_ratios = [
+                event['minimum_translation_information']
+                / event['maximum_translation_information']
+                for event in self.loop_closures
+                if event['maximum_translation_information'] > 0.0
+            ]
+            print(
+                'loop info   : '
+                f'ranks={[event["rank"] for event in self.loop_closures]} '
+                'ratios=['
+                + ', '.join(
+                    f'{ratio:.4f}' for ratio in loop_information_ratios
+                )
+                + ']'
+            )
         print(
             f'covariance  : max_ratio={self.maximum_covariance_ratio:.1f} '
             f'degenerate_samples={self.degenerate_covariance_samples} '
@@ -690,6 +751,19 @@ def parse_arguments():
     parser.add_argument('--distance', type=float, default=25.0)
     parser.add_argument('--linear-speed', type=float, default=0.40)
     parser.add_argument('--return-trip', action='store_true')
+    parser.add_argument(
+        '--expect-anisotropic-loop-closure',
+        action='store_true',
+        help=(
+            'Require a rank-one accepted loop with anisotropic information. '
+            'Use with reject_degenerate_loop_closures:=false.'
+        ),
+    )
+    parser.add_argument(
+        '--maximum-anisotropic-loop-information-ratio',
+        type=float,
+        default=0.10,
+    )
     parser.add_argument('--angular-speed', type=float, default=0.40)
     parser.add_argument('--heading-control-gain', type=float, default=2.0)
     parser.add_argument(
@@ -787,6 +861,7 @@ def parse_arguments():
         arguments.maximum_regular_translation_stddev,
         arguments.degenerate_segment_margin,
         arguments.minimum_degenerate_detection_fraction,
+        arguments.maximum_anisotropic_loop_information_ratio,
     )
     if (
         any(not math.isfinite(value) or value <= 0.0 for value in numeric_values)
@@ -805,6 +880,7 @@ def parse_arguments():
         or arguments.degenerate_segment_margin * 2.0
         >= arguments.distance
         or arguments.minimum_degenerate_detection_fraction > 1.0
+        or arguments.maximum_anisotropic_loop_information_ratio > 1.0
     ):
         parser.error('Distances, speeds, timeouts and thresholds must be valid')
     return arguments

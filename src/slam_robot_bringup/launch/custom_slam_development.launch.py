@@ -43,10 +43,17 @@ def generate_launch_description():
     odometry_mode = LaunchConfiguration("odometry_mode")
     left_wheel_friction = LaunchConfiguration("left_wheel_friction")
     right_wheel_friction = LaunchConfiguration("right_wheel_friction")
+    reject_degenerate_loop_closures = LaunchConfiguration(
+        "reject_degenerate_loop_closures"
+    )
 
     custom_slam = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(custom_slam_launch),
-        launch_arguments={"use_sim_time": "true"}.items(),
+        launch_arguments={
+            "use_sim_time": "true",
+            "reject_degenerate_loop_closures":
+                reject_degenerate_loop_closures,
+        }.items(),
     )
     rviz = Node(
         package="rviz2",
@@ -99,6 +106,11 @@ def generate_launch_description():
                 "right_wheel_friction",
                 default_value="1.2",
                 description="Right drive-wheel friction coefficient.",
+            ),
+            DeclareLaunchArgument(
+                "reject_degenerate_loop_closures",
+                default_value="true",
+                description="Reject translation-degenerate loop matches.",
             ),
             SetEnvironmentVariable(
                 "GALLIUM_DRIVER",

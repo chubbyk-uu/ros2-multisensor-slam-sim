@@ -24,6 +24,9 @@ def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     scan_matcher_params_file = LaunchConfiguration("scan_matcher_params_file")
     use_sim_time = LaunchConfiguration("use_sim_time")
+    reject_degenerate_loop_closures = LaunchConfiguration(
+        "reject_degenerate_loop_closures"
+    )
 
     return LaunchDescription(
         [
@@ -42,6 +45,11 @@ def generate_launch_description():
                 default_value=default_scan_matcher_params_file,
                 description="Correlative scan matcher parameter file.",
             ),
+            DeclareLaunchArgument(
+                "reject_degenerate_loop_closures",
+                default_value="true",
+                description="Reject translation-degenerate loop matches.",
+            ),
             Node(
                 package="slam_robot_slam",
                 executable="laser_scan_preprocessor_node",
@@ -59,7 +67,11 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     scan_matcher_params_file,
-                    {"use_sim_time": use_sim_time},
+                    {
+                        "use_sim_time": use_sim_time,
+                        "loop_closure.reject_degenerate_matches":
+                            reject_degenerate_loop_closures,
+                    },
                 ],
             ),
         ]

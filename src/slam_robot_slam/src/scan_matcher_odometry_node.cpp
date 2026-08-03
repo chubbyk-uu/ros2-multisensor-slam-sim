@@ -1357,16 +1357,31 @@ private:
       std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() -
       loop_closure_job_started_).count();
+    const auto & information = result.constraint.information;
+    const double translation_information_trace =
+      information.xx + information.yy;
+    const double translation_information_discriminant = std::hypot(
+      information.xx - information.yy,
+      2.0 * information.xy);
+    const double minimum_translation_information = 0.5 * (
+      translation_information_trace -
+      translation_information_discriminant);
+    const double maximum_translation_information = 0.5 * (
+      translation_information_trace +
+      translation_information_discriminant);
     RCLCPP_INFO(
       get_logger(),
       "Accepted loop closure %zu -> %zu: score=%.3f points=%zu "
-      "support=%.1f%%, "
+      "support=%.1f%% rank=%zu translation_info=[%.3f, %.3f], "
       "Ceres cost %.6f -> %.6f in %d iterations (worker %.1f ms)",
       result.candidate_id,
       result.current_id,
       result.match.score,
       result.match.matched_points,
       result.match.support_fraction * 100.0,
+      result.match.translation_observable_rank,
+      minimum_translation_information,
+      maximum_translation_information,
       result.optimization.initial_cost,
       result.optimization.final_cost,
       result.optimization.iterations,

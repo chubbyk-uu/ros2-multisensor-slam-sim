@@ -34,6 +34,9 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration('use_rviz')
     use_wsl_gpu = LaunchConfiguration('use_wsl_gpu')
     wsl_gpu_adapter = LaunchConfiguration('wsl_gpu_adapter')
+    reject_degenerate_loop_closures = LaunchConfiguration(
+        'reject_degenerate_loop_closures'
+    )
 
     return LaunchDescription(
         [
@@ -57,6 +60,11 @@ def generate_launch_description():
                 default_value='NVIDIA',
                 description='GPU adapter selected by Mesa D3D12 in WSL.',
             ),
+            DeclareLaunchArgument(
+                'reject_degenerate_loop_closures',
+                default_value='true',
+                description='Reject translation-degenerate loop matches.',
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(custom_slam_development),
                 launch_arguments={
@@ -65,6 +73,8 @@ def generate_launch_description():
                     'use_rviz': use_rviz,
                     'use_wsl_gpu': use_wsl_gpu,
                     'wsl_gpu_adapter': wsl_gpu_adapter,
+                    'reject_degenerate_loop_closures':
+                        reject_degenerate_loop_closures,
                 }.items(),
             ),
         ]

@@ -332,6 +332,60 @@ TEST(CorrelativeScanMatcher, PreservesTranslationCorrectionInCorner)
   EXPECT_NEAR(result.pose.y, expected.y, 0.011);
 }
 
+TEST(CorrelativeScanMatcher, RankTwoDegeneracyHandlingIsAnExactNoOp)
+{
+  const auto reference = makeRoomCorner();
+  const slam_robot_slam::Pose2D expected{0.10, -0.06, 0.04};
+  const auto current_from_reference =
+    slam_robot_slam::inversePose(expected);
+  std::vector<slam_robot_slam::Point2D> current;
+  current.reserve(reference.size());
+  for (const auto & point : reference) {
+    current.push_back(
+      slam_robot_slam::transformPoint(current_from_reference, point));
+  }
+
+  slam_robot_slam::CorrelativeScanMatcherParameters disabled_parameters;
+  disabled_parameters.grid_resolution = 0.02;
+  disabled_parameters.smear_deviation = 0.04;
+  disabled_parameters.coarse_linear_resolution = 0.02;
+  disabled_parameters.coarse_angular_resolution = 0.02;
+  disabled_parameters.fine_linear_window = 0.02;
+  disabled_parameters.fine_angular_window = 0.02;
+  disabled_parameters.fine_linear_resolution = 0.005;
+  disabled_parameters.fine_angular_resolution = 0.005;
+  disabled_parameters.minimum_score = 0.50;
+  disabled_parameters.minimum_matched_points = 80U;
+  const slam_robot_slam::Pose2D predicted{0.05, -0.02, 0.02};
+  const auto disabled_result = slam_robot_slam::matchCorrelative(
+    reference, current, predicted, disabled_parameters);
+
+  auto enabled_parameters = disabled_parameters;
+  enabled_parameters.degeneracy_handling_enabled = true;
+  const slam_robot_slam::TranslationObservability observability{
+    2U, 50.0, 50.0, 1.0,
+    slam_robot_slam::Point2D{1.0F, 0.0F}, 100U, 1.0};
+  const auto enabled_result = slam_robot_slam::matchCorrelative(
+    reference,
+    current,
+    predicted,
+    enabled_parameters,
+    &observability);
+
+  ASSERT_TRUE(disabled_result.success);
+  ASSERT_TRUE(enabled_result.success);
+  EXPECT_DOUBLE_EQ(enabled_result.pose.x, disabled_result.pose.x);
+  EXPECT_DOUBLE_EQ(enabled_result.pose.y, disabled_result.pose.y);
+  EXPECT_DOUBLE_EQ(enabled_result.pose.yaw, disabled_result.pose.yaw);
+  EXPECT_DOUBLE_EQ(enabled_result.score, disabled_result.score);
+  EXPECT_EQ(
+    enabled_result.matched_points,
+    disabled_result.matched_points);
+  EXPECT_EQ(
+    enabled_result.evaluated_candidates,
+    disabled_result.evaluated_candidates);
+}
+
 TEST(CorrelativeScanMatcher, RejectsScanWithoutOverlap)
 {
   const auto reference = makeRoomCorner();

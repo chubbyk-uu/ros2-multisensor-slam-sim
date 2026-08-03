@@ -109,6 +109,62 @@ TEST(TranslationObservability, ScalesWeakCorrectionContinuouslyNearThreshold)
     1.0e-9);
 }
 
+TEST(TranslationObservability, ScalesWeakCorrectionWhenAbsoluteInformationIsLow)
+{
+  std::vector<slam_robot_slam::ScanPoint2D> points;
+  for (std::size_t index = 0U; index <= 40U; ++index) {
+    points.push_back(
+      makeScanPoint(-1.0F + 0.05F * static_cast<float>(index), 1.0F, index));
+  }
+  for (std::size_t index = 0U; index <= 10U; ++index) {
+    points.push_back(
+      makeScanPoint(
+        1.0F,
+        0.95F - 0.05F * static_cast<float>(index),
+        41U + index));
+  }
+  auto parameters = testParameters();
+  parameters.minimum_effective_normal_count = 20.0;
+  parameters.minimum_information_ratio = 0.05;
+
+  const auto result =
+    slam_robot_slam::estimateNormalTranslationObservability(
+    points, parameters);
+
+  ASSERT_EQ(result.rank, 1U);
+  ASSERT_GT(result.information_ratio, parameters.minimum_information_ratio);
+  ASSERT_LT(
+    result.minimum_information,
+    parameters.minimum_effective_normal_count);
+  EXPECT_GT(result.weak_direction_correction_scale, 0.0);
+  EXPECT_LT(result.weak_direction_correction_scale, 1.0);
+  EXPECT_NEAR(
+    result.weak_direction_correction_scale,
+    result.minimum_information / parameters.minimum_effective_normal_count,
+    1.0e-9);
+}
+
+TEST(TranslationObservability, ReportsRankZeroWhenBothDirectionsAreWeak)
+{
+  std::vector<slam_robot_slam::ScanPoint2D> points;
+  for (std::size_t index = 0U; index <= 10U; ++index) {
+    points.push_back(
+      makeScanPoint(-0.25F + 0.05F * static_cast<float>(index), 1.0F, index));
+  }
+  auto parameters = testParameters();
+  parameters.minimum_effective_normal_count = 20.0;
+
+  const auto result =
+    slam_robot_slam::estimateNormalTranslationObservability(
+    points, parameters);
+
+  EXPECT_EQ(result.rank, 0U);
+  EXPECT_LT(
+    result.maximum_information,
+    parameters.minimum_effective_normal_count);
+  EXPECT_DOUBLE_EQ(result.weak_direction_correction_scale, 0.0);
+}
+
 TEST(TranslationObservability, RejectsBeamGapsAndSurfaceBreaks)
 {
   std::vector<slam_robot_slam::ScanPoint2D> points{

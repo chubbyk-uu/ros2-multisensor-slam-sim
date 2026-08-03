@@ -179,11 +179,21 @@ TranslationObservability estimateNormalTranslationObservability(
   double weak_direction_correction_scale = 1.0;
   if (rank == 0U) {
     weak_direction_correction_scale = 0.0;
-  } else if (parameters.minimum_information_ratio > 0.0) {
-    weak_direction_correction_scale = std::clamp(
+  } else if (rank == 1U) {
+    const double ratio_scale =
+      parameters.minimum_information_ratio > 0.0 ?
+      std::clamp(
       information_ratio / parameters.minimum_information_ratio,
       0.0,
-      1.0);
+      1.0) : 1.0;
+    const double absolute_information_scale =
+      parameters.minimum_effective_normal_count > 0.0 ?
+      std::clamp(
+      minimum_information / parameters.minimum_effective_normal_count,
+      0.0,
+      1.0) : 1.0;
+    weak_direction_correction_scale =
+      std::min(ratio_scale, absolute_information_scale);
   }
   return TranslationObservability{
     rank,
