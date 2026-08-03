@@ -46,6 +46,13 @@ def generate_launch_description():
     ekf_config_path = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "config", "ekf_2d.yaml"]
     )
+    covariance_config_path = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_gazebo"),
+            "config",
+            "sensor_covariance.yaml",
+        ]
+    )
     rviz_config_path = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "rviz", "simulation.rviz"]
     )
@@ -416,6 +423,18 @@ def generate_launch_description():
                     ),
                 ],
                 parameters=[{"config_file": wheel_imu_bridge_config_path}],
+            ),
+            Node(
+                package="slam_robot_gazebo",
+                executable="sensor_covariance_adapter_node",
+                name="sensor_covariance_adapter",
+                output="screen",
+                condition=IfCondition(
+                    PythonExpression(
+                        ["'", odometry_mode, "' == 'wheel_imu'"]
+                    )
+                ),
+                parameters=[covariance_config_path],
             ),
             Node(
                 package="robot_localization",

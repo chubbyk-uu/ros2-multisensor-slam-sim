@@ -36,7 +36,7 @@ EKF 对照链路。成熟 3D 基线已接入 MOLA 官方 GICP 流水线，并以
 | 定位与导航 | 已完成 | Map Server、AMCL、Nav2 官方完整组件和 RViz |
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
 | 自研 C++ 2D SLAM | 已完成 2D 基线 | 已完成前后端、场景回归及 155 m 固定 rosbag 的 2× 离线回放 |
-| IMU / 二维 EKF | 已完成可选基线 | 100 Hz 原始 IMU；可选轮速平移 + IMU 偏航角速度融合，默认仍使用纯轮速基线 |
+| IMU / 二维 EKF | 已完成可选基线 | 100 Hz IMU；适配节点补充有限协方差，可选轮速平移 + IMU 偏航角速度融合 |
 | 3D LiDAR | LO 基线已完成 | 16 线点云接入 MOLA GICP，已验证输入契约、TF、轨迹和局部地图 |
 | 视觉 / 多传感器融合 | 计划中 | 在 3D 激光链路稳定后逐步接入 |
 
@@ -176,9 +176,11 @@ ros2 launch slam_robot_bringup mapping_simulation.launch.py \
   odometry_mode:=wheel_imu
 ```
 
-此模式下 Gazebo 发布 `/wheel/odom`，`robot_localization` 只融合轮速的
-平面线速度和 IMU 的偏航角速度，再唯一发布 `/odom` 及
-`odom -> base_footprint`。IMU 的绝对姿态和线加速度暂不进入二维 EKF。
+此模式下 Gazebo 的裸消息先进入 `/wheel/odom_raw` 和 `/imu/data_raw`，
+轻量适配节点为轮速和 IMU 补充有限、非零的协方差，再发布
+`/wheel/odom` 与 `/imu/data`。`robot_localization` 只融合轮速的平面线速度
+和 IMU 的偏航角速度，唯一发布 `/odom` 及 `odom -> base_footprint`。
+IMU 的绝对姿态和线加速度暂不进入二维 EKF。
 
 ### 3. 建图
 
@@ -459,7 +461,8 @@ deskew，按纯 LiDAR odometry 运行；不会生成假时间字段，也不会�
 ```text
 teleop / Nav2 -> /cmd_vel -> Gazebo diff drive
   -> wheel mode: /odom + odom -> base_footprint
-  -> wheel_imu mode: /wheel/odom + /imu/data_raw -> EKF
+  -> wheel_imu mode: /wheel/odom_raw + /imu/data_raw
+     -> covariance adapter -> /wheel/odom + /imu/data -> EKF
      -> /odom + odom -> base_footprint
 Gazebo 2D LiDAR -> /scan
 Gazebo 3D LiDAR variant -> /lidar_3d/points -> MOLA GICP LO

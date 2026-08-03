@@ -31,10 +31,17 @@ ros2 launch slam_robot_gazebo lidar_3d_simulation.launch.py
 100 Hz `/imu/data_raw`，噪声、启动偏置及频率可通过 launch 参数调整。
 
 默认 `odometry_mode:=wheel` 由 Gazebo 唯一发布 `/odom` 和
-`odom -> base_footprint`。可选 `odometry_mode:=wheel_imu` 将 Gazebo
-轮速改发到 `/wheel/odom`，由 `robot_localization` 融合轮速平移和 IMU
-偏航角速度后唯一发布 `/odom` 与该 TF。两种模式使用不同 bridge YAML，
-但始终只启动一个 `ros_gz_bridge` 进程。
+`odom -> base_footprint`。可选 `odometry_mode:=wheel_imu` 将 Gazebo 的裸
+轮速消息桥接为 `/wheel/odom_raw`，再由轻量适配节点补充有限、非零且可调
+的协方差，发布 `/wheel/odom` 和 `/imu/data`。`robot_localization` 只融合
+轮速平移和 IMU 偏航角速度，唯一发布 `/odom` 与该 TF。两种模式使用不同
+bridge YAML，但始终只启动一个 `ros_gz_bridge` 进程。
+
+适配参数位于 `config/sensor_covariance.yaml`。其中轮速横向速度标准差
+`0.005 m/s` 小于纵向的 `0.02 m/s`，用有限协方差表达差速底盘的非完整
+约束；IMU 角速度和线加速度标准差分别为 `0.0021 rad/s` 与
+`0.0207 m/s²`，绝对姿态明确标记为未知。不能只修改 bridge 消息类型：
+Gazebo DiffDrive 实际发布的是不带协方差的 `gz.msgs.Odometry`。
 
 可自动比较正常附着和单侧低摩擦条件下的轮速、融合里程计与自研 2D
 SLAM：
@@ -46,6 +53,10 @@ ros2 launch slam_robot_bringup imu_fusion_regression.launch.py \
   odometry_mode:=wheel_imu profile:=slip \
   left_wheel_friction:=0.15 right_wheel_friction:=1.2
 ```
+
+回归会检查协方差有效性、直行和平转误差；正常路面要求融合航向不明显
+劣化，打滑场景则要求它相对轮速航向至少改善 `2°`。任一条件不满足都会
+返回非零退出码。
 
 `worlds/degenerate_corridor.sdf` 是自研 SLAM 的受控退化场景：33 m 长、
 2.6 m 净宽的平行墙走廊，中段在 LiDAR 量程内没有纵向几何特征，入口和

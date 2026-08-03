@@ -87,6 +87,9 @@ class ImuFusionRegression(Node):
         self.latest = {}
         self.imu_angular_z = []
         self.imu_acceleration_z = []
+        self.adapted_imu_samples = 0
+        self.wheel_covariance_valid = False
+        self.imu_covariance_valid = False
 
         self.command_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_subscription(
@@ -98,7 +101,7 @@ class ImuFusionRegression(Node):
         self.create_subscription(
             Odometry,
             "/wheel/odom",
-            lambda message: self.store_odometry("wheel", message),
+            self.wheel_callback,
             20,
         )
         self.create_subscription(
@@ -119,6 +122,12 @@ class ImuFusionRegression(Node):
             self.imu_callback,
             qos_profile_sensor_data,
         )
+        self.create_subscription(
+            Imu,
+            "/imu/data",
+            self.adapted_imu_callback,
+            qos_profile_sensor_data,
+        )
 
     def store_odometry(self, name, message):
         """Store the most recent planar pose for a named estimator."""
@@ -128,6 +137,36 @@ class ImuFusionRegression(Node):
         """Collect IMU axes used by the stationary validation."""
         self.imu_angular_z.append(message.angular_velocity.z)
         self.imu_acceleration_z.append(message.linear_acceleration.z)
+
+    def wheel_callback(self, message):
+        """Store adapted wheel odometry and validate its covariance model."""
+        self.store_odometry("wheel", message)
+        covariance = message.twist.covariance
+        self.wheel_covariance_valid = (
+            math.isfinite(covariance[0])
+            and math.isfinite(covariance[7])
+            and covariance[0] > covariance[7] > 0.0
+            and math.isfinite(covariance[35])
+            and covariance[35] > 0.0
+        )
+
+    def adapted_imu_callback(self, message):
+        """Validate the covariance-bearing IMU stream consumed by the EKF."""
+        angular = message.angular_velocity_covariance
+        acceleration = message.linear_acceleration_covariance
+        self.adapted_imu_samples += 1
+        self.imu_covariance_valid = (
+            message.orientation_covariance[0] == -1.0
+            and all(
+                math.isfinite(angular[index]) and angular[index] > 0.0
+                for index in (0, 4, 8)
+            )
+            and all(
+                math.isfinite(acceleration[index])
+                and acceleration[index] > 0.0
+                for index in (0, 4, 8)
+            )
+        )
 
     def required_sources(self):
         """Return estimator names required by the selected mode."""
@@ -146,6 +185,10 @@ class ImuFusionRegression(Node):
             if (
                 self.required_sources().issubset(self.latest)
                 and len(self.imu_angular_z) >= 50
+                and (
+                    self.odometry_mode != "wheel_imu"
+                    or self.adapted_imu_samples >= 50
+                )
             ):
                 return
         missing = sorted(self.required_sources() - self.latest.keys())
@@ -219,6 +262,47 @@ class ImuFusionRegression(Node):
             )
         return results
 
+    def evaluate(self, arguments, straight_results, rotation_results):
+        """Apply covariance and motion-quality pass/fail criteria."""
+        checks = {
+            "straight_ekf_translation_bounded": (
+                straight_results["odom"][0]
+                <= arguments.maximum_straight_translation_error
+            ),
+            "rotation_ekf_yaw_bounded": (
+                math.degrees(rotation_results["odom"][1])
+                <= arguments.maximum_rotation_yaw_error_degrees
+            ),
+        }
+        if self.odometry_mode != "wheel_imu":
+            print("\nIMU_FUSION_CHECKS", flush=True)
+            for name, passed in checks.items():
+                print(
+                    f"  [{'PASS' if passed else 'FAIL'}] {name}",
+                    flush=True,
+                )
+            return all(checks.values())
+
+        checks["wheel_covariance_valid"] = self.wheel_covariance_valid
+        checks["imu_covariance_valid"] = self.imu_covariance_valid
+        wheel_yaw = math.degrees(rotation_results["wheel"][1])
+        ekf_yaw = math.degrees(rotation_results["odom"][1])
+        if arguments.profile == "slip":
+            checks["slip_yaw_improved"] = (
+                wheel_yaw - ekf_yaw
+                >= arguments.minimum_slip_yaw_improvement_degrees
+            )
+        else:
+            checks["normal_yaw_not_degraded"] = (
+                ekf_yaw - wheel_yaw
+                <= arguments.maximum_normal_yaw_degradation_degrees
+            )
+
+        print("\nIMU_FUSION_CHECKS", flush=True)
+        for name, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {name}", flush=True)
+        return all(checks.values())
+
 
 def parse_arguments():
     """Parse the regression profile and expected odometry source."""
@@ -236,7 +320,36 @@ def parse_arguments():
         default="normal",
     )
     parser.add_argument("--require-slam", action="store_true")
-    return parser.parse_args(remove_ros_args()[1:])
+    parser.add_argument(
+        "--maximum-straight-translation-error",
+        type=float,
+        default=0.10,
+    )
+    parser.add_argument(
+        "--maximum-rotation-yaw-error-degrees",
+        type=float,
+        default=2.0,
+    )
+    parser.add_argument(
+        "--maximum-normal-yaw-degradation-degrees",
+        type=float,
+        default=0.50,
+    )
+    parser.add_argument(
+        "--minimum-slip-yaw-improvement-degrees",
+        type=float,
+        default=2.0,
+    )
+    arguments = parser.parse_args(remove_ros_args()[1:])
+    thresholds = (
+        arguments.maximum_straight_translation_error,
+        arguments.maximum_rotation_yaw_error_degrees,
+        arguments.maximum_normal_yaw_degradation_degrees,
+        arguments.minimum_slip_yaw_improvement_degrees,
+    )
+    if any(not math.isfinite(value) or value < 0.0 for value in thresholds):
+        parser.error("Regression thresholds must be finite and nonnegative")
+    return arguments
 
 
 def main():
@@ -259,7 +372,7 @@ def main():
         node.run_command(0.25, 0.0, 6.0)
         node.stop_and_settle()
         straight_end = node.snapshot()
-        node.report_motion(
+        straight_results = node.report_motion(
             f"{arguments.profile}_straight",
             straight_start,
             straight_end,
@@ -269,11 +382,17 @@ def main():
         node.run_command(0.0, 0.60, 4.0)
         node.stop_and_settle()
         rotation_end = node.snapshot()
-        node.report_motion(
+        rotation_results = node.report_motion(
             f"{arguments.profile}_rotation",
             rotation_start,
             rotation_end,
         )
+        if not node.evaluate(
+            arguments,
+            straight_results,
+            rotation_results,
+        ):
+            exit_code = 1
     except (RuntimeError, ValueError) as error:
         node.get_logger().error(str(error))
         exit_code = 1

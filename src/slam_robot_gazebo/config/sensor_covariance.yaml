@@ -1,0 +1,16 @@
+sensor_covariance_adapter:
+  ros__parameters:
+    use_sim_time: true
+    wheel_input_topic: /wheel/odom_raw
+    wheel_output_topic: /wheel/odom
+    imu_input_topic: /imu/data_raw
+    imu_output_topic: /imu/data
+    wheel:
+      pose_translation_stddev: 0.05
+      pose_yaw_stddev: 0.05
+      linear_x_stddev: 0.02
+      linear_y_stddev: 0.005
+      angular_z_stddev: 0.02
+    imu:
+      angular_velocity_stddev: 0.0021
+      linear_acceleration_stddev: 0.0207
