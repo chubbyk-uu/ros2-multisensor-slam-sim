@@ -30,6 +30,20 @@ std::vector<Point2D> makeCornerScan()
   return points;
 }
 
+TranslationObservability makeTranslationObservability(
+  const std::size_t rank)
+{
+  TranslationObservability observability;
+  observability.rank = rank;
+  observability.minimum_information = rank < 2U ? 1.0 : 80.0;
+  observability.maximum_information = 100.0;
+  observability.information_ratio =
+    observability.minimum_information / observability.maximum_information;
+  observability.normal_count = 180U;
+  observability.weak_direction_correction_scale = rank < 2U ? 0.2 : 1.0;
+  return observability;
+}
+
 PoseGraph2D makeLoopGraph(const std::vector<Pose2D> & poses)
 {
   PoseGraph2D graph;
@@ -69,7 +83,8 @@ TEST(LoopClosureProcessor, MatchesAndOptimizesGraphCopy)
       LoopClosureKeyframe2D{
           poses[index],
           accumulated_distance,
-          std::make_shared<const std::vector<Point2D>>(makeCornerScan())});
+          std::make_shared<const std::vector<Point2D>>(makeCornerScan()),
+          makeTranslationObservability(2U)});
   }
   PoseGraph2D graph = makeLoopGraph(poses);
   const std::size_t original_constraint_count = graph.constraints().size();
@@ -91,6 +106,7 @@ TEST(LoopClosureProcessor, MatchesAndOptimizesGraphCopy)
   parameters.matcher.fine_angular_resolution = 0.005;
   parameters.matcher.minimum_score = 0.5;
   parameters.matcher.minimum_matched_points = 80U;
+  parameters.matcher.degeneracy_handling_enabled = true;
 
   const auto result =
     processLoopClosure(keyframes, graph, 4U, parameters);
@@ -102,6 +118,43 @@ TEST(LoopClosureProcessor, MatchesAndOptimizesGraphCopy)
     result.optimized_graph.constraints().size(),
     original_constraint_count + 1U);
   EXPECT_EQ(graph.constraints().size(), original_constraint_count);
+}
+
+TEST(LoopClosureProcessor, RejectsTranslationDegenerateMatch)
+{
+  const std::vector<Pose2D> poses{
+    Pose2D{0.0, 0.0, 0.0},
+    Pose2D{1.0, 0.0, 0.0},
+    Pose2D{0.10, 0.0, 0.0}};
+  std::vector<LoopClosureKeyframe2D> keyframes;
+  for (std::size_t index = 0U; index < poses.size(); ++index) {
+    keyframes.push_back(
+      LoopClosureKeyframe2D{
+          poses[index],
+          static_cast<double>(index),
+          std::make_shared<const std::vector<Point2D>>(makeCornerScan()),
+          makeTranslationObservability(index == 2U ? 1U : 2U)});
+  }
+  LoopClosureProcessorParameters parameters;
+  parameters.candidate.minimum_keyframe_separation = 2U;
+  parameters.candidate.minimum_travel_distance = 2.0;
+  parameters.candidate.search_radius = 0.3;
+  parameters.candidate_submap_half_width = 0U;
+  parameters.minimum_candidate_chain_size = 1U;
+  parameters.matcher.linear_search_window = 0.2;
+  parameters.matcher.minimum_score = 0.5;
+  parameters.matcher.minimum_matched_points = 80U;
+  parameters.matcher.degeneracy_handling_enabled = true;
+
+  const auto result = processLoopClosure(
+    keyframes,
+    makeLoopGraph(poses),
+    2U,
+    parameters);
+
+  EXPECT_FALSE(result.accepted);
+  EXPECT_EQ(result.evaluated_candidates, 1U);
+  EXPECT_EQ(result.rejected_degenerate_candidates, 1U);
 }
 
 TEST(LoopClosureProcessor, RejectsMismatchedState)

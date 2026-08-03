@@ -330,6 +330,8 @@ ros2 topic echo /ground_truth/odom --once
   估计可观测秩；平行走廊中按信息比值连续抑制弱方向修正，并发布对应的
   各向异性协方差。索引缺口和距离断裂会切断法向窗口，避免跨门口、柱子
   或家具边缘产生虚假法向。
+- 关键帧保留采集时的单帧法向可观测性；后台回环对 rank 小于 2 的候选
+  采用保守拒绝，避免把走廊轴向先验当成 5 cm 精度的激光约束写入位姿图。
 - 发布 `/custom_slam/laser_odom`、`/custom_slam/laser_path` 和
   `/custom_slam/aligned_scan_points`。
 - 只将初始化和匹配成功的关键帧写入 log-odds 占据栅格，并发布

@@ -208,6 +208,9 @@ public:
     const auto minimum_candidate_chain_size =
       declare_parameter<int64_t>(
       "loop_closure.minimum_candidate_chain_size", 10);
+    loop_reject_degenerate_matches_ =
+      declare_parameter<bool>(
+      "loop_closure.reject_degenerate_matches", true);
     maximum_loop_correction_translation_ =
       declare_parameter<double>(
       "loop_closure.maximum_correction_translation", 0.50);
@@ -329,6 +332,12 @@ public:
     loop_matcher_parameters_.rotation_penalty_weight =
       declare_parameter<double>(
       "loop_closure.matcher.rotation_penalty_weight", 0.05);
+    loop_matcher_parameters_.degeneracy_handling_enabled =
+      declare_parameter<bool>(
+      "loop_closure.matcher.degeneracy.enabled", true);
+    loop_matcher_parameters_.weak_direction_correction_scale =
+      declare_parameter<double>(
+      "loop_closure.matcher.degeneracy.weak_direction_correction_scale", 0.0);
     loop_matcher_parameters_.minimum_score =
       declare_parameter<double>(
       "loop_closure.matcher.minimum_score", 0.55);
@@ -528,6 +537,7 @@ private:
     Pose2D pose;
     double accumulated_distance;
     std::shared_ptr<const std::vector<Point2D>> points;
+    TranslationObservability translation_observability;
     Point2D sensor_origin;
     struct MapRayObservation
     {
@@ -917,6 +927,9 @@ private:
     }
 
     if (!initialized_) {
+      const TranslationObservability translation_observability =
+        estimateNormalTranslationObservability(
+        base_scan_points, translation_observability_parameters_);
       estimated_pose_ = odometry_pose;
       last_matched_pose_ = odometry_pose;
       last_matched_odometry_pose_ = odometry_pose;
@@ -924,6 +937,7 @@ private:
         scan->header.stamp,
         estimated_pose_,
         base_points,
+        translation_observability,
         *scan,
         base_from_laser);
       initialized_ = true;
@@ -996,6 +1010,7 @@ private:
         scan->header.stamp,
         estimated_pose_,
         base_points,
+        translation_observability,
         *scan,
         base_from_laser);
       const Pose2D correction =
@@ -1038,6 +1053,7 @@ private:
     const builtin_interfaces::msg::Time & stamp,
     const Pose2D & pose,
     const std::vector<Point2D> & points,
+    const TranslationObservability & translation_observability,
     const sensor_msgs::msg::LaserScan & scan,
     const Pose2D & base_from_laser)
   {
@@ -1053,6 +1069,7 @@ private:
       pose,
       accumulated_distance,
       std::make_shared<const std::vector<Point2D>>(points),
+      translation_observability,
       Point2D{
         static_cast<float>(base_from_laser.x),
         static_cast<float>(base_from_laser.y)},
@@ -1173,7 +1190,8 @@ private:
         LoopClosureKeyframe2D{
           keyframe.pose,
           keyframe.accumulated_distance,
-          keyframe.points});
+          keyframe.points,
+          keyframe.translation_observability});
     }
 
     LoopClosureProcessorParameters parameters;
@@ -1181,6 +1199,8 @@ private:
     parameters.candidate_submap_half_width =
       candidate_submap_half_width_;
     parameters.matcher = loop_matcher_parameters_;
+    parameters.reject_degenerate_matches =
+      loop_reject_degenerate_matches_;
     parameters.minimum_candidate_chain_size =
       minimum_candidate_chain_size_;
     parameters.maximum_correction_translation =
@@ -1240,9 +1260,11 @@ private:
     if (!result.accepted) {
       RCLCPP_DEBUG(
         get_logger(),
-        "Rejected %zu loop closure candidates for keyframe %zu",
+        "Rejected %zu loop closure candidates for keyframe %zu "
+        "(%zu degenerate)",
         result.evaluated_candidates,
-        result.current_id);
+        result.current_id,
+        result.rejected_degenerate_candidates);
       return;
     }
 
@@ -1831,6 +1853,7 @@ private:
   std::size_t minimum_loop_closure_interval_;
   std::size_t candidate_submap_half_width_;
   std::size_t minimum_candidate_chain_size_;
+  bool loop_reject_degenerate_matches_;
   double maximum_loop_correction_translation_;
   double maximum_loop_correction_rotation_;
   double loop_translation_weight_;

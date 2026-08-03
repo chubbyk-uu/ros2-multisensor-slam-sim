@@ -53,6 +53,7 @@ scan_matcher_odometry:
       maximum_candidates: 3
       candidate_submap_half_width: 5
       minimum_candidate_chain_size: 10
+      reject_degenerate_matches: true
       maximum_correction_translation: 0.50
       maximum_correction_rotation: 0.25
       translation_stddev: 0.05
@@ -72,6 +73,9 @@ scan_matcher_odometry:
         fine_angular_resolution: 0.01
         translation_penalty_weight: 0.05
         rotation_penalty_weight: 0.05
+        degeneracy:
+          enabled: true
+          weak_direction_correction_scale: 0.0
         minimum_score: 0.55
         minimum_support_fraction: 0.50
         minimum_matched_points: 100

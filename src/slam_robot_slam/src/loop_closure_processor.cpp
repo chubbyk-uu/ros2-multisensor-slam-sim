@@ -167,7 +167,15 @@ LoopClosureProcessingResult processLoopClosure(
       reference_points,
       *keyframes[current_id].points,
       graph_poses[current_id],
-      parameters.matcher);
+      parameters.matcher,
+      parameters.matcher.degeneracy_handling_enabled ?
+      &keyframes[current_id].translation_observability : nullptr);
+    if (parameters.reject_degenerate_matches &&
+      match.translation_observable_rank < 2U)
+    {
+      ++result.rejected_degenerate_candidates;
+      continue;
+    }
     const Pose2D correction =
       relativePose(graph_poses[current_id], match.pose);
     if (match.success &&

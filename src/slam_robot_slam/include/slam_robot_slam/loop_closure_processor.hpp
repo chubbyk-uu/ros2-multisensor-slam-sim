@@ -17,6 +17,7 @@ struct LoopClosureKeyframe2D
   Pose2D pose;
   double accumulated_distance{0.0};
   std::shared_ptr<const std::vector<Point2D>> points;
+  TranslationObservability translation_observability;
 };
 
 struct LoopClosureProcessorParameters
@@ -24,6 +25,7 @@ struct LoopClosureProcessorParameters
   LoopClosureCandidateParameters candidate;
   std::size_t candidate_submap_half_width{5U};
   CorrelativeScanMatcherParameters matcher;
+  bool reject_degenerate_matches{true};
   std::size_t minimum_candidate_chain_size{10U};
   double maximum_correction_translation{0.50};
   double maximum_correction_rotation{0.25};
@@ -36,6 +38,7 @@ struct LoopClosureProcessingResult
 {
   std::size_t current_id{0U};
   std::size_t evaluated_candidates{0U};
+  std::size_t rejected_degenerate_candidates{0U};
   bool accepted{false};
   std::size_t candidate_id{0U};
   CorrelativeScanMatcherResult match;

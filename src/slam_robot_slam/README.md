@@ -187,11 +187,13 @@ base_footprint -> lidar_link  robot_state_publisher
 | `loop_closure.maximum_candidates` | `3` | 每次最多验证的最近候选数 |
 | `loop_closure.candidate_submap_half_width` | `5` | 候选前后用于子地图的关键帧数 |
 | `loop_closure.minimum_candidate_chain_size` | `10` | 候选附近要求的连续历史节点数 |
+| `loop_closure.reject_degenerate_matches` | `true` | 不为平移可观测秩小于 2 的回环建立约束 |
 | `loop_closure.maximum_correction_translation` | `0.50` | 回环最大平移修正，单位 m |
 | `loop_closure.maximum_correction_rotation` | `0.25` | 回环最大旋转修正，单位 rad |
 | `loop_closure.matcher.minimum_score` | `0.55` | 回环匹配的最小相关分数 |
 | `loop_closure.matcher.minimum_support_fraction` | `0.50` | 回环扫描最小子图支撑占比 |
 | `loop_closure.matcher.minimum_matched_points` | `100` | 回环匹配的最少重合点 |
+| `loop_closure.matcher.degeneracy.enabled` | `true` | 将当前关键帧采集时的法向可观测性用于回环验证 |
 
 `loop_closure.minimum_candidate_chain_size` 与关键帧间距存在隐式耦合。
 候选链只统计落在 `loop_closure.search_radius` 内的连续历史节点，因此
@@ -266,6 +268,12 @@ Gazebo 真值的平面位置差约 `0.003 m`。
 误报，全部自动判定通过。
 重建后的 `/custom_slam/map` 也已通过 Map Saver 保存为
 `242×202 @ 0.05 m` 的 YAML/PGM 地图。
+
+回环退化保护启用后再次运行同一路线，仍建立 210 个关键帧、接受并重建
+4 次正常回环；最终误差为 `0.0120 m / 0.130°`，前端最大间隔仍为
+`0.100 s`。回环线程使用关键帧采集时的单帧法向可观测性，不会在历史
+子图拼接点之间估计法向；rank 小于 2 的候选直接拒绝，不以各向同性
+`0.05 m` 标准差写入位姿图。
 
 同日快速旋转回归三档全部通过，共新增 547 个关键帧。最大前端消息间隔
 均为 `0.100 s`，没有匹配拒绝、误回环或退化误报；三档真实匹配数分别为
