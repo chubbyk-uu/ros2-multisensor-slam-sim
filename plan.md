@@ -11,7 +11,8 @@
 5. 视觉 SLAM。
 6. 多传感器融合。
 
-第一阶段的最终成果是：通过一条 launch 命令启动仿真，在 RViz 中遥控机器人，生成闭环一致的二维地图并保存地图。
+2D 激光 SLAM、定位导航和自研 2D SLAM 基线均已完成。当前里程碑是保持
+2D 回归链路不退化，在独立 TF 和话题命名下接入 3D LiDAR 仿真。
 
 ## 2. 当前环境
 
@@ -24,7 +25,10 @@
 - `slam_toolbox`。
 - Nav2。
 
-已建立 description、gazebo、bringup、slam 和 navigation 五个 ROS 2 包；机器人、仿真、2D LiDAR、SLAM Toolbox、地图保存、AMCL 定位和 Nav2 导航链路已经接通。
+已建立 description、gazebo、bringup、slam 和 navigation 五个 ROS 2 包；
+机器人、仿真、2D LiDAR、SLAM Toolbox、地图保存、AMCL、Nav2 和自研
+C++ 2D SLAM 链路已经接通，并具备长闭环、快速旋转、退化走廊、重复
+结构、大场景和固定 rosbag 离线回归。
 
 主要开发语言约定：
 
@@ -32,33 +36,39 @@
 - Python 用于 launch、数据分析、测试工具和算法原型。
 - Xacro 管理机器人模型，YAML 管理可调参数。
 
-## 3. 建议目录结构
+## 3. 当前目录结构
 
 ```text
 slam/
 ├── AGENTS.md
+├── README.md
 ├── plan.md
+├── docs/
+├── maps/
 ├── src/
 │   ├── slam_robot_description/
 │   │   ├── urdf/
-│   │   ├── meshes/
 │   │   ├── rviz/
 │   │   └── launch/
 │   ├── slam_robot_gazebo/
 │   │   ├── worlds/
-│   │   ├── models/
 │   │   ├── config/
+│   │   ├── rviz/
 │   │   └── launch/
 │   ├── slam_robot_bringup/
-│   │   ├── config/
+│   │   ├── rviz/
 │   │   └── launch/
 │   ├── slam_robot_slam/
 │   │   ├── config/
 │   │   ├── launch/
-│   │   └── src/
+│   │   ├── include/
+│   │   ├── scripts/
+│   │   ├── src/
+│   │   └── test/
 │   └── slam_robot_navigation/
 │       ├── config/
-│       └── launch/
+│       ├── launch/
+│       └── scripts/
 ├── build/
 ├── install/
 └── log/
@@ -69,7 +79,7 @@ slam/
 - `slam_robot_description`：URDF/Xacro、模型资源和模型显示。
 - `slam_robot_gazebo`：世界文件、Gazebo 系统和 ROS-Gazebo 桥接。
 - `slam_robot_bringup`：统一组织机器人、仿真和算法启动。
-- `slam_robot_slam`：`slam_toolbox` 配置及后续自研 SLAM 节点。
+- `slam_robot_slam`：`slam_toolbox` 配置、自研 C++ 2D SLAM、数据集与回归工具。
 - `slam_robot_navigation`：地图加载、AMCL 和 Nav2 配置。
 
 ## 4. 系统架构
@@ -92,6 +102,13 @@ Gazebo 2D LiDAR ----> /scan
 robot_state_publisher ----> /tf、/tf_static
 
 /scan + TF + /odom ----> slam_toolbox ----> /map、map -> odom
+
+/scan + /odom + TF ----> 自研相关匹配前端 ----> 激光里程计、关键帧、map -> odom
+                                      |
+                                      +----> 后台回环 + Ceres 位姿图
+                                      +----> 优化位姿射线重放 ----> /custom_slam/map
+
+/ground_truth/odom ----> 只供自动回归评估，不进入任一估计器
 ```
 
 ### 4.2 TF 结构
@@ -117,7 +134,7 @@ TF 发布职责：
 - `base_footprint` 位于左右驱动轮轴线中点的地面投影，作为差速运动学旋转中心。
 - 底盘几何中心相对驱动轴后移，质心投影保持在驱动轮与后万向轮形成的支撑三角形内。
 
-## 5. 第一阶段：2D 激光 SLAM
+## 5. 第一阶段：2D 激光 SLAM（已完成）
 
 ### 5.1 建立 ROS 2 包
 
@@ -126,7 +143,7 @@ TF 发布职责：
 - 创建 `src/`。
 - 创建 description、gazebo、bringup 和 slam 四个基础包。
 - 配置依赖、安装目录和基础 launch 文件。
-- 暂缓创建 navigation 包，等建图链路稳定后再加入。
+- 建图链路稳定后再创建 navigation 包（已按此顺序完成）。
 
 验收：
 
@@ -259,7 +276,7 @@ TF 发布职责：
 - 地图分辨率、原点和占据阈值正确。
 - 重启系统后地图不会损坏或发生比例变化。
 
-## 6. 第二阶段：定位与导航
+## 6. 第二阶段：定位与导航（基线已完成）
 
 本阶段以 ROS 2 Jazzy 安装的 Nav2 官方示例为基线，保留官方完整组件，只适配机器人相关参数：
 
@@ -281,6 +298,10 @@ TF 发布职责：
 - [x] 加入地图外临时障碍物，验证代价地图更新和动态绕障。
 - [ ] 设计完全封路场景，单独验证停车等待和 Nav2 恢复行为。
 
+完全封路恢复属于导航专项补充测试，保留为非阻塞任务；它不影响已经通过
+的地图定位、多目标导航和动态障碍物重规划基线，也不作为进入 3D 阶段的
+前置条件。
+
 2026-07-30 自动回归结果：
 
 - 9/9 个目标点成功，总耗时 `98.5 s`。
@@ -300,9 +321,11 @@ TF 发布职责：
   已及时避障；恢复行为尚未通过封路场景触发。
 - 测试结束后动态箱体成功自动删除。
 
-## 7. 第三阶段：自研 2D 激光 SLAM
+## 7. 第三阶段：自研 2D 激光 SLAM（已完成基线）
 
-成熟方案跑通后，记录 `/scan`、`/odom`、`/tf` 和 `/tf_static`，通过 rosbag 离线开发以下模块。
+本阶段先以 SLAM Toolbox 建立成熟方案基线，再通过仿真和 rosbag 开发并
+验证以下模块。通用录制入口保留动态 `/tf`；固定回归数据集只记录算法
+输入、真值和 `/tf_static`，避免旧 `map -> odom` 泄漏到待测结果。
 
 ### 7.1 激光预处理
 
@@ -370,28 +393,52 @@ TF 发布职责：
 - 地图重建版闭环停止后，自研位置与 Gazebo 真值的平面位置差约
   `0.003 m`。
 
-## 8. 后续扩展
+## 8. 第四阶段：3D 激光 SLAM（当前下一阶段）
 
-### 8.1 3D 激光
+### 8.1 3D LiDAR 模型与数据链路
 
-- 在机器人模型中加入 3D LiDAR。
-- 桥接 `PointCloud2`。
-- 添加 IMU。
-- 研究 LIO、点云去畸变、局部地图和回环检测。
+- [ ] 在 Xacro 中增加独立的 `lidar_3d_mount_link -> lidar_3d_link` 固定链，
+  保留现有 2D LiDAR，避免破坏 2D 回归基线。
+- [ ] 将线数、水平/垂直视场角、量程、更新频率、噪声和安装位姿参数化。
+- [ ] 在 Gazebo Sim 中加入 3D GPU LiDAR，并通过 `ros_gz_bridge` 发布
+  `/lidar_3d/points`（`sensor_msgs/PointCloud2`）。
+- [ ] 增加独立的 3D 传感器启动开关和 RViz 配置；默认 2D 启动方式保持
+  兼容，不额外承担 3D 点云开销。
+- [ ] 检查点云 `frame_id`、仿真时间戳、频率、字段、点数、有限性、量程和
+  TF 空间对齐。
+- [ ] 记录开启 3D LiDAR 前后的实时率、Gazebo Server CPU、GPU、带宽和
+  点云处理延迟，先满足稳定仿真再接算法。
 
-### 8.2 视觉
+### 8.2 IMU 与 3D SLAM 成熟基线
+
+- [ ] 增加 `imu_link` 和 `/imu/data_raw`，参数化频率、噪声和偏置。
+- [ ] 静止时检查重力方向、角速度零偏、协方差、时间戳和外参。
+- [ ] 调研并选择支持 ROS 2 Jazzy、可复现且维护活跃的成熟 3D/LIO 方案；
+  先跑通官方或上游示例，再适配本机器人，不直接从零自研前端。
+- [ ] 固化算法输入契约，明确点云、IMU、轮速、TF 与 `use_sim_time` 要求，
+  禁止 Gazebo 真值进入估计器。
+- [ ] 建立包含立体结构和回环的 3D 世界，验证建图尺度、姿态、漂移、回环
+  和资源占用。
+- [ ] 录制不含算法输出的固定 3D rosbag，并建立可重复离线回归。
+
+3D 阶段的首个验收点仅要求“模型、点云、TF 和性能正确”；达到该验收点
+后再确定具体 3D SLAM 算法和参数，避免同时排查传感器与算法问题。
+
+## 9. 后续扩展
+
+### 9.1 视觉
 
 - 添加 RGB、双目或 RGB-D 相机。
 - 配置相机内参、深度和图像桥接。
 - 实现特征提取、匹配、视觉里程计和回环。
 
-### 8.3 多传感器融合
+### 9.2 多传感器融合
 
 - 统一相机、激光、IMU 和轮速时间戳。
 - 标定传感器外参。
 - 使用 EKF、因子图或紧耦合方法进行融合。
 
-## 9. 开发与调试策略
+## 10. 开发与调试策略
 
 每个阶段遵循以下流程：
 
@@ -415,7 +462,7 @@ TF 发布职责：
 -> 算法实现
 ```
 
-## 10. 近期任务清单
+## 11. 近期任务清单
 
 - [x] 确认 ROS 2、Gazebo、SLAM Toolbox 和 Nav2 环境。
 - [x] 编写项目协作规范。
@@ -453,6 +500,9 @@ TF 发布职责：
 - [x] 增加重复结构混淆回归，验证相似房间不误闭环且真正重访可闭环。
 - [x] 增加大场景长时间仿真回归，验证 2400+ 节点、多次回环重建和资源上限。
 - [x] 增加固定 rosbag 的 2× 长时间离线回放回归，并记录数据集指纹。
+- [x] 冻结 2D SLAM 基线并完成进入 3D 前的文档一致性检查。
+- [ ] 增加参数化 3D LiDAR 模型、独立 TF、点云桥接和 RViz 显示。
+- [ ] 建立 3D LiDAR 频率、时间戳、点云字段、空间对齐和性能验收。
 
 2026-07-30 工程审查整改：
 

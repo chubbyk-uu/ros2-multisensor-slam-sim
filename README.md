@@ -7,7 +7,7 @@
 25 m 单向及 50 m 往返退化长走廊回归，并通过双重复房间的假回环保护
 测试及 155 m 大场景长时间回归；前端已能识别平行走廊的弱观测方向，
 并沿该方向保留轮式里程计预测；155 m 固定 rosbag 的 2× 离线回归也已
-通过。下一阶段将扩展 3D LiDAR、视觉和多传感器融合。
+通过。下一阶段先接入 3D LiDAR；视觉和多传感器融合随后推进。
 
 ## 运行效果
 
@@ -30,11 +30,17 @@
 | 定位与导航 | 已完成 | Map Server、AMCL、Nav2 官方完整组件和 RViz |
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
 | 自研 C++ 2D SLAM | 已完成 2D 基线 | 已完成前后端、场景回归及 155 m 固定 rosbag 的 2× 离线回放 |
-| 3D LiDAR / 视觉 / 融合 | 计划中 | 在 2D 基线稳定后逐步接入 |
+| 3D LiDAR | 下一阶段 | 先完成模型、点云桥接、TF 和性能验收，再选择成熟 3D SLAM 基线 |
+| 视觉 / 多传感器融合 | 计划中 | 在 3D 激光链路稳定后逐步接入 |
 
 详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见
 [docs/performance.md](docs/performance.md)，自研 SLAM 工程审查的逐项处理
-状态见 [docs/review_remediation.md](docs/review_remediation.md)。
+状态见 [docs/review_remediation.md](docs/review_remediation.md)，固定数据集
+指纹与离线复现方式见 [docs/datasets.md](docs/datasets.md)。
+
+2D 阶段现已作为后续开发的回归基线冻结。机器人模型、官方建图、地图
+保存、定位导航、自研前后端及自动回归链路均保留；尚未执行的“完全封路
+触发 Nav2 恢复行为”属于导航专项补充测试，不阻塞 3D LiDAR 传感器接入。
 
 ## 环境与依赖
 
@@ -238,7 +244,7 @@ ros2 run slam_robot_navigation navigation_regression.py \
 
 ### 7. 自研 SLAM 开发入口
 
-启动 Gazebo、C++ 激光预处理节点和专用 RViz：
+启动 Gazebo、自研 C++ 2D SLAM（含预处理、前端和后端）及专用 RViz：
 
 ```bash
 ros2 launch slam_robot_bringup custom_slam_development.launch.py
@@ -394,7 +400,9 @@ robot_state_publisher -> /tf、/tf_static
 /scan + /odom + TF -> local correlative matcher
   -> /custom_slam/laser_odom、/custom_slam/laser_path
   -> map -> odom
-  -> keyframe inverse sensor model -> /custom_slam/map（map frame）
+  -> keyframes + sequential constraints
+  -> background loop closure + Ceres pose graph
+  -> optimized ray replay -> /custom_slam/map（map frame）
 saved map + /scan + TF -> AMCL / Nav2
 ```
 
@@ -418,7 +426,7 @@ map
 
 - `slam_robot_description`：Xacro、模型资源和模型显示。
 - `slam_robot_gazebo`：Gazebo 世界、系统插件和 ROS-Gazebo 桥接。
-- `slam_robot_bringup`：建图与导航的统一启动入口。
+- `slam_robot_bringup`：建图、导航、自研 SLAM 和各类仿真回归的统一启动入口。
 - `slam_robot_slam`：SLAM Toolbox、自研 C++ SLAM、数据录制和算法测试。
 - `slam_robot_navigation`：Map Server、AMCL、Nav2 配置和自动回归工具。
 

@@ -31,7 +31,10 @@ ros2 launch slam_robot_bringup navigation_simulation.launch.py
 ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
-当前入口启动 Gazebo、C++ 激光预处理节点和专用 RViz，不启动 SLAM Toolbox，也不发布 `/map` 或 `map -> odom`。
+当前入口启动 Gazebo、自研 C++ 激光预处理、扫描匹配/位姿图节点和专用
+RViz，不启动 SLAM Toolbox。它发布 `/custom_slam/map` 和
+`map -> odom`，但不占用标准 `/map`；因此不能与 SLAM Toolbox 建图入口
+同时运行。
 
 无界面启动自研 SLAM 退化长走廊回归环境：
 
@@ -41,3 +44,24 @@ ros2 launch slam_robot_bringup corridor_slam_regression.launch.py
 
 需要人工观察时可增加 `gui:=true use_rviz:=true`。启动完成后，在另一个
 终端运行 `ros2 run slam_robot_slam corridor_regression`。
+
+其余自研 SLAM 专用入口：
+
+| 场景 | 启动命令 | 配套判定器 |
+| --- | --- | --- |
+| 重复结构 | `repeated_structure_slam_regression.launch.py` | `repeated_structure_regression` |
+| 155 m 大场景 | `large_scale_slam_regression.launch.py` | `large_scale_regression` |
+| 固定数据集录制 | `large_scale_dataset_recording.launch.py` | `large_scale_regression` |
+
+例如运行大场景回归：
+
+```bash
+# 终端 1
+ros2 launch slam_robot_bringup large_scale_slam_regression.launch.py
+
+# 终端 2
+ros2 run slam_robot_slam large_scale_regression
+```
+
+固定数据集录制和 2× 离线回放的完整命令、话题白名单与文件指纹见
+[docs/datasets.md](../../docs/datasets.md)。
