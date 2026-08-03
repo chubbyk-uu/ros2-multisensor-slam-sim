@@ -15,6 +15,9 @@
 #include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "diagnostic_msgs/msg/key_value.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
@@ -121,6 +124,9 @@ public:
     const auto aligned_points_topic =
       declare_parameter<std::string>(
       "aligned_points_topic", "/custom_slam/aligned_scan_points");
+    const auto matcher_diagnostics_topic =
+      declare_parameter<std::string>(
+      "matcher_diagnostics_topic", "/custom_slam/matcher_diagnostics");
     const auto map_topic =
       declare_parameter<std::string>(
       "map_topic", "/custom_slam/map");
@@ -423,6 +429,9 @@ public:
     aligned_points_publisher_ =
       create_publisher<sensor_msgs::msg::PointCloud2>(
       aligned_points_topic, rclcpp::QoS(10).reliable());
+    matcher_diagnostics_publisher_ =
+      create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+      matcher_diagnostics_topic, rclcpp::QoS(100).reliable());
     map_publisher_ =
       create_publisher<nav_msgs::msg::OccupancyGrid>(
       map_topic,
@@ -506,6 +515,165 @@ private:
     };
     std::shared_ptr<const std::vector<MapRayObservation>> map_rays;
   };
+
+  struct FrontEndDiagnosticCounters
+  {
+    std::size_t event_sequence{0U};
+    std::size_t bootstrap_scans{0U};
+    std::size_t insufficient_point_scans{0U};
+    std::size_t motion_below_threshold_scans{0U};
+    std::size_t match_attempts{0U};
+    std::size_t accepted_matches{0U};
+    std::size_t rejected_matches{0U};
+    std::size_t rank_zero_matches{0U};
+    std::size_t rank_one_matches{0U};
+    std::size_t rank_two_matches{0U};
+    std::size_t suppressed_matches{0U};
+  };
+
+  static void appendDiagnosticValue(
+    diagnostic_msgs::msg::DiagnosticStatus & status,
+    const std::string & key,
+    const std::string & value)
+  {
+    diagnostic_msgs::msg::KeyValue entry;
+    entry.key = key;
+    entry.value = value;
+    status.values.push_back(std::move(entry));
+  }
+
+  void publishFrontEndDiagnostic(
+    const builtin_interfaces::msg::Time & stamp,
+    const std::string & outcome,
+    const std::size_t scan_points,
+    const std::size_t reference_points,
+    const CorrelativeScanMatcherResult * result = nullptr)
+  {
+    ++front_end_diagnostic_counters_.event_sequence;
+    try {
+      diagnostic_msgs::msg::DiagnosticArray diagnostics;
+      diagnostics.header.stamp = stamp;
+      diagnostics.header.frame_id = map_frame_;
+      diagnostic_msgs::msg::DiagnosticStatus status;
+      status.level =
+        outcome == "match_rejected" ?
+        diagnostic_msgs::msg::DiagnosticStatus::WARN :
+        diagnostic_msgs::msg::DiagnosticStatus::OK;
+      status.name = "scan_matcher_odometry/front_end_matcher";
+      status.hardware_id = "simulation";
+      status.message = outcome;
+
+      appendDiagnosticValue(status, "outcome", outcome);
+      appendDiagnosticValue(
+        status, "event_sequence",
+        std::to_string(front_end_diagnostic_counters_.event_sequence));
+      appendDiagnosticValue(
+        status, "scan_points", std::to_string(scan_points));
+      appendDiagnosticValue(
+        status, "reference_points", std::to_string(reference_points));
+      appendDiagnosticValue(
+        status, "bootstrap_scans",
+        std::to_string(front_end_diagnostic_counters_.bootstrap_scans));
+      appendDiagnosticValue(
+        status, "insufficient_point_scans",
+        std::to_string(
+          front_end_diagnostic_counters_.insufficient_point_scans));
+      appendDiagnosticValue(
+        status, "motion_below_threshold_scans",
+        std::to_string(
+          front_end_diagnostic_counters_.motion_below_threshold_scans));
+      appendDiagnosticValue(
+        status, "match_attempts",
+        std::to_string(front_end_diagnostic_counters_.match_attempts));
+      appendDiagnosticValue(
+        status, "accepted_matches",
+        std::to_string(front_end_diagnostic_counters_.accepted_matches));
+      appendDiagnosticValue(
+        status, "rejected_matches",
+        std::to_string(front_end_diagnostic_counters_.rejected_matches));
+      appendDiagnosticValue(
+        status, "rank_zero_matches",
+        std::to_string(front_end_diagnostic_counters_.rank_zero_matches));
+      appendDiagnosticValue(
+        status, "rank_one_matches",
+        std::to_string(front_end_diagnostic_counters_.rank_one_matches));
+      appendDiagnosticValue(
+        status, "rank_two_matches",
+        std::to_string(front_end_diagnostic_counters_.rank_two_matches));
+      appendDiagnosticValue(
+        status, "suppressed_matches",
+        std::to_string(front_end_diagnostic_counters_.suppressed_matches));
+
+      if (result != nullptr) {
+        const bool filter_applied =
+          matcher_parameters_.degeneracy_handling_enabled &&
+          result->translation_observable_rank < 2U;
+        const bool suppression_applied =
+          filter_applied &&
+          matcher_parameters_.weak_direction_correction_scale < 1.0;
+        appendDiagnosticValue(
+          status, "success", result->success ? "true" : "false");
+        appendDiagnosticValue(
+          status, "score", std::to_string(result->score));
+        appendDiagnosticValue(
+          status, "matched_points",
+          std::to_string(result->matched_points));
+        appendDiagnosticValue(
+          status, "supported_points",
+          std::to_string(result->supported_points));
+        appendDiagnosticValue(
+          status, "support_fraction",
+          std::to_string(result->support_fraction));
+        appendDiagnosticValue(
+          status, "evaluated_candidates",
+          std::to_string(result->evaluated_candidates));
+        appendDiagnosticValue(
+          status, "translation_observable_rank",
+          std::to_string(result->translation_observable_rank));
+        appendDiagnosticValue(
+          status, "minimum_translation_information",
+          std::to_string(result->minimum_translation_information));
+        appendDiagnosticValue(
+          status, "maximum_translation_information",
+          std::to_string(result->maximum_translation_information));
+        appendDiagnosticValue(
+          status, "translation_information_ratio",
+          std::to_string(result->translation_information_ratio));
+        appendDiagnosticValue(
+          status, "weak_translation_direction_x",
+          std::to_string(result->weak_translation_direction.x));
+        appendDiagnosticValue(
+          status, "weak_translation_direction_y",
+          std::to_string(result->weak_translation_direction.y));
+        appendDiagnosticValue(
+          status, "weak_translation_direction_angle_rad",
+          std::to_string(
+            std::atan2(
+              result->weak_translation_direction.y,
+              result->weak_translation_direction.x)));
+        appendDiagnosticValue(
+          status, "degeneracy_filter_applied",
+          filter_applied ? "true" : "false");
+        appendDiagnosticValue(
+          status, "weak_direction_suppression_applied",
+          suppression_applied ? "true" : "false");
+        appendDiagnosticValue(
+          status, "weak_direction_correction_scale",
+          std::to_string(
+            matcher_parameters_.weak_direction_correction_scale));
+      }
+
+      diagnostics.status.push_back(std::move(status));
+      matcher_diagnostics_publisher_->publish(diagnostics);
+    } catch (const std::exception & error) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        5000,
+        "Failed to publish front-end diagnostics: %s",
+        error.what());
+    }
+  }
 
   void odometryCallback(const nav_msgs::msg::Odometry::ConstSharedPtr odometry)
   {
@@ -712,6 +880,9 @@ private:
         return transformPoint(base_from_laser, point);
       });
     if (base_points.size() < matcher_parameters_.minimum_matched_points) {
+      ++front_end_diagnostic_counters_.insufficient_point_scans;
+      publishFrontEndDiagnostic(
+        scan->header.stamp, "insufficient_points", base_points.size(), 0U);
       return;
     }
 
@@ -726,6 +897,9 @@ private:
         *scan,
         base_from_laser);
       initialized_ = true;
+      ++front_end_diagnostic_counters_.bootstrap_scans;
+      publishFrontEndDiagnostic(
+        scan->header.stamp, "bootstrap", base_points.size(), 0U);
       publishEstimate(scan->header.stamp, odometry_pose, base_points);
       return;
     }
@@ -739,6 +913,9 @@ private:
       std::abs(odometry_increment.yaw) < minimum_rotation_for_update_)
     {
       estimated_pose_ = predicted_pose;
+      ++front_end_diagnostic_counters_.motion_below_threshold_scans;
+      publishFrontEndDiagnostic(
+        scan->header.stamp, "motion_below_threshold", base_points.size(), 0U);
       publishEstimate(scan->header.stamp, odometry_pose, base_points);
       return;
     }
@@ -749,6 +926,32 @@ private:
       base_points,
       predicted_pose,
       matcher_parameters_);
+
+    ++front_end_diagnostic_counters_.match_attempts;
+    if (result.success) {
+      ++front_end_diagnostic_counters_.accepted_matches;
+    } else {
+      ++front_end_diagnostic_counters_.rejected_matches;
+    }
+    if (result.translation_observable_rank == 0U) {
+      ++front_end_diagnostic_counters_.rank_zero_matches;
+    } else if (result.translation_observable_rank == 1U) {
+      ++front_end_diagnostic_counters_.rank_one_matches;
+    } else {
+      ++front_end_diagnostic_counters_.rank_two_matches;
+    }
+    if (matcher_parameters_.degeneracy_handling_enabled &&
+      result.translation_observable_rank < 2U &&
+      matcher_parameters_.weak_direction_correction_scale < 1.0)
+    {
+      ++front_end_diagnostic_counters_.suppressed_matches;
+    }
+    publishFrontEndDiagnostic(
+      scan->header.stamp,
+      result.success ? "match_accepted" : "match_rejected",
+      base_points.size(),
+      reference_points.size(),
+      &result);
 
     if (result.success) {
       estimated_pose_ = result.pose;
@@ -1619,12 +1822,15 @@ private:
     pose_graph_path_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
     aligned_points_publisher_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+    matcher_diagnostics_publisher_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_publisher_;
   rclcpp::TimerBase::SharedPtr map_publish_timer_;
   rclcpp::TimerBase::SharedPtr map_rebuild_timer_;
   rclcpp::TimerBase::SharedPtr path_publish_timer_;
 
   std::deque<OdomSample> odom_samples_;
+  FrontEndDiagnosticCounters front_end_diagnostic_counters_;
   std::vector<Keyframe> keyframes_;
   bool initialized_{false};
   Pose2D last_matched_odometry_pose_;

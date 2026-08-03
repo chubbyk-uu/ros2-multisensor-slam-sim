@@ -7,6 +7,7 @@ import math
 import sys
 import time
 
+from diagnostic_msgs.msg import DiagnosticArray
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rcl_interfaces.msg import Log
@@ -27,6 +28,21 @@ CRITICAL_LOG_FRAGMENTS = (
     'Loop closure committed but pose graph path refresh failed',
     'Loop closure worker failed',
     'Rejected LaserScan after processing error',
+)
+
+MATCHER_DIAGNOSTIC_NAME = 'scan_matcher_odometry/front_end_matcher'
+DIAGNOSTIC_COUNTER_NAMES = (
+    'event_sequence',
+    'bootstrap_scans',
+    'insufficient_point_scans',
+    'motion_below_threshold_scans',
+    'match_attempts',
+    'accepted_matches',
+    'rejected_matches',
+    'rank_zero_matches',
+    'rank_one_matches',
+    'rank_two_matches',
+    'suppressed_matches',
 )
 
 
@@ -71,6 +87,20 @@ def stamp_to_seconds(stamp):
     return float(stamp.sec) + float(stamp.nanosec) * 1.0e-9
 
 
+def histogram(values, boundaries):
+    counts = [0] * (len(boundaries) - 1)
+    for value in values:
+        for index, (lower, upper) in enumerate(
+            zip(boundaries[:-1], boundaries[1:])
+        ):
+            if lower <= value < upper or (
+                index == len(counts) - 1 and value == upper
+            ):
+                counts[index] += 1
+                break
+    return counts
+
+
 class CorridorRegression(Node):
     def __init__(self):
         super().__init__(
@@ -91,6 +121,11 @@ class CorridorRegression(Node):
         self.degenerate_covariance_samples = 0
         self.regular_covariance_samples = 0
         self.maximum_covariance_ratio = 1.0
+        self.latest_diagnostic_counters = None
+        self.diagnostic_baseline = None
+        self.match_information_ratios = []
+        self.weak_direction_angles = []
+        self.malformed_diagnostics = 0
         self.latest_map = None
         self.map_messages = 0
         self.maximum_pose_graph_nodes = 0
@@ -119,6 +154,12 @@ class CorridorRegression(Node):
             '/custom_slam/laser_odom',
             self.matcher_callback,
             20,
+        )
+        self.create_subscription(
+            DiagnosticArray,
+            '/custom_slam/matcher_diagnostics',
+            self.matcher_diagnostics_callback,
+            100,
         )
         map_qos = QoSProfile(
             depth=1,
@@ -197,6 +238,42 @@ class CorridorRegression(Node):
             self.regular_covariance_samples += 1
         self.samples += 1
 
+    def matcher_diagnostics_callback(self, message):
+        for status in message.status:
+            if status.name != MATCHER_DIAGNOSTIC_NAME:
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            try:
+                self.latest_diagnostic_counters = {
+                    name: int(values[name])
+                    for name in DIAGNOSTIC_COUNTER_NAMES
+                }
+                if self.measuring and status.message.startswith('match_'):
+                    self.match_information_ratios.append(
+                        float(values['translation_information_ratio'])
+                    )
+                    angle = float(
+                        values['weak_translation_direction_angle_rad']
+                    )
+                    undirected_angle = (
+                        (angle + 0.5 * math.pi) % math.pi
+                    ) - 0.5 * math.pi
+                    self.weak_direction_angles.append(undirected_angle)
+            except (KeyError, ValueError):
+                self.malformed_diagnostics += 1
+
+    def diagnostic_count(self, name):
+        if (
+            self.latest_diagnostic_counters is None
+            or self.diagnostic_baseline is None
+        ):
+            return 0
+        return max(
+            0,
+            self.latest_diagnostic_counters[name]
+            - self.diagnostic_baseline[name],
+        )
+
     def map_callback(self, message):
         self.latest_map = {
             'width': message.info.width,
@@ -230,13 +307,18 @@ class CorridorRegression(Node):
         return self.get_clock().now().nanoseconds * 1.0e-9
 
     def wait_for_inputs(self, timeout):
+        required_poses = {'truth', 'wheel', 'matcher'}
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.1)
-            if len(self.poses) == 3 and self.latest_map is not None:
+            if (
+                required_poses.issubset(self.poses)
+                and self.latest_map is not None
+                and self.latest_diagnostic_counters is not None
+            ):
                 return
         raise RuntimeError(
-            'Timed out waiting for odometry and occupancy-grid topics'
+            'Timed out waiting for odometry, map and matcher diagnostics'
         )
 
     def publish_command(self, linear, angular=0.0):
@@ -344,6 +426,18 @@ class CorridorRegression(Node):
             if arguments.return_trip
             else arguments.maximum_longitudinal_drift
         )
+        match_attempts = self.diagnostic_count('match_attempts')
+        accepted_matches = self.diagnostic_count('accepted_matches')
+        rejected_matches = self.diagnostic_count('rejected_matches')
+        rank_counts = (
+            self.diagnostic_count('rank_zero_matches'),
+            self.diagnostic_count('rank_one_matches'),
+            self.diagnostic_count('rank_two_matches'),
+        )
+        suppressed_matches = self.diagnostic_count('suppressed_matches')
+        motion_below_threshold = self.diagnostic_count(
+            'motion_below_threshold_scans'
+        )
 
         checks = {
             'outbound_distance_reached': (
@@ -395,9 +489,15 @@ class CorridorRegression(Node):
             ),
             'no_critical_slam_logs': not self.critical_logs,
             'enough_error_samples': self.samples >= arguments.minimum_samples,
-            'degenerate_covariance_reported': (
-                self.degenerate_covariance_samples
-                >= arguments.minimum_degenerate_covariance_samples
+            'enough_real_match_attempts': (
+                match_attempts >= arguments.minimum_match_attempts
+            ),
+            'match_diagnostic_counts_consistent': (
+                match_attempts == accepted_matches + rejected_matches
+                and match_attempts == sum(rank_counts)
+            ),
+            'match_diagnostics_well_formed': (
+                self.malformed_diagnostics == 0
             ),
         }
         if arguments.return_trip:
@@ -415,10 +515,6 @@ class CorridorRegression(Node):
                             matcher[0] - truth[0],
                             matcher[1] - truth[1],
                         ) <= arguments.maximum_final_translation_error
-                    ),
-                    'regular_covariance_reported': (
-                        self.regular_covariance_samples
-                        >= arguments.minimum_regular_covariance_samples
                     ),
                     'return_pose_graph_long_enough': (
                         self.maximum_pose_graph_nodes
@@ -461,7 +557,29 @@ class CorridorRegression(Node):
         print(
             f'covariance  : max_ratio={self.maximum_covariance_ratio:.1f} '
             f'degenerate_samples={self.degenerate_covariance_samples} '
-            f'regular_samples={self.regular_covariance_samples}'
+            f'regular_samples={self.regular_covariance_samples} '
+            '(odometry messages, not match events)'
+        )
+        print(
+            f'diagnostics : attempts={match_attempts} '
+            f'accepted={accepted_matches} rejected={rejected_matches} '
+            f'rank=[{rank_counts[0]}, {rank_counts[1]}, {rank_counts[2]}] '
+            f'suppressed={suppressed_matches} '
+            f'below_motion={motion_below_threshold} '
+            f'malformed={self.malformed_diagnostics}'
+        )
+        ratio_boundaries = (0.0, 0.01, 0.025, 0.05, 0.10, 0.25, 0.50, 1.0)
+        angle_boundaries = tuple(
+            math.radians(value) for value in (-90, -60, -30, 0, 30, 60, 90)
+        )
+        print(
+            'ratio hist  : '
+            f'edges={ratio_boundaries} '
+            f'counts={histogram(self.match_information_ratios, ratio_boundaries)}'
+        )
+        print(
+            'weak angle  : edges_deg=(-90, -60, -30, 0, 30, 60, 90) '
+            f'counts={histogram(self.weak_direction_angles, angle_boundaries)}'
         )
         print(
             f'route legs  : outbound={self.outbound_distance:.3f} m '
@@ -480,6 +598,9 @@ class CorridorRegression(Node):
         self.wait_for_inputs(arguments.startup_timeout)
         self.settle(arguments.initial_settle_time)
         self.starts = dict(self.poses)
+        self.diagnostic_baseline = dict(self.latest_diagnostic_counters)
+        self.match_information_ratios.clear()
+        self.weak_direction_angles.clear()
         self.matcher_stamp = None
         self.maximum_matcher_gap = 0.0
         self.measuring = True
@@ -588,21 +709,12 @@ def parse_arguments():
     parser.add_argument('--minimum-map-length', type=float, default=28.0)
     parser.add_argument('--maximum-map-width', type=float, default=4.0)
     parser.add_argument('--minimum-samples', type=int, default=500)
+    parser.add_argument('--minimum-match-attempts', type=int, default=100)
     parser.add_argument('--minimum-covariance-ratio', type=float, default=10.0)
     parser.add_argument(
         '--maximum-regular-translation-stddev',
         type=float,
         default=0.10,
-    )
-    parser.add_argument(
-        '--minimum-degenerate-covariance-samples',
-        type=int,
-        default=100,
-    )
-    parser.add_argument(
-        '--minimum-regular-covariance-samples',
-        type=int,
-        default=20,
     )
     arguments, ros_arguments = parser.parse_known_args()
     if ros_arguments:
@@ -640,9 +752,8 @@ def parse_arguments():
         or arguments.minimum_loop_closures < 1
         or arguments.minimum_map_rebuilds < 1
         or arguments.minimum_samples < 1
+        or arguments.minimum_match_attempts < 1
         or arguments.minimum_covariance_ratio <= 1.0
-        or arguments.minimum_degenerate_covariance_samples < 1
-        or arguments.minimum_regular_covariance_samples < 1
     ):
         parser.error('Distances, speeds, timeouts and thresholds must be valid')
     return arguments

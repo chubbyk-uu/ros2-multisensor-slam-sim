@@ -7,6 +7,7 @@ scan_matcher_odometry:
     laser_path_topic: /custom_slam/laser_path
     pose_graph_path_topic: /custom_slam/pose_graph_path
     aligned_points_topic: /custom_slam/aligned_scan_points
+    matcher_diagnostics_topic: /custom_slam/matcher_diagnostics
     map_topic: /custom_slam/map
     map_frame: map
     odom_frame: odom

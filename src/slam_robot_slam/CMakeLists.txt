@@ -15,6 +15,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(Ceres REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -160,6 +161,7 @@ target_link_libraries(
 ament_target_dependencies(
   scan_matcher_odometry_node
   builtin_interfaces
+  diagnostic_msgs
   geometry_msgs
   nav_msgs
   rclcpp

@@ -131,6 +131,7 @@ ICP，而是参考 slam_toolbox/Karto 和 Cartographer 的成熟结构：
 | `/custom_slam/laser_path` | `nav_msgs/Path` | 匹配轨迹 |
 | `/custom_slam/pose_graph_path` | `nav_msgs/Path` | 成功关键帧及顺序边路径 |
 | `/custom_slam/aligned_scan_points` | `sensor_msgs/PointCloud2` | 对齐到 `map` 的当前扫描 |
+| `/custom_slam/matcher_diagnostics` | `diagnostic_msgs/DiagnosticArray` | 前端逐扫描分类、逐次真实匹配可观测性及累计计数 |
 | `/custom_slam/map` | `nav_msgs/OccupancyGrid` | `map` 坐标系下的关键帧占据栅格 |
 
 TF 发布职责：
@@ -163,6 +164,7 @@ base_footprint -> lidar_link  robot_state_publisher
 | `output.pose_translation_stddev` | `0.05` | 输出平面位置标准差，单位 m |
 | `output.pose_rotation_stddev` | `0.05` | 输出偏航角标准差，单位 rad |
 | `output.degenerate_translation_stddev` | `0.30` | 退化方向的位置标准差，单位 m |
+| `matcher_diagnostics_topic` | `/custom_slam/matcher_diagnostics` | 前端诊断话题 |
 | `matcher.degeneracy.enabled` | `true` | 启用局部响应曲面平移可观测性处理 |
 | `matcher.degeneracy.minimum_translation_information` | `1.0` | 单个平移方向的最小绝对信息量 |
 | `matcher.degeneracy.minimum_information_ratio` | `0.05` | 最小/最大平移信息量比值下限 |
@@ -276,9 +278,16 @@ ros2 run slam_robot_slam corridor_regression --return-trip
 
 工具以 `0.40 m/s` 行驶约 25 m，连续测量纵向、横向和航向误差，并检查
 前端消息间隔、拒配、错误回环、关键帧数量、地图覆盖范围、关键日志及
-激光里程计是否发布弱方向各向异性协方差。完全平行墙在行进方向上没有
-几何约束，前端检测到一维退化后保留该方向的轮式里程计预测；横向与航向
-仍由激光相关匹配校正。
+真实匹配尝试的诊断计数是否自洽。`matcher_diagnostics` 将扫描分类为初始化、
+点数不足、运动不足、匹配接受或匹配拒绝；只有后两类才计入匹配次数和
+rank 直方图。真实匹配还报告两个平移信息特征值、比值、弱方向角、是否
+执行退化过滤及累计计数。回归工具据此打印信息比值与弱方向角直方图，
+不再从可能重复发布的里程计协方差反推退化检测次数。
+
+完全平行墙在行进方向上没有几何约束，前端检测到一维退化后保留该方向的
+轮式里程计预测；横向与航向仍由激光相关匹配校正。当前响应曲面检测器会
+受光束端点采样和局部子图深度影响，诊断接口用于在替换检测器前准确量化
+这一问题，本阶段不改变既有匹配行为。
 
 往返模式额外验证返回位置闭合、强/弱观测协方差切换、真实回环接受和
 地图重建完成。测试驾驶器使用 Gazebo 真值维持目标航向，以隔离差速底盘
@@ -288,9 +297,11 @@ SLAM 节点或参与位姿估计。
 2026-08-03 可观测性处理前的纵向峰值为 `0.855 m`。启用处理后再次使用
 默认参数回归：真值行驶 `25.104 m`，建立 315 个关键帧，纵向峰值降至
 `0.165 m`、最终误差 `0.140 m`，横向峰值 `0.026 m`、航向峰值约
-`0.001°`；392 个样本报告至少 `10:1` 的平移协方差特征值比，最大比值
-`36:1`。前端最大间隔保持 `0.100 s`，无拒配、无错误回环，地图范围为
-`33.10 × 2.95 m`。
+`0.001°`；当时记录的 392 个样本是带各向异性协方差的激光里程计消息，
+其中可能包含运动不足或拒配路径重复发布的旧协方差，不能解释为 392 次
+独立退化检测，也不能用于推导检出率。前端最大间隔保持 `0.100 s`，无
+拒配、无错误回环，地图范围为 `33.10 × 2.95 m`。后续回归以逐次匹配
+诊断为准。
 
 同日 50 m 往返回归通过：两段真值行程分别为 `25.006 m / 25.005 m`，
 返回位置距起点约 `0.030 m`；建立 669 个关键帧，接受 10 次真实回环并
