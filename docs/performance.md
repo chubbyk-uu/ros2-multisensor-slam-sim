@@ -375,7 +375,7 @@ MOLA 只发布 `map -> odom`；`odom -> base_footprint` 和机器人固定 TF �
 | 检查项 | 结果 |
 | --- | --- |
 | 生命周期节点 | `controller_server`、`planner_server`、`bt_navigator`、`behavior_server`、两个 costmap 全部 `active` |
-| 代价地图输出 | `/global_costmap/costmap` `0.5 Hz`，`/local_costmap/costmap` `1.67 Hz` |
+| 代价地图输出 | `/global_costmap/costmap` `0.500 Hz`（配置 `1.0`），`/local_costmap/costmap` `1.667 Hz`（配置 `2.0`）；隔离运行复测一致，非资源竞争所致，实际发布率与配置的差异待后续排查 |
 | 静态层地图源 | `static_layer.map_topic = /rtabmap/map`（官方参数文件中无此键，由 `RewrittenYaml` 注入） |
 | 机器人足迹 | 八边形多边形生效，官方默认的 `robot_radius` 被 Nav2 忽略 |
 | 局部体素层垂直范围 | `z_voxels=20`、`z_resolution=0.05`、`origin_z=0.0`，上界 `1.00 m`，与 `max_obstacle_height` 一致 |
@@ -384,23 +384,36 @@ MOLA 只发布 `map -> odom`；`odom -> base_footprint` 和机器人固定 TF �
 这一轮只验收接口、参数落地和 TF 职责，**不是**导航质量结论；规划成功率、
 动态障碍物重规划和 `map -> odom` 修正量待受控路线回归建立后测量。
 
-### 已知现象：叠加 Nav2 后 EKF 周期超时
+### EKF 周期裕度与一次测量方法教训
 
-同一台 WSL2 机器上，仅建图时 EKF 无一次周期超时；叠加完整 Nav2 后出现
-`7` 次 `Failed to meet update rate`，最长单周期 `0.224 s`，是 `50 Hz`
-目标周期的约 11 倍。
+首次在导航链路上观察到 `7` 次 `Failed to meet update rate`（最长
+`0.224 s`）并一度记为「叠加 Nav2 后的已知资源竞争」。复查后确认**这个
+结论是错的，起因是测量环境本身被污染**：用于收尾的
+`kill -INT <ros2 launch pid>` 并不会回收该 launch 的子进程树，于是先前
+几次运行遗留的 Gazebo、RTAB-Map、EKF 和桥接进程一直在后台运行。故障
+被发现时机器上同时存在 `5` 个 `gz sim` 实例和多个 `ekf_filter_node`，
+系统负载 `55`。多个 EKF 同时向 `/odom` 和 `/tf` 发布，测到的超时是这些
+互相竞争的实例造成的，与本项目的配置无关。
 
-| 运行 | EKF 周期超时次数 | RTAB-Map 输入饥饿 |
+改用 `setsid` 让每次运行独占一个进程组、结束时按进程组整体回收，并在
+每次运行后校验无残留进程，重新测量：
+
+| 运行环境 | 时长 | EKF 周期超时 |
 | --- | --- | --- |
-| 仅 RTAB-Map 建图（三次） | `0` | `0` |
-| RTAB-Map + Nav2 在线导航 | `7` | `0` |
+| 污染环境（多实例并行） | — | `7` 次，最长 `224 ms` |
+| 隔离运行，静态 DDS 图 | `90 s` | `0` 次 |
+| 隔离运行，反复起停 `ros2` CLI 进程 | `44 s` | `0` 次 |
+| 隔离运行，全程 | `137 s` | `1` 次，`24 ms` |
 
-这是本机资源竞争，不是配置错误，但有两点后果值得记录：一是 EKF 是
-`odom -> base_footprint` 的唯一发布者，周期抖动会直接劣化 RTAB-Map 的
-局部运动预测；二是它正好破坏前面所说的 `20 ms` 时间戳栅格——**精确时间
-同步恰恰会在系统最繁忙时开始静默丢帧**，这反过来印证了改用 `approx_sync`
-的必要性。后续受控路线回归应把 EKF 周期超时次数作为一项验收指标，而不是
-只看轨迹误差。
+隔离后唯一一次超时是 `24 ms`（目标周期 `20 ms`，超出 `4 ms`），发生在
+驱动进程加入 DDS 图的瞬间。**完整 Nav2 + RTAB-Map + Gazebo 链路在本机
+留有充足的 EKF 周期裕度**，不存在需要整改的资源竞争。
+
+留下的教训与 SLAM 本身无关但会反复出现：`ros2 launch` 在非交互 shell
+中被后台执行时，向其 PID 发 `SIGINT` 不足以终止整棵进程树；一个泄漏的
+仿真实例足以在不报任何错的情况下让后续所有时序测量失真。现有回归脚本
+（如 `corridor_regression`）是由 launch 文件拉起的 ROS 节点，由 launch
+系统负责回收，不受此影响；受影响的只是手工用 shell 拉起仿真的临时测量。
 
 ## 轮速与 IMU 二维融合对比
 
