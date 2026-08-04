@@ -44,6 +44,10 @@ if(BUILD_TESTING)
     test_structured_loop_regression
     test/test_structured_loop_regression.py
   )
+  ament_add_pytest_test(
+    test_rtabmap_config
+    test/test_rtabmap_config.py
+  )
 endif()
 
 ament_package()

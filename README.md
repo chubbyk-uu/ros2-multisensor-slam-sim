@@ -485,6 +485,11 @@ RTAB-Map 会同时发布 `/rtabmap/map` 二维占据栅格：它从 3D 点云中
 ros2 launch slam_robot_slam_3d rtabmap_navigation_simulation.launch.py
 ```
 
+该入口使用专用三维导航 RViz：默认以跟随机器人的斜视视角同时显示 RTAB-Map
+累计点云、`/lidar_3d/points` 的实时 10 Hz 扫描、二维导航栅格、代价地图和
+规划路径。鼠标左键拖动可旋转视角，滚轮缩放；`Nav2 Goal` 仍投影到地面设置
+二维导航目标。
+
 这条链路与第 3、4 节的 SLAM Toolbox / AMCL 导航入口**互斥**，不要同时
 启动：两者都会争夺 `map -> odom`。职责划分如下：
 

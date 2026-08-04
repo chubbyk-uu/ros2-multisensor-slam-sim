@@ -49,8 +49,13 @@
     Mem/STMSize: "30"
     Mem/NotLinkedNodesKept: "false"
 
-    # Pure 3D LiDAR registration and proximity loop closure.
+    # Refine each consecutive EKF neighbor link with the same ICP registration
+    # used for loop closures. The external wheel+IMU odometry remains the
+    # initial guess, while scan geometry removes local keyframe misalignment.
+    # This follows RTAB-Map's official laser mapping workflow when the external
+    # odometry source is not itself laser scan-matched.
     Reg/Strategy: "1"
+    RGBD/NeighborLinkRefining: "true"
     Icp/PointToPlane: "true"
     Icp/PointToPlaneK: "20"
     Icp/PointToPlaneRadius: "0"

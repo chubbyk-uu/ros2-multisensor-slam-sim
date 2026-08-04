@@ -64,6 +64,11 @@ RTAB-Map 启动器默认使用 `odometry_mode:=wheel_imu`：轮速与 IMU 偏航
 冲突，也把“成熟全局 SLAM 基线”与下一阶段“替换局部前端”的实验分开。若需
 纯轮式对照，可传入 `odometry_mode:=wheel`。
 
+EKF 提供相邻关键帧的初始运动预测，但它本身不是激光里程计。配置因此按照
+RTAB-Map 官方激光建图流程启用 `RGBD/NeighborLinkRefining=true`，用同一套
+点到面 ICP 精修每条相邻关键帧边，减少圆柱、墙角等局部结构的厘米级重影；
+回环仍由空间邻近检测后单独进行 ICP 验证。
+
 当前点云只有统一消息时间戳，没有逐点时间字段。IMU 因此只用于 EKF 局部
 运动预测，而不用于逐点 deskew；这仍不应称为完整 LIO。`/ground_truth/odom`
 只用于评估，绝不作为输入。
@@ -107,6 +112,10 @@ RTAB-Map。
 ```bash
 ros2 launch slam_robot_slam_3d rtabmap_navigation_simulation.launch.py
 ```
+
+导航入口默认加载 `rtabmap_navigation_3d.rviz`，在 Nav2 地图、代价地图和
+路径之外启用 `/lidar_3d/points` 实时扫描及 RTAB-Map 累计三维点云，并使用
+可旋转的 Orbit 斜视视角。它不会改变算法输入或地图，只改变可视化。
 
 该入口与既有 SLAM Toolbox / AMCL 导航入口**互斥**，不能同时启动——两者都会
 发布 `map -> odom`。它已完成接口、TF 职责、栅格契约和受控闭环建图验收，

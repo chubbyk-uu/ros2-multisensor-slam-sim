@@ -50,6 +50,7 @@ def generate_launch_description():
     autostart = LaunchConfiguration("autostart")
     use_composition = LaunchConfiguration("use_composition")
     params_file = LaunchConfiguration("params_file")
+    rviz_config = LaunchConfiguration("rviz_config")
     map_topic = LaunchConfiguration("map_topic")
     lidar_topic = LaunchConfiguration("lidar_topic")
 
@@ -122,6 +123,7 @@ def generate_launch_description():
             DeclareLaunchArgument("autostart", default_value="true"),
             DeclareLaunchArgument("use_composition", default_value="False"),
             DeclareLaunchArgument("params_file", default_value=official_params),
+            DeclareLaunchArgument("rviz_config", default_value=official_rviz),
             DeclareLaunchArgument("map_topic", default_value="/rtabmap/map"),
             DeclareLaunchArgument("lidar_topic", default_value="/lidar_3d/points"),
             IncludeLaunchDescription(
@@ -141,7 +143,7 @@ def generate_launch_description():
                 name="rtabmap_navigation_rviz",
                 output="screen",
                 condition=IfCondition(use_rviz),
-                arguments=["-d", official_rviz],
+                arguments=["-d", rviz_config],
                 parameters=[{"use_sim_time": use_sim_time}],
                 remappings=[("/map", map_topic)],
             ),

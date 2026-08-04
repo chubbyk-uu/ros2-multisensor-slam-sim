@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -32,12 +32,22 @@ def generate_launch_description():
     default_world = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "worlds", "slam_world.sdf"]
     )
+    default_rviz_config = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_slam_3d"),
+            "rviz",
+            "rtabmap_navigation_3d.rviz",
+        ]
+    )
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("world", default_value=default_world),
             DeclareLaunchArgument("gui", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),
+            DeclareLaunchArgument(
+                "rviz_config", default_value=default_rviz_config
+            ),
             DeclareLaunchArgument("odometry_mode", default_value="wheel_imu"),
             DeclareLaunchArgument(
                 "database_path",
@@ -52,25 +62,35 @@ def generate_launch_description():
             DeclareLaunchArgument("wsl_gpu_adapter", default_value="NVIDIA"),
             DeclareLaunchArgument("autostart", default_value="true"),
             DeclareLaunchArgument("use_composition", default_value="False"),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(rtabmap_simulation_launch),
-                launch_arguments={
-                    "world": LaunchConfiguration("world"),
-                    "gui": LaunchConfiguration("gui"),
-                    "rviz": "false",
-                    "odometry_mode": LaunchConfiguration("odometry_mode"),
-                    "database_path": LaunchConfiguration("database_path"),
-                    "reset_database": LaunchConfiguration("reset_database"),
-                    "contract_timeout": LaunchConfiguration("contract_timeout"),
-                    "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
-                    "wsl_gpu_adapter": LaunchConfiguration("wsl_gpu_adapter"),
-                }.items(),
+            GroupAction(
+                scoped=True,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(rtabmap_simulation_launch),
+                        launch_arguments={
+                            "world": LaunchConfiguration("world"),
+                            "gui": LaunchConfiguration("gui"),
+                            "rviz": "false",
+                            "odometry_mode": LaunchConfiguration("odometry_mode"),
+                            "database_path": LaunchConfiguration("database_path"),
+                            "reset_database": LaunchConfiguration("reset_database"),
+                            "contract_timeout": LaunchConfiguration(
+                                "contract_timeout"
+                            ),
+                            "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
+                            "wsl_gpu_adapter": LaunchConfiguration(
+                                "wsl_gpu_adapter"
+                            ),
+                        }.items(),
+                    )
+                ],
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(navigation_launch),
                 launch_arguments={
                     "use_sim_time": "true",
                     "use_rviz": LaunchConfiguration("rviz"),
+                    "rviz_config": LaunchConfiguration("rviz_config"),
                     "autostart": LaunchConfiguration("autostart"),
                     "use_composition": LaunchConfiguration("use_composition"),
                     "map_topic": "/rtabmap/map",
