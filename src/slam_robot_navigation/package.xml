@@ -4,7 +4,7 @@
 <package format="3">
   <name>slam_robot_navigation</name>
   <version>0.1.0</version>
-  <description>Nav2 localization and navigation for the SLAM robot.</description>
+  <description>Nav2 localization and online-SLAM navigation for the robot.</description>
 
   <maintainer email="dk.illidan@gmail.com">Jerry</maintainer>
   <license>Apache-2.0</license>

@@ -33,7 +33,7 @@ def validate(**overrides):
     return MODULE.validate_cloud_metadata(**arguments)
 
 
-def test_gazebo_cloud_without_point_time_is_valid_for_lo():
+def test_gazebo_cloud_without_point_time_is_valid_without_deskew():
     errors, point_time_fields = validate()
 
     assert errors == []

@@ -4,7 +4,7 @@
 <package format="3">
   <name>slam_robot_slam_3d</name>
   <version>0.1.0</version>
-  <description>MOLA-based 3D LiDAR odometry and mapping integration.</description>
+  <description>3D LiDAR odometry and online SLAM integration.</description>
 
   <maintainer email="dk.illidan@gmail.com">Jerry</maintainer>
   <license>Apache-2.0</license>
@@ -20,9 +20,13 @@
   <exec_depend>mola_bridge_ros2</exec_depend>
   <exec_depend>mola_lidar_odometry</exec_depend>
   <exec_depend>mola_metric_maps</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>rtabmap_rviz_plugins</exec_depend>
+  <exec_depend>rtabmap_slam</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>slam_robot_gazebo</exec_depend>
+  <exec_depend>slam_robot_navigation</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

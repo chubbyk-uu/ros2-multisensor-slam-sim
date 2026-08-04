@@ -4,6 +4,15 @@ install/
 log/
 bags/
 
+# RTAB-Map SQLite databases. The launch default is ~/.ros/rtabmap_3d.db, which
+# is outside the repository on purpose so it does not depend on the launching
+# terminal's working directory; these rules only cover an explicit
+# database_path:=maps/... override.
+maps/*.db
+maps/*.db-shm
+maps/*.db-wal
+maps/*.db-journal
+
 # Editor and operating-system files
 .vscode/
 .idea/

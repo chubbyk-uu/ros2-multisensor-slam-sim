@@ -298,6 +298,110 @@ MOLA 只发布 `map -> odom`；`odom -> base_footprint` 和机器人固定 TF �
 六自由度估计偏差。需要平面约束时可显式设置
 `enforce_planar_motion:=true`，默认仍保留官方 GICP 的完整姿态估计。
 
+## RTAB-Map 在线 3D SLAM 集成烟雾验收
+
+2026-08-04 使用同一 16 线 Gazebo 点云启动 RTAB-Map，不启动 GUI 或 RViz。
+启动器先完成点云契约检查，再由 RTAB-Map 同步订阅 `/odom` 和
+`/lidar_3d/points`；点云没有逐点时间字段，配置未启用 deskew。
+
+| 检查项 | 结果 |
+| --- | --- |
+| RTAB-Map 节点 | `/rtabmap/rtabmap` 正常运行 |
+| 地图输出 | `/rtabmap/mapData`、`/rtabmap/mapGraph`、`/rtabmap/info` 均存在 |
+| TF | RTAB-Map 唯一发布 `map -> odom`；局部 `odom -> base_footprint` 不变 |
+| 首次运行 | 约 14 s 内 `ref_id=14`，SQLite 数据库可创建并在退出时保留 |
+| 当前检测频率 | 1 Hz（`Rtabmap/DetectionRate`，已显式写入配置） |
+
+这只是接口与持久化的烟雾验收，不作为建图精度、回环召回率或资源上限的
+结论；这些将在有立体结构的闭环路线和固定 3D rosbag 中单独测量。
+
+### 输入同步率测量
+
+烟雾验收的 1 Hz 无法区分「每帧点云都完成同步」和「多数点云被同步器丢弃」，
+因为 `Rtabmap/DetectionRate` 的限速发生在同步回调之后。为把两者分开，把
+`Rtabmap/DetectionRate` 临时置 `0`（不限速），此时 `/rtabmap/info` 的发布率
+等于同步回调率，可直接与点云率对比。
+
+| 配置 | `/lidar_3d/points` | `/rtabmap/info`（不限速） | `/odom` |
+| --- | --- | --- | --- |
+| `approx_sync: false`（原配置） | `10.00 Hz` | `10.000 Hz` | `50.0 Hz` |
+| `approx_sync: true`（当前配置） | `10.00 Hz` | `10.000 Hz` | `50.0 Hz` |
+
+结论：**精确时间同步在本仿真中并没有丢帧**，回调率等于点云率。原因是
+点云时间戳落在整 `100 ms` 栅格上（实测连续戳 `37.300 / 37.400 / 37.500 …`），
+而 EKF 以 `50 Hz` 落在 `20 ms` 栅格上，两者恰好成整数倍关系，因此每个点云
+时间戳都有一条时间戳完全相同的 `/odom`。
+
+这是巧合而非设计保证：把 `ekf_2d.yaml` 的 `frequency` 改成 `30 Hz` 之类
+不整除点云周期的值，或迁移到时间戳不落在公共栅格上的真实硬件，精确同步
+会静默失效——表现为输入饥饿而不是报错。因此改用 `approx_sync: true` 并把
+`approx_sync_max_interval` 设为 `0.02 s`（`50 Hz` 里程计最坏 `10 ms` 偏差的
+两倍，且只有点云周期的 `1/5`，不会跨接到相邻扫描）。改动后回调率不变，
+`Did not receive data` 警告为 `0` 次。
+
+### 订阅 QoS 约束
+
+`ros_gz_bridge` 以 `BEST_EFFORT` 发布 `/lidar_3d/points`（实测；用
+`RELIABLE` 订阅会收到 `incompatible QoS ... No messages will be received`
+并且一条消息都收不到）。因此 RTAB-Map 的点云订阅 **必须** 保持
+`qos_scan_cloud: 2`，这不是可以顺手「改成可靠传输」的参数。
+`robot_localization` 以 `RELIABLE` 发布 `/odom`，所以里程计订阅设为
+`qos_odom: 1`。两者已在配置中分别写明并加注释。
+
+### 二维栅格与导航接口
+
+同一次运行中驱动机器人走一段折线后，用 `grid_contract_check` 首次对实际
+发布的 `/rtabmap/map` 做端到端校验：
+
+| 检查项 | 结果 |
+| --- | --- |
+| 栅格 | `frame=map`，`285 x 222`，`0.050 m/cell` |
+| 单元统计 | 已知 `39539`，自由 `36703`，占据 `2836` |
+| 契约退出码 | `0` |
+| `map -> odom` | 存在且仅由 RTAB-Map 发布 |
+| 限速后检测频率 | `/rtabmap/info` 实测 `1.000 Hz` |
+
+`/rtabmap/map` 的发布 QoS 实测为 `RELIABLE + TRANSIENT_LOCAL`，与
+`grid_contract_check` 和 Nav2 `static_layer` 的
+`map_subscribe_transient_local: True` 一致。它只在地图更新时重发：机器人
+静止时 25 s 内没有新消息，所以 RViz 端必须用 Transient Local 订阅才能在
+重启后立即拿到最后一帧，配置已相应修正。
+
+### 在线导航链路接口验收
+
+启动 `rtabmap_navigation_simulation.launch.py`（无 GUI、无 RViz），驱动
+机器人走一段折线后检查 Nav2 状态：
+
+| 检查项 | 结果 |
+| --- | --- |
+| 生命周期节点 | `controller_server`、`planner_server`、`bt_navigator`、`behavior_server`、两个 costmap 全部 `active` |
+| 代价地图输出 | `/global_costmap/costmap` `0.5 Hz`，`/local_costmap/costmap` `1.67 Hz` |
+| 静态层地图源 | `static_layer.map_topic = /rtabmap/map`（官方参数文件中无此键，由 `RewrittenYaml` 注入） |
+| 机器人足迹 | 八边形多边形生效，官方默认的 `robot_radius` 被 Nav2 忽略 |
+| 局部体素层垂直范围 | `z_voxels=20`、`z_resolution=0.05`、`origin_z=0.0`，上界 `1.00 m`，与 `max_obstacle_height` 一致 |
+| Map Server / AMCL | 未启动，`map -> odom` 仍由 RTAB-Map 独占 |
+
+这一轮只验收接口、参数落地和 TF 职责，**不是**导航质量结论；规划成功率、
+动态障碍物重规划和 `map -> odom` 修正量待受控路线回归建立后测量。
+
+### 已知现象：叠加 Nav2 后 EKF 周期超时
+
+同一台 WSL2 机器上，仅建图时 EKF 无一次周期超时；叠加完整 Nav2 后出现
+`7` 次 `Failed to meet update rate`，最长单周期 `0.224 s`，是 `50 Hz`
+目标周期的约 11 倍。
+
+| 运行 | EKF 周期超时次数 | RTAB-Map 输入饥饿 |
+| --- | --- | --- |
+| 仅 RTAB-Map 建图（三次） | `0` | `0` |
+| RTAB-Map + Nav2 在线导航 | `7` | `0` |
+
+这是本机资源竞争，不是配置错误，但有两点后果值得记录：一是 EKF 是
+`odom -> base_footprint` 的唯一发布者，周期抖动会直接劣化 RTAB-Map 的
+局部运动预测；二是它正好破坏前面所说的 `20 ms` 时间戳栅格——**精确时间
+同步恰恰会在系统最繁忙时开始静默丢帧**，这反过来印证了改用 `approx_sync`
+的必要性。后续受控路线回归应把 EKF 周期超时次数作为一项验收指标，而不是
+只看轨迹误差。
+
 ## 轮速与 IMU 二维融合对比
 
 自动回归依次静止、直行 6 s，并以 `0.6 rad/s` 原地旋转 4 s。下表记录

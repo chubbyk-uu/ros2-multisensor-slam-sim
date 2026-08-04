@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+
+import math
+import time
+
+import rclpy
+from nav_msgs.msg import OccupancyGrid
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+
+
+def validate_grid_metadata(
+    frame_id,
+    resolution,
+    width,
+    height,
+    data,
+    expected_frame,
+    minimum_width,
+    minimum_height,
+    minimum_known_cells,
+):
+    """Validate that an occupancy grid is usable as a navigation candidate."""
+    errors = []
+    if expected_frame and frame_id != expected_frame:
+        errors.append(f"frame_id is {frame_id!r}, expected {expected_frame!r}")
+    if not math.isfinite(resolution) or resolution <= 0.0:
+        errors.append("resolution must be finite and positive")
+    if width < minimum_width or height < minimum_height:
+        errors.append(
+            "grid dimensions are too small: "
+            f"{width}x{height}, expected at least "
+            f"{minimum_width}x{minimum_height}"
+        )
+    expected_size = width * height
+    if len(data) != expected_size:
+        errors.append(
+            f"data length is {len(data)}, expected width * height ({expected_size})"
+        )
+
+    known_cells = sum(value >= 0 for value in data)
+    free_cells = sum(value == 0 for value in data)
+    occupied_cells = sum(value >= 50 for value in data)
+    if known_cells < minimum_known_cells:
+        errors.append(
+            f"known cells are too few: {known_cells}, expected at least "
+            f"{minimum_known_cells}"
+        )
+    if free_cells == 0:
+        errors.append("grid contains no free cells")
+    if occupied_cells == 0:
+        errors.append("grid contains no occupied cells")
+
+    return errors, {
+        "known_cells": known_cells,
+        "free_cells": free_cells,
+        "occupied_cells": occupied_cells,
+    }
+
+
+class GridContractChecker(Node):
+    def __init__(self):
+        super().__init__("grid_contract_check")
+        self.declare_parameter("topic", "/rtabmap/map")
+        self.declare_parameter("expected_frame", "map")
+        self.declare_parameter("minimum_width", 20)
+        self.declare_parameter("minimum_height", 20)
+        self.declare_parameter("minimum_known_cells", 20)
+        self.declare_parameter("timeout_sec", 20.0)
+
+        self.topic = self.get_parameter("topic").value
+        self.expected_frame = self.get_parameter("expected_frame").value
+        self.minimum_width = self.get_parameter("minimum_width").value
+        self.minimum_height = self.get_parameter("minimum_height").value
+        self.minimum_known_cells = self.get_parameter("minimum_known_cells").value
+        self.timeout_sec = self.get_parameter("timeout_sec").value
+        self.result = None
+        qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            reliability=ReliabilityPolicy.RELIABLE,
+        )
+        self.subscription = self.create_subscription(
+            OccupancyGrid, self.topic, self._grid_callback, qos
+        )
+        self.get_logger().info(
+            f"Waiting up to {self.timeout_sec:.1f} s for {self.topic}"
+        )
+
+    def _grid_callback(self, message):
+        errors, counts = validate_grid_metadata(
+            frame_id=message.header.frame_id,
+            resolution=message.info.resolution,
+            width=message.info.width,
+            height=message.info.height,
+            data=message.data,
+            expected_frame=self.expected_frame,
+            minimum_width=self.minimum_width,
+            minimum_height=self.minimum_height,
+            minimum_known_cells=self.minimum_known_cells,
+        )
+        if errors:
+            for error in errors:
+                self.get_logger().error(error)
+            self.result = 2
+        else:
+            self.get_logger().info(
+                "OccupancyGrid contract passed: "
+                f"frame={message.header.frame_id}, "
+                f"size={message.info.width}x{message.info.height}, "
+                f"resolution={message.info.resolution:.3f} m/cell, "
+                f"known={counts['known_cells']}, free={counts['free_cells']}, "
+                f"occupied={counts['occupied_cells']}"
+            )
+            self.result = 0
+        self.destroy_subscription(self.subscription)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = GridContractChecker()
+    deadline = time.monotonic() + node.timeout_sec
+    try:
+        while rclpy.ok() and node.result is None:
+            if time.monotonic() >= deadline:
+                node.get_logger().error(
+                    f"Timed out waiting for OccupancyGrid on {node.topic}"
+                )
+                node.result = 3
+                break
+            rclpy.spin_once(node, timeout_sec=0.1)
+        return node.result if node.result is not None else 4
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

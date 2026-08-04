@@ -10,10 +10,11 @@
 几何下零退化误报；155 m 固定 rosbag 的 2× 离线回归也已通过。3D LiDAR
 的互斥机器人变体、点云桥接、TF、RViz 和基础性能验收
 也已完成；机器人同时具备 100 Hz IMU，并提供可选的轮速 + IMU 二维
-EKF 对照链路。成熟 3D 基线已接入 MOLA 官方 GICP 流水线，并以不伪造
-逐点时间的纯激光里程计模式通过首次运动验收。下一步将建立 3D 回环世界
-和可重复 rosbag 回归；视觉及其与 3D LiDAR、IMU 的融合随后推进，不计划
-融合 2D 与 3D LiDAR。
+EKF 对照链路。在线 3D SLAM 基线已接入 RTAB-Map，使用局部里程计预测、
+3D 点云 ICP 和位姿图，并把二维投影栅格接入 Nav2 组成不依赖离线地图和
+AMCL 的在线导航链路；MOLA GICP 保留为不伪造逐点时间的纯激光里程计
+对照。下一步将建立 3D 回环世界、导航自动回归和可重复 rosbag 回归；
+视觉及其与 3D LiDAR、IMU 的融合随后推进，不计划融合 2D 与 3D LiDAR。
 
 ## 运行效果
 
@@ -37,7 +38,7 @@ EKF 对照链路。成熟 3D 基线已接入 MOLA 官方 GICP 流水线，并以
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
 | 自研 C++ 2D SLAM | 已完成 2D 基线 | 已完成前后端、场景回归及 155 m 固定 rosbag 的 2× 离线回放 |
 | IMU / 二维 EKF | 已完成可选基线 | 100 Hz IMU；适配节点补充有限协方差，可选轮速平移 + IMU 偏航角速度融合 |
-| 3D LiDAR | LO 基线已完成 | 16 线点云接入 MOLA GICP，已验证输入契约、TF、轨迹和局部地图 |
+| 3D LiDAR | 在线基线已接入 | RTAB-Map 已验证点云契约、输入同步率、TF、数据库、栅格契约，并接入 Nav2 在线导航；闭环建图质量与导航回归待建 |
 | 视觉 / 多传感器融合 | 计划中 | 在 3D 激光链路稳定后逐步接入 |
 
 详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见
@@ -59,6 +60,7 @@ EKF 对照链路。成熟 3D 基线已接入 MOLA 官方 GICP 流水线，并以
 - Navigation2
 - `robot_localization`
 - MOLA LiDAR odometry、ROS 2 bridge 和 metric maps
+- RTAB-Map（在线 3D LiDAR SLAM、回环和位姿图优化）
 - Xacro、`robot_state_publisher` 和 RViz
 
 假设 ROS 2 Jazzy 已正确安装，克隆项目后执行：
@@ -88,6 +90,12 @@ sudo apt install \
   ros-jazzy-mola-lidar-odometry \
   ros-jazzy-mola-bridge-ros2 \
   ros-jazzy-mola-metric-maps
+```
+
+运行在线 3D LiDAR SLAM 基线还需安装 RTAB-Map：
+
+```bash
+sudo apt install ros-jazzy-rtabmap-ros
 ```
 
 后续命令默认在仓库根目录运行。启动文件会以当前目录为基准查找或保存 `maps/`，因此建议每个新终端先执行：
@@ -439,7 +447,77 @@ ros2 launch slam_robot_slam play_slam_data.launch.py \
 
 回放入口默认打开专用 RViz，并在发布数据前等待 2 秒，让节点和订阅关系完成初始化。可通过 `rate:=0.5` 慢速播放，或通过 `loop:=true` 循环播放。
 
-### 8. 运行 3D 激光里程计基线
+### 8. 运行在线 3D LiDAR SLAM 基线
+
+一条命令启动 3D 机器人、点云输入检查、RTAB-Map、回环位姿图和专用 RViz：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py
+```
+
+这条基线默认以轮速 + IMU 的二维 EKF `/odom` 作为局部运动预测，使用
+`/lidar_3d/points` 的 ICP 约束和空间邻近回环构建全局 3D 图。RTAB-Map
+是唯一的 `map -> odom` 发布者；EKF 是唯一的
+`odom -> base_footprint` 发布者。需要与纯轮式预测对照时可显式传入
+`odometry_mode:=wheel`。
+默认从新地图开始，退出时会自动保存 SQLite 数据库到
+`~/.ros/rtabmap_3d.db`。该默认路径不依赖启动终端的当前目录；若要继续
+同一数据库建图：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py \
+  reset_database:=false
+```
+
+当前 Gazebo 点云没有逐点时间字段，因此这是一条不去畸变的低速几何
+基线，不等同于 LIO，也不使用 `/ground_truth/odom`。详细接口和参数见
+[3D SLAM 包说明](src/slam_robot_slam_3d/README.md)。
+
+RTAB-Map 会同时发布 `/rtabmap/map` 二维占据栅格：它从 3D 点云中滤除
+`0.05 m` 以下的地面并保留 `1.00 m` 以内的障碍物。这是下一节在线导航的
+地图输入。
+
+### 9. 运行在线 3D SLAM 导航
+
+在上一条基线之上再启动 Nav2，用 RTAB-Map 实时生成的栅格直接导航，
+不需要先离线建图再定位：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_navigation_simulation.launch.py
+```
+
+这条链路与第 3、4 节的 SLAM Toolbox / AMCL 导航入口**互斥**，不要同时
+启动：两者都会争夺 `map -> odom`。职责划分如下：
+
+| 组件 | 职责 |
+| --- | --- |
+| EKF | 唯一发布 `odom -> base_footprint` |
+| RTAB-Map | 唯一发布 `map -> odom`，并发布 `/rtabmap/map` |
+| Nav2 全局代价地图 | 以 `/rtabmap/map` 为静态层，无 Map Server |
+| Nav2 局部代价地图 | 以 `/lidar_3d/points` 为 `PointCloud2` 观测源 |
+| AMCL / Map Server | **不启动**——位姿由 RTAB-Map 提供 |
+
+参数在官方 `nav2_bringup` 的 `nav2_params.yaml` 之上按需改写，只调整
+坐标系（`base_footprint`）、机器人足迹、地图话题和点云观测源，其余保持
+Jazzy 官方默认值。障碍物高度带统一为 `0.05–1.00 m`，局部体素层的垂直
+范围也一并对齐到该上限（Nav2 默认只到 `0.80 m`）。
+
+需要单独调试导航层时可以只启动这一部分，前提是 RTAB-Map 已在运行：
+
+```bash
+ros2 launch slam_robot_navigation online_slam_navigation.launch.py
+```
+
+建图跑过一段之后，可以检查栅格是否已具备可导航的尺寸、自由区和障碍区：
+
+```bash
+ros2 run slam_robot_slam_3d grid_contract_check
+```
+
+当前入口已完成接口、TF 职责和栅格契约验收，**尚未**完成受控闭环路线的
+建图质量和规划成功率验收，详见 [plan.md](plan.md)。
+
+### 10. 运行 3D 激光里程计对照基线
 
 一条命令启动 3D 机器人、点云输入检查、MOLA GICP 和官方 RViz：
 
@@ -465,7 +543,12 @@ teleop / Nav2 -> /cmd_vel -> Gazebo diff drive
      -> covariance adapter -> /wheel/odom + /imu/data -> EKF
      -> /odom + odom -> base_footprint
 Gazebo 2D LiDAR -> /scan
-Gazebo 3D LiDAR variant -> /lidar_3d/points -> MOLA GICP LO
+Gazebo 3D LiDAR variant -> /lidar_3d/points -> RTAB-Map
+  + external /odom -> ICP constraints + loop closures + pose graph
+  -> map -> odom + /rtabmap/mapData + /rtabmap/map
+  -> Nav2 global costmap static layer（在线 3D 导航，无 Map Server / AMCL）
+/lidar_3d/points -> Nav2 local costmap voxel layer（PointCloud2 观测源）
+Gazebo 3D LiDAR variant -> /lidar_3d/points -> MOLA GICP LO (odometry comparison)
   -> /lidar_odometry/pose + /lidar_odometry/localmap_points
   -> map -> odom
 Gazebo world pose -> /ground_truth/odom（仅评估）
@@ -509,8 +592,8 @@ map
 - `slam_robot_gazebo`：Gazebo 世界、系统插件和 ROS-Gazebo 桥接。
 - `slam_robot_bringup`：建图、导航、自研 SLAM 和各类仿真回归的统一启动入口。
 - `slam_robot_slam`：SLAM Toolbox、自研 C++ SLAM、数据录制和算法测试。
-- `slam_robot_slam_3d`：3D 点云输入契约、MOLA GICP 适配和后续 3D SLAM 回归。
-- `slam_robot_navigation`：Map Server、AMCL、Nav2 配置和自动回归工具。
+- `slam_robot_slam_3d`：3D 点云输入契约、RTAB-Map 在线建图、MOLA GICP 对照和后续 3D SLAM 回归。
+- `slam_robot_navigation`：Map Server、AMCL、离线地图导航与在线 SLAM 导航的 Nav2 配置和自动回归工具。
 
 ## WSL2 与已知现象
 

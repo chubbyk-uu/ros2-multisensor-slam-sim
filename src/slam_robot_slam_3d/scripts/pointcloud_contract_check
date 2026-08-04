@@ -123,9 +123,9 @@ class PointCloudContractChecker(Node):
                 )
             else:
                 self.get_logger().warning(
-                    "No per-point time channel: accepted for the Gazebo LO "
-                    "baseline because deskew is explicitly disabled; this is "
-                    "not a full LIO deskew validation."
+                    "No per-point time channel: accepted because this 3D "
+                    "LiDAR baseline explicitly disables deskew; this is not "
+                    "a full LIO deskew validation."
                 )
             self.result = 0
 

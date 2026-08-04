@@ -1,0 +1,85 @@
+/**:
+  ros__parameters:
+    # Gazebo/EKF remains the sole publisher of odom -> base_footprint;
+    # RTAB-Map publishes map -> odom.
+    use_sim_time: true
+    frame_id: base_footprint
+    map_frame_id: map
+    odom_frame_id: ""
+    publish_tf: true
+    subscribe_depth: false
+    subscribe_rgb: false
+    subscribe_scan: false
+    subscribe_scan_cloud: true
+    subscribe_odom_info: false
+    odom_sensor_sync: false
+    wait_for_transform: 0.20
+
+    # /odom and /lidar_3d/points are stamped by two independent clocks, so
+    # exact-time synchronisation is not guaranteed by construction. It happens
+    # to hold in this simulation only because the point cloud lands on a
+    # 100 ms grid and the EKF on a 20 ms grid, which are exactly harmonic;
+    # changing ekf_2d.yaml frequency to a non-divisor of the LiDAR period
+    # would silently starve the input. Pair on the nearest sample instead.
+    # 0.02 s is twice the 10 ms worst-case offset of a 50 Hz odometry stream
+    # and a fifth of the 100 ms LiDAR period, so it cannot bridge two scans.
+    approx_sync: true
+    approx_sync_max_interval: 0.02
+
+    # ros_gz_bridge publishes sensor data BEST_EFFORT, so the point-cloud
+    # subscription must stay best effort (2); a reliable subscription is QoS
+    # incompatible and receives nothing at all. robot_localization publishes
+    # /odom RELIABLE, so odometry can and should be subscribed reliably (1).
+    qos: 2
+    qos_scan_cloud: 2
+    qos_odom: 1
+
+    # Gazebo supplies a header timestamp but no per-point time field. This
+    # baseline deliberately does not deskew or claim LIO behaviour.
+    #
+    # Stated explicitly rather than inherited from the RTAB-Map default, so
+    # that the rate quoted in docs/performance.md is a configured choice and
+    # shows up in a diff when it changes. The input is a 10 Hz point cloud.
+    Rtabmap/DetectionRate: "1.0"
+    RGBD/LinearUpdate: "0.10"
+    RGBD/AngularUpdate: "0.10"
+    # Keep each keyframe's local grid so an online navigation consumer does
+    # not have to regenerate the whole map on its first subscription.
+    RGBD/CreateOccupancyGrid: "true"
+    Mem/STMSize: "30"
+    Mem/NotLinkedNodesKept: "false"
+
+    # Pure 3D LiDAR registration and proximity loop closure.
+    Reg/Strategy: "1"
+    Icp/PointToPlane: "true"
+    Icp/PointToPlaneK: "20"
+    Icp/PointToPlaneRadius: "0"
+    Icp/PointToPlaneGroundNormalsUp: "0.9"
+    Icp/PointToPlaneMinComplexity: "0.02"
+    Icp/PointToPlaneLowComplexityStrategy: "1"
+    Icp/VoxelSize: "0.10"
+    Icp/RangeMin: "0.20"
+    Icp/MaxTranslation: "0.50"
+    Icp/MaxCorrespondenceDistance: "1.00"
+    Icp/CorrespondenceRatio: "0.20"
+    Icp/Iterations: "10"
+    Icp/Epsilon: "0.001"
+    Icp/OutlierRatio: "0.70"
+    Icp/Strategy: "1"
+    RGBD/ProximityBySpace: "true"
+    RGBD/ProximityMaxGraphDepth: "0"
+    RGBD/ProximityPathMaxNeighbors: "1"
+    RGBD/OptimizeMaxError: "3.0"
+
+    # Build a 2D navigation projection alongside the 3D keyframe cloud.
+    # This planar robot stays on level ground, so a passthrough threshold is
+    # more deterministic than normal-based ground segmentation on sparse
+    # 16-beam scans. The projection is published on /rtabmap/map.
+    Grid/3D: "false"
+    Grid/Sensor: "0"
+    Grid/CellSize: "0.05"
+    Grid/NormalsSegmentation: "false"
+    Grid/MaxGroundHeight: "0.05"
+    Grid/MaxObstacleHeight: "1.00"
+    Grid/RangeMin: "0.20"
+    Grid/RayTracing: "true"

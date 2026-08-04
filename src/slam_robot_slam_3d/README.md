@@ -1,7 +1,8 @@
 # slam_robot_slam_3d
 
-本包负责 3D 激光 SLAM 的算法适配。当前第一条成熟基线使用 MOLA 官方
-GICP 流水线，以 Gazebo 的 `/lidar_3d/points` 运行纯激光里程计（LO）。
+本包负责 3D 激光 SLAM 的算法适配。在线完整基线使用 RTAB-Map，以 Gazebo
+的 `/lidar_3d/points`、局部 `/odom`、ICP 约束、回环和位姿图构建全局 3D
+地图；MOLA GICP 流水线保留为独立的纯激光里程计（LO）对照。
 
 ## 依赖
 
@@ -16,7 +17,104 @@ sudo apt install \
 
 后两个包包含 MOLA 在运行时动态加载的 ROS 桥和地图插件，需要显式安装。
 
+在线 RTAB-Map 基线还需要：
+
+```bash
+sudo apt install ros-jazzy-rtabmap-ros
+```
+
 ## 启动
+
+启动 Gazebo 3D 机器人、点云输入检查、RTAB-Map 和专用 RViz：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py
+```
+
+默认从新地图开始。RTAB-Map 会在收到每个关键帧时持续写入 SQLite 数据库，
+因此按一次 `Ctrl+C` 正常退出后，`~/.ros/rtabmap_3d.db` 可用于后续检查或
+继续建图。该默认路径不依赖启动终端的当前目录。要复用已有数据库：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py \
+  reset_database:=false
+```
+
+无图形界面运行：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py \
+  gui:=false rviz:=false
+```
+
+在线基线的输入、输出和 TF 职责如下：
+
+| 名称 | 类型 | 说明 |
+| --- | --- | --- |
+| `/lidar_3d/points` | `sensor_msgs/PointCloud2` | 3D LiDAR 输入，`lidar_3d_link` 坐标系 |
+| `/odom` | `nav_msgs/Odometry` | Gazebo 或 2D EKF 的局部运动预测，不是真值 |
+| `/rtabmap/mapData` | `rtabmap_msgs/MapData` | RViz 中显示的增量 3D 点云地图 |
+| `/rtabmap/mapGraph` | `rtabmap_msgs/MapGraph` | 位姿图与回环边 |
+| `/rtabmap/map` | `nav_msgs/OccupancyGrid` | 由 3D 点云投影得到的二维导航候选地图 |
+
+RTAB-Map 启动器默认使用 `odometry_mode:=wheel_imu`：轮速与 IMU 偏航角速度
+先由 `robot_localization` EKF 融合成 `/odom`，再作为 RTAB-Map 的局部运动
+预测。RTAB-Map 不启动 `icp_odometry`；因此 EKF 唯一发布
+`odom -> base_footprint`，RTAB-Map 唯一发布 `map -> odom`。这既避免 TF
+冲突，也把“成熟全局 SLAM 基线”与下一阶段“替换局部前端”的实验分开。若需
+纯轮式对照，可传入 `odometry_mode:=wheel`。
+
+当前点云只有统一消息时间戳，没有逐点时间字段。IMU 因此只用于 EKF 局部
+运动预测，而不用于逐点 deskew；这仍不应称为完整 LIO。`/ground_truth/odom`
+只用于评估，绝不作为输入。
+
+专用 RViz 默认显示经 RTAB-Map 关键帧拼接后的地图，而不叠加实时原始点云；
+同时仅在显示端过滤 `z < 0.05 m` 的地面点，并按高度着色。这样便于观察墙体
+和障碍物，但不会改变送入 RTAB-Map 的点云、数据库或建图结果。需要检查原始
+扫描时，可在 RViz 中重新启用 `Current 3D Scan`。
+
+RTAB-Map 同时生成 `0.05 m/cell` 的二维占据栅格：低于 `0.05 m` 的点视为
+地面，`0.05–1.00 m` 的点视为障碍物。建图后可用以下命令检查该地图是否已有
+足够的尺寸、自由区和障碍区：
+
+```bash
+ros2 run slam_robot_slam_3d grid_contract_check
+```
+
+为在线导航避免首次订阅地图时重建全部历史关键帧栅格，RTAB-Map 会在每个
+关键帧创建并存储其局部二维栅格。
+
+`grid_contract_check` 是**事后**校验工具，不是启动门控。这一点和
+`pointcloud_contract_check` 不同：点云在节点起来时就应该存在，所以它用
+`OnProcessExit` 门控 RTAB-Map 启动；而栅格要等机器人跑出一段距离才存在，
+在启动期检查只会必然超时。它最终应当被导航自动回归在跑完固定路线后调用，
+见 [plan.md](../../plan.md) 中未完成的回归条目。
+
+该栅格是 RTAB-Map + Nav2 在线导航入口的地图输入：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_navigation_simulation.launch.py
+```
+
+该入口与既有 SLAM Toolbox / AMCL 导航入口**互斥**，不能同时启动——两者都会
+发布 `map -> odom`。它已完成接口、TF 职责和栅格契约验收，尚未完成受控闭环
+路线的建图质量与规划成功率验收。
+
+### 输入同步与 QoS
+
+`/odom` 和 `/lidar_3d/points` 由两条独立时钟链路打时间戳，因此配置使用
+`approx_sync: true` 而不是 RTAB-Map 默认的精确时间同步；
+`approx_sync_max_interval` 取 `0.02 s`，是 `50 Hz` 里程计最坏 `10 ms` 偏差的
+两倍，且只有 `100 ms` 点云周期的五分之一，不会跨接到相邻扫描。仿真中精确
+同步碰巧也不丢帧（两个时间戳栅格恰好成整数倍），但这不是设计保证，改动
+EKF 频率就会静默失效，测量数据见
+[性能说明](../../docs/performance.md)。
+
+`ros_gz_bridge` 以 `BEST_EFFORT` 发布点云，所以 `qos_scan_cloud` 必须保持
+`2`（best effort）；改成可靠订阅会因 QoS 不兼容而一条消息都收不到。
+`/odom` 由 `robot_localization` 以 `RELIABLE` 发布，因此 `qos_odom` 设为 `1`。
+
+### MOLA 里程计对照
 
 启动 Gazebo 3D 机器人、输入检查、MOLA 和官方 RViz 配置：
 
