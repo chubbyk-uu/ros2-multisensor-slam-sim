@@ -55,6 +55,11 @@
     # This follows RTAB-Map's official laser mapping workflow when the external
     # odometry source is not itself laser scan-matched.
     Reg/Strategy: "1"
+    # The platform is planar even though its LiDAR data and assembled map are
+    # 3D. Prevent small ICP pitch/roll errors from tilting map -> odom, which
+    # would transform distant ground returns above the navigation height band.
+    Reg/Force3DoF: "true"
+    RGBD/ForceOdom3DoF: "true"
     RGBD/NeighborLinkRefining: "true"
     Icp/PointToPlane: "true"
     Icp/PointToPlaneK: "20"
@@ -85,6 +90,8 @@
     Grid/CellSize: "0.05"
     Grid/NormalsSegmentation: "false"
     Grid/MaxGroundHeight: "0.05"
-    Grid/MaxObstacleHeight: "1.00"
+    # The complete 3D robot is 0.35 m high. Project obstacles through 0.45 m
+    # to preserve 0.10 m clearance while allowing verified overhead openings.
+    Grid/MaxObstacleHeight: "0.45"
     Grid/RangeMin: "0.20"
     Grid/RayTracing: "true"

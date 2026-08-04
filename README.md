@@ -38,7 +38,7 @@ AMCL 的在线导航链路；MOLA GICP 保留为不伪造逐点时间的纯激�
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
 | 自研 C++ 2D SLAM | 已完成 2D 基线 | 已完成前后端、场景回归及 155 m 固定 rosbag 的 2× 离线回放 |
 | IMU / 二维 EKF | 已完成并默认启用 | 100 Hz IMU；轮速平移 + IMU 偏航角速度融合，可显式回退纯轮式模式 |
-| 3D LiDAR | 在线基线与闭环回归已完成 | RTAB-Map 已验证点云、TF、数据库与栅格契约；结构化世界两圈自动回归通过，并接入 Nav2 在线导航；Nav2 多目标规划回归待建 |
+| 3D LiDAR | 在线基线、闭环与导航验收已完成 | RTAB-Map 已验证点云、TF、数据库与栅格契约；结构化世界两圈建图及 Nav2 高度语义多目标回归通过 |
 | 视觉 / 多传感器融合 | 计划中 | 在 3D 激光链路稳定后逐步接入 |
 
 详细开发路线见 [plan.md](plan.md)，性能和旋转标定结果见
@@ -472,9 +472,14 @@ ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py \
 基线，不等同于 LIO，也不使用 `/ground_truth/odom`。详细接口和参数见
 [3D SLAM 包说明](src/slam_robot_slam_3d/README.md)。
 
+机器人始终在平面运动，因此 RTAB-Map 的配准和里程计输入强制为
+`x/y/yaw` 三自由度；这只约束轨迹和 `map -> odom`，不会把 3D 点云或累计
+点云地图降成二维。该约束可防止很小的 ICP 横滚/俯仰误差把远处地面旋转到
+导航障碍高度。
+
 RTAB-Map 会同时发布 `/rtabmap/map` 二维占据栅格：它从 3D 点云中滤除
-`0.05 m` 以下的地面并保留 `1.00 m` 以内的障碍物。这是下一节在线导航的
-地图输入。
+`0.05 m` 以下的地面，并把 `0.45 m` 安全扫掠高度内的点作为障碍物。这一
+上限覆盖含 3D 雷达在内的 `0.35 m` 机器人，并留出 `0.10 m` 余量。
 
 ### 9. 运行在线 3D SLAM 导航
 
@@ -503,8 +508,8 @@ ros2 launch slam_robot_slam_3d rtabmap_navigation_simulation.launch.py
 
 参数在官方 `nav2_bringup` 的 `nav2_params.yaml` 之上按需改写，只调整
 坐标系（`base_footprint`）、机器人足迹、地图话题和点云观测源，其余保持
-Jazzy 官方默认值。障碍物高度带统一为 `0.05–1.00 m`；局部体素层使用
-Nav2 支持的最多 `16` 层和 `0.0625 m` 分辨率覆盖 `0–1.00 m`。MPPI
+Jazzy 官方默认值。障碍物高度带统一为 `0.05–0.45 m`；局部体素层使用
+`15` 层和 `0.03 m` 分辨率覆盖 `0–0.45 m`。MPPI
 `CostCritic` 同样启用真实八边形足迹，不使用不适合本车长尾外形的圆形近似。
 
 需要单独调试导航层时可以只启动这一部分，前提是 RTAB-Map 已在运行：
@@ -527,8 +532,16 @@ ros2 run slam_robot_slam_3d grid_contract_check
 ros2 launch slam_robot_slam_3d structured_loop_regression.launch.py
 ```
 
-当前入口已完成接口、TF、栅格契约和受控闭环建图验收；Nav2 多目标规划
-成功率与动态障碍物回归仍待完成，详见 [plan.md](plan.md)。
+在同一世界执行两圈建图后，再由 Nav2 自动穿越 `0.55 m` 高门洞并绕开
+下细上粗柱帽的完整验收：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_navigation_regression.launch.py
+```
+
+该脚本要求门洞中心保持自由、机器人实际通过门洞、`0.40 m` 半径柱帽被投影
+为障碍，并且真实轨迹与柱帽中心保持至少 `0.55 m`、产生至少 `0.25 m`
+绕行。动态障碍物和完全封路恢复仍属于后续专项回归。
 
 ### 10. 运行 3D 激光里程计对照基线
 

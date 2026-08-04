@@ -69,6 +69,11 @@ RTAB-Map 官方激光建图流程启用 `RGBD/NeighborLinkRefining=true`，用�
 点到面 ICP 精修每条相邻关键帧边，减少圆柱、墙角等局部结构的厘米级重影；
 回环仍由空间邻近检测后单独进行 ICP 验证。
 
+本车是平面差速平台，所以配置启用 `Reg/Force3DoF` 和
+`RGBD/ForceOdom3DoF`：机器人轨迹只估计 `x/y/yaw`，而输入扫描和累计地图
+仍保持三维。不能关闭这两个参数后继续给 Nav2 使用同一地图；六自由度 ICP
+的微小倾斜会使远处地面点在 `map` 中产生明显高度误差并污染实时障碍层。
+
 当前点云只有统一消息时间戳，没有逐点时间字段。IMU 因此只用于 EKF 局部
 运动预测，而不用于逐点 deskew；这仍不应称为完整 LIO。`/ground_truth/odom`
 只用于评估，绝不作为输入。
@@ -79,7 +84,8 @@ RTAB-Map 官方激光建图流程启用 `RGBD/NeighborLinkRefining=true`，用�
 扫描时，可在 RViz 中重新启用 `Current 3D Scan`。
 
 RTAB-Map 同时生成 `0.05 m/cell` 的二维占据栅格：低于 `0.05 m` 的点视为
-地面，`0.05–1.00 m` 的点视为障碍物。建图后可用以下命令检查该地图是否已有
+地面，`0.05–0.45 m` 的点视为障碍物。机器人含 3D 雷达总高为 `0.35 m`，
+投影上限额外保留 `0.10 m` 安全余量。建图后可用以下命令检查该地图是否已有
 足够的尺寸、自由区和障碍区：
 
 ```bash
@@ -118,8 +124,15 @@ ros2 launch slam_robot_slam_3d rtabmap_navigation_simulation.launch.py
 可旋转的 Orbit 斜视视角。它不会改变算法输入或地图，只改变可视化。
 
 该入口与既有 SLAM Toolbox / AMCL 导航入口**互斥**，不能同时启动——两者都会
-发布 `map -> odom`。它已完成接口、TF 职责、栅格契约和受控闭环建图验收，
-尚未完成 Nav2 多目标规划成功率验收。
+发布 `map -> odom`。接口、TF 职责、栅格契约、受控闭环建图及高度语义多目标
+导航均已有自动验收。完整验收命令为：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_navigation_regression.launch.py
+```
+
+它先跑两圈形成稳定地图，再验证 `0.55 m` 高门洞可通过，以及 3D 点云把
+`0.07 m` 细底座上方的 `0.40 m` 粗柱帽按最大外轮廓投影并迫使路径绕行。
 
 纯 LiDAR 模式仍是一条完整可运行的 RTAB-Map SLAM 基线，但没有相机时视觉
 词袋回环和基于图像的重定位会被禁用，只保留空间邻近预测加 3D ICP 验证。

@@ -16,22 +16,19 @@ ROBOT_FOOTPRINT = (
     "[0.075, -0.188], [0.155, -0.160]]"
 )
 
-# Single source of truth for the navigation height band. RTAB-Map projects the
-# same band into /rtabmap/map via Grid/MaxGroundHeight and
-# Grid/MaxObstacleHeight, so these must be kept in step with rtabmap_3d.yaml.
+# The 3D robot is 0.35 m high including the LiDAR housing. The extra 0.10 m
+# accounts for attitude, suspension-free simulation motion, and modelling
+# tolerance. RTAB-Map projects the same band into /rtabmap/map, so the static
+# contract test keeps this value in step with rtabmap_3d.yaml.
 MIN_OBSTACLE_HEIGHT = "0.05"
-MAX_OBSTACLE_HEIGHT = "1.00"
+MAX_OBSTACLE_HEIGHT = "0.45"
 
 # The local costmap uses a voxel layer, whose vertical extent is
-# origin_z + z_voxels * z_resolution. Nav2's defaults span only 0.80 m, so
-# points between 0.80 m and MAX_OBSTACLE_HEIGHT would pass the observation
-# filter and then be dropped by VoxelLayer::worldToMap3D without any warning.
-# nav2_voxel_grid stores each vertical column in a 32-bit word and supports at
-# most 16 z values. 16 voxels x 0.0625 m keeps the same 1.00 m ceiling without
-# triggering VoxelGrid::resize()'s unsupported-size path.
+# origin_z + z_voxels * z_resolution. nav2_voxel_grid supports at most 16 z
+# values; fifteen 0.03 m voxels exactly cover the swept-height band.
 VOXEL_ORIGIN_Z = "0.0"
-VOXEL_RESOLUTION_Z = "0.0625"
-VOXEL_COUNT_Z = "16"
+VOXEL_RESOLUTION_Z = "0.03"
+VOXEL_COUNT_Z = "15"
 
 
 def generate_launch_description():

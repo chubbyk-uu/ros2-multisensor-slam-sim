@@ -378,11 +378,11 @@ MOLA 只发布 `map -> odom`；`odom -> base_footprint` 和机器人固定 TF �
 | 代价地图输出 | `/global_costmap/costmap` `0.500 Hz`（配置 `1.0`），`/local_costmap/costmap` `1.667 Hz`（配置 `2.0`）；隔离运行复测一致，非资源竞争所致，实际发布率与配置的差异待后续排查 |
 | 静态层地图源 | `static_layer.map_topic = /rtabmap/map`（官方参数文件中无此键，由 `RewrittenYaml` 注入） |
 | 机器人足迹 | 两个代价地图和 MPPI `CostCritic` 均使用八边形多边形；运行日志确认 `collision check based on footprint cost` |
-| 局部体素层垂直范围 | `z_voxels=16`、`z_resolution=0.0625`、`origin_z=0.0`，覆盖 `0–1.00 m` 且不超过 `nav2_voxel_grid` 的 16 层上限 |
+| 局部体素层垂直范围 | `z_voxels=15`、`z_resolution=0.03`、`origin_z=0.0`，覆盖 `0–0.45 m`；机器人含雷达总高 `0.35 m`，余量 `0.10 m` |
 | Map Server / AMCL | 未启动，`map -> odom` 仍由 RTAB-Map 独占 |
 
-这一轮只验收接口、参数落地和 TF 职责，**不是**导航质量结论；规划成功率、
-动态障碍物重规划和 `map -> odom` 修正量待受控路线回归建立后测量。
+这一轮只验收接口、参数落地和 TF 职责；后续高度语义多目标回归结果见下文。
+动态障碍物重规划仍待专项测量。
 
 ### 立体回环世界首次建图验收
 
@@ -459,6 +459,41 @@ MOLA 只发布 `map -> odom`；`odom -> base_footprint` 和机器人固定 TF �
 ```bash
 ros2 launch slam_robot_slam_3d structured_loop_regression.launch.py
 ```
+
+### 高度语义 Nav2 自动回归
+
+2026-08-04 在同一 `structured_loop_3d.sdf` 中加入两个互补靶标：
+
+- 高门洞下沿 `0.55 m`，高于 `0.35 m` 机器人和 `0.45 m` 安全扫掠高度；
+- 蘑菇柱底座半径 `0.07 m`，但 `z=0.18–0.44 m` 柱帽半径为 `0.40 m`。
+
+`structured_navigation_regression.launch.py` 先执行原有两圈闭环建图，再由
+Nav2 完成五个目标。门洞段记录真值穿越截面；柱帽段的直线会穿过粗柱帽，
+脚本要求地图环带存在占据单元、机器人与柱心距离至少 `0.55 m`，且向走廊
+内侧绕行至少 `0.25 m`。同时要求门洞中心在二维投影中保持自由。
+
+首次完整运行结果：原有建图 `15/15` 判据通过，高度导航 `8/8` 判据通过，
+五个 Nav2 目标全部到达。MPPI 在柱帽之后接近最终目标时出现一次
+`Failed to make progress`，行为树清图并重新规划后成功完成；Collision
+Monitor 没有导致任务失败。回归进程成功退出，结束后未发现残留仿真实例。
+
+```bash
+ros2 launch slam_robot_slam_3d structured_navigation_regression.launch.py
+```
+
+手动在线导航复测发现一条此前回归未覆盖的失效路径：RTAB-Map 默认允许六自由度
+ICP，运行一段时间后实测 `map -> odom` 达到 `z=0.167 m`、横滚
+`-0.71°`，而 `odom -> base_footprint` 仍严格为二维。这个小倾角足以让远处
+地面返回越过 `0.05 m` 地面阈值；全局 PointCloud2 障碍层出现围绕机器人的
+同心弧线，并把可通行走廊连成 `NO_VALID_PATH (208)`。
+
+临时把地面阈值提高到 `0.10 m` 仍无法消除远距离倾斜误差，因此没有采用
+“继续抬高过滤阈值”的掩盖方案。正式修复是启用 `Reg/Force3DoF=true` 与
+`RGBD/ForceOdom3DoF=true`，保持三维点云地图但约束平面机器人轨迹；结构化
+回归同时新增 `map -> odom` 高度峰值不超过 `0.02 m`、横滚/俯仰峰值不超过
+`0.5°` 的硬判据。清空旧数据库后再次手动建图和导航，原先的地面同心弧假
+障碍消失，蘑菇柱附近可正常规划和通行；完整自动长回归仍由上述新增判据持续
+覆盖。
 
 纯 LiDAR RTAB-Map 不依赖相机才能建图，但没有图像时视觉词袋回环与视觉重定位
 被禁用，回环范围收窄为空间 proximity 预测加 3D ICP 验证。运行中的

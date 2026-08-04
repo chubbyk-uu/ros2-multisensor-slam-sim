@@ -34,3 +34,14 @@ def test_default_regression_requires_two_laps_and_real_loop_evidence():
     assert arguments.minimum_route_distance >= 138.0
     assert arguments.minimum_proximity_events >= 1
     assert arguments.minimum_map_correction > 0.0
+    assert arguments.maximum_map_to_odom_height <= 0.02
+    assert arguments.maximum_map_to_odom_tilt_degrees <= 0.5
+    assert not arguments.navigation_acceptance
+
+
+def test_height_aware_navigation_thresholds_exceed_robot_outline():
+    arguments = MODULE.parse_arguments(["--navigation-acceptance"])
+
+    assert arguments.navigation_acceptance
+    assert arguments.minimum_mushroom_clearance > 0.40 + 0.07
+    assert arguments.minimum_mushroom_detour >= 0.20

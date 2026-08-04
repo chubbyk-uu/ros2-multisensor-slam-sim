@@ -7,10 +7,15 @@ import math
 import sys
 import time
 
-from geometry_msgs.msg import Twist
+from action_msgs.msg import GoalStatus
+from geometry_msgs.msg import PoseStamped, Twist
+from lifecycle_msgs.srv import GetState
+from nav2_msgs.action import NavigateToPose
+from nav2_msgs.msg import CollisionMonitorState
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rcl_interfaces.msg import Log
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -97,12 +102,21 @@ class StructuredLoopRegression(Node):
         self.graph_nodes = 0
         self.proximity_events = set()
         self.maximum_map_correction = 0.0
+        self.maximum_map_to_odom_height = 0.0
+        self.maximum_map_to_odom_tilt = 0.0
         self.truth_distance = 0.0
         self.previous_truth_pose = None
         self.measuring = False
         self.critical_logs = []
         self.ekf_rate_warnings = 0
         self.completed_waypoints = 0
+        self.collision_actions = 0
+        self.last_collision_action = CollisionMonitorState.DO_NOTHING
+        self.navigation_segment = None
+        self.portal_crossing_error = math.inf
+        self.portal_crossing_x = math.nan
+        self.minimum_mushroom_distance = math.inf
+        self.maximum_mushroom_detour = 0.0
 
         self.command_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_subscription(
@@ -132,6 +146,17 @@ class StructuredLoopRegression(Node):
             map_qos,
         )
         self.create_subscription(Log, "/rosout", self._log_callback, 200)
+        self.create_subscription(
+            CollisionMonitorState,
+            "/collision_monitor_state",
+            self._collision_callback,
+            10,
+        )
+        self.navigation_client = ActionClient(
+            self,
+            NavigateToPose,
+            "/navigate_to_pose",
+        )
 
     def _truth_callback(self, message):
         pose = pose_from_odometry(message)
@@ -144,6 +169,21 @@ class StructuredLoopRegression(Node):
                 self.truth_distance += step
         self.previous_truth_pose = pose
         self.truth_pose = pose
+        if self.navigation_segment == "portal":
+            crossing_error = abs(pose[1] - 3.0)
+            if crossing_error < self.portal_crossing_error:
+                self.portal_crossing_error = crossing_error
+                self.portal_crossing_x = pose[0]
+        elif self.navigation_segment == "mushroom":
+            distance = math.hypot(pose[0] - 8.5, pose[1] - 12.85)
+            self.minimum_mushroom_distance = min(
+                self.minimum_mushroom_distance,
+                distance,
+            )
+            self.maximum_mushroom_detour = max(
+                self.maximum_mushroom_detour,
+                12.55 - pose[1],
+            )
 
     def _odom_callback(self, message):
         self.odom_pose = pose_from_odometry(message)
@@ -177,6 +217,30 @@ class StructuredLoopRegression(Node):
                     self.maximum_map_correction,
                     correction,
                 )
+                rotation = transform.transform.rotation
+                sin_roll = 2.0 * (
+                    rotation.w * rotation.x
+                    + rotation.y * rotation.z
+                )
+                cos_roll = 1.0 - 2.0 * (
+                    rotation.x * rotation.x
+                    + rotation.y * rotation.y
+                )
+                roll = math.atan2(sin_roll, cos_roll)
+                sin_pitch = 2.0 * (
+                    rotation.w * rotation.y
+                    - rotation.z * rotation.x
+                )
+                pitch = math.asin(max(-1.0, min(1.0, sin_pitch)))
+                self.maximum_map_to_odom_height = max(
+                    self.maximum_map_to_odom_height,
+                    abs(transform.transform.translation.z),
+                )
+                self.maximum_map_to_odom_tilt = max(
+                    self.maximum_map_to_odom_tilt,
+                    abs(roll),
+                    abs(pitch),
+                )
 
     def _map_callback(self, message):
         self.latest_grid = message
@@ -187,6 +251,14 @@ class StructuredLoopRegression(Node):
         if any(fragment in message.msg for fragment in CRITICAL_LOG_FRAGMENTS):
             if message.msg not in self.critical_logs:
                 self.critical_logs.append(message.msg)
+
+    def _collision_callback(self, message):
+        if (
+            message.action_type != CollisionMonitorState.DO_NOTHING
+            and message.action_type != self.last_collision_action
+        ):
+            self.collision_actions += 1
+        self.last_collision_action = message.action_type
 
     def spin_once(self, timeout_sec=0.025):
         rclpy.spin_once(self, timeout_sec=timeout_sec)
@@ -293,6 +365,168 @@ class StructuredLoopRegression(Node):
     def map_pose(self):
         return compose_pose(self.map_to_odom, self.odom_pose)
 
+    def wait_for_navigation(self, timeout):
+        deadline = time.monotonic() + timeout
+        state_client = self.create_client(GetState, "/bt_navigator/get_state")
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if not state_client.wait_for_service(timeout_sec=min(0.5, remaining)):
+                continue
+            future = state_client.call_async(GetState.Request())
+            while not future.done() and time.monotonic() < deadline:
+                self.spin_once(0.1)
+            if (
+                future.done()
+                and future.result() is not None
+                and future.result().current_state.label == "active"
+                and self.navigation_client.wait_for_server(timeout_sec=0.5)
+            ):
+                return
+        raise RuntimeError("Nav2 did not become active before the timeout")
+
+    def navigation_pose(self, x, y, yaw):
+        pose = PoseStamped()
+        pose.header.frame_id = "map"
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        pose.pose.orientation.z = math.sin(yaw / 2.0)
+        pose.pose.orientation.w = math.cos(yaw / 2.0)
+        return pose
+
+    def navigate_to(self, target, arguments, label, segment=None):
+        goal = NavigateToPose.Goal()
+        goal.pose = self.navigation_pose(*target)
+        send_future = self.navigation_client.send_goal_async(goal)
+        wall_deadline = time.monotonic() + arguments.navigation_wall_timeout
+        while not send_future.done() and time.monotonic() < wall_deadline:
+            self.spin_once(0.1)
+        if not send_future.done() or send_future.result() is None:
+            raise RuntimeError(f"{label} goal request timed out")
+        goal_handle = send_future.result()
+        if not goal_handle.accepted:
+            raise RuntimeError(f"{label} goal was rejected")
+
+        self.navigation_segment = segment
+        result_future = goal_handle.get_result_async()
+        next_report = time.monotonic()
+        while not result_future.done():
+            if time.monotonic() >= wall_deadline:
+                goal_handle.cancel_goal_async()
+                self.navigation_segment = None
+                raise RuntimeError(f"{label} navigation timed out")
+            if time.monotonic() >= next_report:
+                print(
+                    f"  {label}: truth=({self.truth_pose[0]:.2f}, "
+                    f"{self.truth_pose[1]:.2f})",
+                    flush=True,
+                )
+                next_report = time.monotonic() + 5.0
+            self.spin_once(0.1)
+        self.navigation_segment = None
+
+        wrapped_result = result_future.result()
+        if (
+            wrapped_result is None
+            or wrapped_result.status != GoalStatus.STATUS_SUCCEEDED
+        ):
+            status = "missing" if wrapped_result is None else wrapped_result.status
+            raise RuntimeError(f"{label} failed with action status {status}")
+        goal_error = math.hypot(
+            self.map_pose()[0] - target[0],
+            self.map_pose()[1] - target[1],
+        )
+        print(f"  {label}: reached, map-frame error={goal_error:.3f} m", flush=True)
+        return goal_error
+
+    def grid_values_near(self, x, y, minimum_radius, maximum_radius):
+        grid = self.latest_grid
+        origin = grid.info.origin.position
+        resolution = grid.info.resolution
+        radius_cells = math.ceil(maximum_radius / resolution)
+        center_x = round((x - origin.x) / resolution)
+        center_y = round((y - origin.y) / resolution)
+        values = []
+        for row in range(center_y - radius_cells, center_y + radius_cells + 1):
+            if row < 0 or row >= grid.info.height:
+                continue
+            for column in range(
+                center_x - radius_cells,
+                center_x + radius_cells + 1,
+            ):
+                if column < 0 or column >= grid.info.width:
+                    continue
+                cell_x = origin.x + (column + 0.5) * resolution
+                cell_y = origin.y + (row + 0.5) * resolution
+                distance = math.hypot(cell_x - x, cell_y - y)
+                if minimum_radius <= distance <= maximum_radius:
+                    values.append(grid.data[row * grid.info.width + column])
+        return values
+
+    def run_navigation_acceptance(self, arguments):
+        self.wait_for_navigation(arguments.navigation_activation_timeout)
+        route = (
+            ((23.9, 1.8, math.pi / 2.0), "portal approach", None),
+            ((23.9, 4.2, math.pi / 2.0), "portal traversal", "portal"),
+            ((23.9, 11.8, math.pi / 2.0), "north approach", None),
+            ((9.6, 12.55, math.pi), "mushroom approach", None),
+            ((7.6, 12.55, math.pi), "mushroom traversal", "mushroom"),
+        )
+        goal_errors = []
+        print("Starting RTAB-Map + Nav2 height-aware acceptance", flush=True)
+        for target, label, segment in route:
+            goal_errors.append(
+                self.navigate_to(target, arguments, label, segment)
+            )
+        self.settle(2.0)
+
+        cap_values = self.grid_values_near(8.5, 12.85, 0.25, 0.48)
+        portal_values = self.grid_values_near(24.0, 3.0, 0.0, 0.12)
+        checks = {
+            "all_navigation_goals_reached": len(goal_errors) == len(route),
+            "navigation_goal_error_bounded": (
+                max(goal_errors) <= arguments.maximum_navigation_goal_error
+            ),
+            "high_portal_crossed": self.portal_crossing_error <= 0.15,
+            "portal_opening_used": 23.05 <= self.portal_crossing_x <= 24.95,
+            "mushroom_cap_projected": bool(
+                cap_values and max(cap_values) >= 50
+            ),
+            "portal_centre_remains_free": bool(
+                portal_values and min(portal_values) == 0
+            ),
+            "mushroom_outline_avoided": (
+                self.minimum_mushroom_distance
+                >= arguments.minimum_mushroom_clearance
+            ),
+            "mushroom_forced_detour": (
+                self.maximum_mushroom_detour
+                >= arguments.minimum_mushroom_detour
+            ),
+        }
+
+        print("\nheight-aware navigation acceptance result")
+        print(
+            f"portal      : crossing error={self.portal_crossing_error:.3f} m, "
+            f"x={self.portal_crossing_x:.3f} m"
+        )
+        print(
+            f"mushroom    : minimum centre distance="
+            f"{self.minimum_mushroom_distance:.3f} m, "
+            f"detour={self.maximum_mushroom_detour:.3f} m"
+        )
+        print(
+            f"costmap     : cap peak={max(cap_values) if cap_values else 'none'}, "
+            f"portal minimum={min(portal_values) if portal_values else 'none'}"
+        )
+        print(
+            f"runtime     : collision monitor transitions="
+            f"{self.collision_actions}"
+        )
+        for name, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
+        return all(checks.values())
+
     def evaluate(self, arguments, starts, route):
         truth_motion = relative_pose(starts["truth"], self.truth_pose)
         odom_motion = relative_pose(starts["odom"], self.odom_pose)
@@ -330,6 +564,14 @@ class StructuredLoopRegression(Node):
             "map_to_odom_correction_observed": (
                 self.maximum_map_correction
                 >= arguments.minimum_map_correction
+            ),
+            "map_to_odom_height_is_planar": (
+                self.maximum_map_to_odom_height
+                <= arguments.maximum_map_to_odom_height
+            ),
+            "map_to_odom_tilt_is_planar": (
+                self.maximum_map_to_odom_tilt
+                <= math.radians(arguments.maximum_map_to_odom_tilt_degrees)
             ),
             "slam_translation_error_bounded": (
                 slam_error <= arguments.maximum_slam_translation_error
@@ -371,6 +613,10 @@ class StructuredLoopRegression(Node):
             f"graph       : nodes={self.graph_nodes}, "
             f"proximity={len(self.proximity_events)}, "
             f"map correction peak={self.maximum_map_correction:.3f} m"
+        )
+        print(
+            f"map plane   : z peak={self.maximum_map_to_odom_height:.4f} m, "
+            f"tilt peak={math.degrees(self.maximum_map_to_odom_tilt):.3f} deg"
         )
         print(
             f"map         : {map_width:.2f} x {map_height:.2f} m, "
@@ -415,7 +661,11 @@ class StructuredLoopRegression(Node):
         self.settle(arguments.final_settle_time)
         if self.latest_grid is None:
             raise RuntimeError("RTAB-Map did not publish /rtabmap/map")
-        return self.evaluate(arguments, starts, route)
+        mapping_passed = self.evaluate(arguments, starts, route)
+        if not arguments.navigation_acceptance:
+            return mapping_passed
+        navigation_passed = self.run_navigation_acceptance(arguments)
+        return mapping_passed and navigation_passed
 
 
 def parse_arguments(argv):
@@ -436,6 +686,10 @@ def parse_arguments(argv):
     parser.add_argument("--minimum-graph-nodes", type=int, default=300)
     parser.add_argument("--minimum-proximity-events", type=int, default=1)
     parser.add_argument("--minimum-map-correction", type=float, default=0.02)
+    parser.add_argument("--maximum-map-to-odom-height", type=float, default=0.02)
+    parser.add_argument(
+        "--maximum-map-to-odom-tilt-degrees", type=float, default=0.5
+    )
     parser.add_argument(
         "--maximum-slam-translation-error", type=float, default=0.35
     )
@@ -450,6 +704,12 @@ def parse_arguments(argv):
     parser.add_argument("--minimum-free-cells", type=int, default=25000)
     parser.add_argument("--minimum-occupied-cells", type=int, default=1500)
     parser.add_argument("--maximum-ekf-rate-warnings", type=int, default=3)
+    parser.add_argument("--navigation-acceptance", action="store_true")
+    parser.add_argument("--navigation-activation-timeout", type=float, default=120.0)
+    parser.add_argument("--navigation-wall-timeout", type=float, default=300.0)
+    parser.add_argument("--maximum-navigation-goal-error", type=float, default=0.40)
+    parser.add_argument("--minimum-mushroom-clearance", type=float, default=0.55)
+    parser.add_argument("--minimum-mushroom-detour", type=float, default=0.25)
     arguments = parser.parse_args(argv)
     if arguments.laps < 1:
         parser.error("--laps must be at least 1")

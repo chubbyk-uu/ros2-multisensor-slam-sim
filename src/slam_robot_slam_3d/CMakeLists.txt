@@ -48,6 +48,10 @@ if(BUILD_TESTING)
     test_rtabmap_config
     test/test_rtabmap_config.py
   )
+  ament_add_pytest_test(
+    test_height_aware_navigation
+    test/test_height_aware_navigation.py
+  )
 endif()
 
 ament_package()

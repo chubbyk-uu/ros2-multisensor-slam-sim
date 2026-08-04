@@ -228,20 +228,47 @@
         </visual>
 
         <!--
-          East leg: overhead gantries crossing the corridor at 2.08 m clear
-          height. They are invisible to a horizontal 2D scan but are sampled
-          by the upper beams from several metres away.
+          East leg: the first overhead member is a navigation clearance gate.
+          Its 0.55 m opening clears the complete 0.35 m robot and the 0.45 m
+          navigation swept-height contract. The other gantries retain 2.08 m
+          clearance as high 3D structure.
         -->
-        <collision name="east_gantry_a_collision">
-          <pose>24.0 3.0 2.20 0 0 0</pose>
-          <geometry><box><size>2.8 0.30 0.24</size></box></geometry>
+        <collision name="east_clearance_portal_header_collision">
+          <pose>24.0 3.0 0.625 0 0 0</pose>
+          <geometry><box><size>2.8 0.30 0.15</size></box></geometry>
         </collision>
-        <visual name="east_gantry_a_visual">
-          <pose>24.0 3.0 2.20 0 0 0</pose>
-          <geometry><box><size>2.8 0.30 0.24</size></box></geometry>
+        <visual name="east_clearance_portal_header_visual">
+          <pose>24.0 3.0 0.625 0 0 0</pose>
+          <geometry><box><size>2.8 0.30 0.15</size></box></geometry>
           <material>
-            <ambient>0.45 0.50 0.58 1</ambient>
-            <diffuse>0.45 0.50 0.58 1</diffuse>
+            <ambient>0.18 0.68 0.78 1</ambient>
+            <diffuse>0.18 0.68 0.78 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="east_clearance_portal_inner_jamb_collision">
+          <pose>22.80 3.0 0.275 0 0 0</pose>
+          <geometry><box><size>0.40 0.30 0.55</size></box></geometry>
+        </collision>
+        <visual name="east_clearance_portal_inner_jamb_visual">
+          <pose>22.80 3.0 0.275 0 0 0</pose>
+          <geometry><box><size>0.40 0.30 0.55</size></box></geometry>
+          <material>
+            <ambient>0.18 0.68 0.78 1</ambient>
+            <diffuse>0.18 0.68 0.78 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="east_clearance_portal_outer_jamb_collision">
+          <pose>25.20 3.0 0.275 0 0 0</pose>
+          <geometry><box><size>0.40 0.30 0.55</size></box></geometry>
+        </collision>
+        <visual name="east_clearance_portal_outer_jamb_visual">
+          <pose>25.20 3.0 0.275 0 0 0</pose>
+          <geometry><box><size>0.40 0.30 0.55</size></box></geometry>
+          <material>
+            <ambient>0.18 0.68 0.78 1</ambient>
+            <diffuse>0.18 0.68 0.78 1</diffuse>
           </material>
         </visual>
 
@@ -381,6 +408,39 @@
         </visual>
 
         <!--
+          Height-aware navigation target. The 0.07 m stem is intentionally
+          much narrower than the 0.40 m cap. The cap spans z=0.18..0.44 m,
+          so it overlaps the robot's swept height and its full outline must be
+          projected into both RTAB-Map and Nav2 costmaps. It is offset from the
+          mapping regression centreline, which remains physically clear.
+        -->
+        <collision name="north_mushroom_stem_collision">
+          <pose>8.5 12.85 0.09 0 0 0</pose>
+          <geometry><cylinder><radius>0.07</radius><length>0.18</length></cylinder></geometry>
+        </collision>
+        <visual name="north_mushroom_stem_visual">
+          <pose>8.5 12.85 0.09 0 0 0</pose>
+          <geometry><cylinder><radius>0.07</radius><length>0.18</length></cylinder></geometry>
+          <material>
+            <ambient>0.86 0.24 0.18 1</ambient>
+            <diffuse>0.86 0.24 0.18 1</diffuse>
+          </material>
+        </visual>
+
+        <collision name="north_mushroom_cap_collision">
+          <pose>8.5 12.85 0.31 0 0 0</pose>
+          <geometry><cylinder><radius>0.40</radius><length>0.26</length></cylinder></geometry>
+        </collision>
+        <visual name="north_mushroom_cap_visual">
+          <pose>8.5 12.85 0.31 0 0 0</pose>
+          <geometry><cylinder><radius>0.40</radius><length>0.26</length></cylinder></geometry>
+          <material>
+            <ambient>0.96 0.52 0.12 1</ambient>
+            <diffuse>0.96 0.52 0.12 1</diffuse>
+          </material>
+        </visual>
+
+        <!--
           West leg: the landmark cluster the loop closes against. Shapes and
           heights are deliberately all different so proximity detection has an
           unambiguous signature on return; bag-of-words is unavailable because
@@ -467,7 +527,33 @@
         <camera_pose>12 -14 18 0 0.75 1.30</camera_pose>
         <camera_clip><near>0.10</near><far>1000</far></camera_clip>
       </plugin>
-      <plugin filename="GzSceneManager" name="Scene Manager"/>
+      <plugin filename="GzSceneManager" name="Scene Manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="InteractiveViewControl" name="Interactive view control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="CameraTracking" name="Camera Tracking">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
       <plugin filename="WorldControl" name="World control">
         <gz-gui>
           <title>World control</title>
