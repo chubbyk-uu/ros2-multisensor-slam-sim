@@ -17,6 +17,7 @@ install(
   PROGRAMS
     scripts/grid_contract_check
     scripts/pointcloud_contract_check
+    scripts/structured_loop_regression
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -38,6 +39,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_pointcloud_contract
     test/test_pointcloud_contract.py
+  )
+  ament_add_pytest_test(
+    test_structured_loop_regression
+    test/test_structured_loop_regression.py
   )
 endif()
 

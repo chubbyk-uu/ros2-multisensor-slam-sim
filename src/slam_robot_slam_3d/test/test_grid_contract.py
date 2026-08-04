@@ -21,6 +21,14 @@ def validate(**overrides):
         "minimum_width": 20,
         "minimum_height": 20,
         "minimum_known_cells": 20,
+        "minimum_free_cells": 1,
+        "minimum_occupied_cells": 1,
+        "expected_resolution": 0.05,
+        "resolution_tolerance": 0.001,
+        "minimum_metric_width": 0.0,
+        "maximum_metric_width": 0.0,
+        "minimum_metric_height": 0.0,
+        "maximum_metric_height": 0.0,
     }
     arguments["data"][0:30] = [0] * 30
     arguments["data"][30:35] = [100] * 5
@@ -53,3 +61,19 @@ def test_unknown_or_one_class_grid_is_rejected():
     assert any("known cells" in error for error in errors)
     assert any("free cells" in error for error in errors)
     assert any("occupied cells" in error for error in errors)
+
+
+def test_resolution_class_counts_and_metric_extent_are_checked():
+    errors, _ = validate(
+        resolution=0.10,
+        minimum_free_cells=40,
+        minimum_occupied_cells=10,
+        minimum_metric_width=5.0,
+        maximum_metric_height=2.0,
+    )
+
+    assert any("resolution" in error for error in errors)
+    assert any("free cells" in error for error in errors)
+    assert any("occupied cells" in error for error in errors)
+    assert any("metric width" in error for error in errors)
+    assert any("metric height" in error for error in errors)

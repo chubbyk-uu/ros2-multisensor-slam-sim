@@ -1,0 +1,477 @@
+#!/usr/bin/env python3
+
+"""Drive and score the structured 3D RTAB-Map loop regression."""
+
+import argparse
+import math
+import sys
+import time
+
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import OccupancyGrid, Odometry
+from rcl_interfaces.msg import Log
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.utilities import remove_ros_args
+from rtabmap_msgs.msg import Info, MapGraph
+from tf2_msgs.msg import TFMessage
+
+
+CRITICAL_LOG_FRAGMENTS = (
+    "can only support up to 16 z values",
+    "Inconsistent configuration in collision checking",
+    "Did not receive data since",
+    "Exception caught",
+    "process has died",
+)
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def yaw_from_quaternion(orientation):
+    sin_yaw = 2.0 * (
+        orientation.w * orientation.z
+        + orientation.x * orientation.y
+    )
+    cos_yaw = 1.0 - 2.0 * (
+        orientation.y * orientation.y
+        + orientation.z * orientation.z
+    )
+    return math.atan2(sin_yaw, cos_yaw)
+
+
+def pose_from_odometry(message):
+    position = message.pose.pose.position
+    return (
+        position.x,
+        position.y,
+        yaw_from_quaternion(message.pose.pose.orientation),
+    )
+
+
+def compose_pose(first, second):
+    cosine = math.cos(first[2])
+    sine = math.sin(first[2])
+    return (
+        first[0] + cosine * second[0] - sine * second[1],
+        first[1] + sine * second[0] + cosine * second[1],
+        normalize_angle(first[2] + second[2]),
+    )
+
+
+def relative_pose(start, finish):
+    dx = finish[0] - start[0]
+    dy = finish[1] - start[1]
+    cosine = math.cos(start[2])
+    sine = math.sin(start[2])
+    return (
+        cosine * dx + sine * dy,
+        -sine * dx + cosine * dy,
+        normalize_angle(finish[2] - start[2]),
+    )
+
+
+def transform_to_pose(transform):
+    translation = transform.translation
+    return (
+        translation.x,
+        translation.y,
+        yaw_from_quaternion(transform.rotation),
+    )
+
+
+class StructuredLoopRegression(Node):
+    def __init__(self):
+        super().__init__(
+            "structured_loop_regression",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
+        self.truth_pose = None
+        self.odom_pose = None
+        self.map_to_odom = None
+        self.latest_grid = None
+        self.graph_nodes = 0
+        self.proximity_events = set()
+        self.maximum_map_correction = 0.0
+        self.truth_distance = 0.0
+        self.previous_truth_pose = None
+        self.measuring = False
+        self.critical_logs = []
+        self.ekf_rate_warnings = 0
+        self.completed_waypoints = 0
+
+        self.command_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.create_subscription(
+            Odometry,
+            "/ground_truth/odom",
+            self._truth_callback,
+            50,
+        )
+        self.create_subscription(Odometry, "/odom", self._odom_callback, 50)
+        self.create_subscription(Info, "/rtabmap/info", self._info_callback, 20)
+        self.create_subscription(
+            MapGraph,
+            "/rtabmap/mapGraph",
+            self._graph_callback,
+            10,
+        )
+        self.create_subscription(TFMessage, "/tf", self._tf_callback, 100)
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            OccupancyGrid,
+            "/rtabmap/map",
+            self._map_callback,
+            map_qos,
+        )
+        self.create_subscription(Log, "/rosout", self._log_callback, 200)
+
+    def _truth_callback(self, message):
+        pose = pose_from_odometry(message)
+        if self.measuring and self.previous_truth_pose is not None:
+            step = math.hypot(
+                pose[0] - self.previous_truth_pose[0],
+                pose[1] - self.previous_truth_pose[1],
+            )
+            if step < 0.25:
+                self.truth_distance += step
+        self.previous_truth_pose = pose
+        self.truth_pose = pose
+
+    def _odom_callback(self, message):
+        self.odom_pose = pose_from_odometry(message)
+
+    def _info_callback(self, message):
+        if message.proximity_detection_id > 0:
+            event = (message.ref_id, message.proximity_detection_id)
+            if event not in self.proximity_events:
+                self.proximity_events.add(event)
+                print(
+                    "  proximity constraint: "
+                    f"{message.proximity_detection_id} -> {message.ref_id}",
+                    flush=True,
+                )
+
+    def _graph_callback(self, message):
+        self.graph_nodes = max(self.graph_nodes, len(message.poses_id))
+
+    def _tf_callback(self, message):
+        for transform in message.transforms:
+            if (
+                transform.header.frame_id == "map"
+                and transform.child_frame_id == "odom"
+            ):
+                self.map_to_odom = transform_to_pose(transform.transform)
+                correction = math.hypot(
+                    self.map_to_odom[0],
+                    self.map_to_odom[1],
+                )
+                self.maximum_map_correction = max(
+                    self.maximum_map_correction,
+                    correction,
+                )
+
+    def _map_callback(self, message):
+        self.latest_grid = message
+
+    def _log_callback(self, message):
+        if "Failed to meet update rate" in message.msg:
+            self.ekf_rate_warnings += 1
+        if any(fragment in message.msg for fragment in CRITICAL_LOG_FRAGMENTS):
+            if message.msg not in self.critical_logs:
+                self.critical_logs.append(message.msg)
+
+    def spin_once(self, timeout_sec=0.025):
+        rclpy.spin_once(self, timeout_sec=timeout_sec)
+
+    def simulation_time(self):
+        return self.get_clock().now().nanoseconds * 1.0e-9
+
+    def publish_command(self, linear=0.0, angular=0.0):
+        message = Twist()
+        message.linear.x = linear
+        message.angular.z = angular
+        self.command_publisher.publish(message)
+
+    def stop(self):
+        for _ in range(5):
+            self.publish_command()
+            self.spin_once(0.02)
+
+    def wait_for_inputs(self, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.spin_once(0.1)
+            if (
+                self.truth_pose is not None
+                and self.odom_pose is not None
+                and self.map_to_odom is not None
+            ):
+                return
+        raise RuntimeError("timed out waiting for truth, odometry and RTAB-Map graph")
+
+    def settle(self, duration):
+        started = self.simulation_time()
+        wall_deadline = time.monotonic() + max(30.0, duration * 5.0)
+        while self.simulation_time() - started < duration:
+            if time.monotonic() >= wall_deadline:
+                raise RuntimeError("initial settle timed out")
+            self.publish_command()
+            self.spin_once()
+
+    def rotate_to(self, desired_yaw, arguments, label):
+        wall_deadline = time.monotonic() + arguments.segment_wall_timeout
+        while True:
+            error = normalize_angle(desired_yaw - self.truth_pose[2])
+            if abs(error) <= math.radians(arguments.heading_tolerance_degrees):
+                break
+            if time.monotonic() >= wall_deadline:
+                raise RuntimeError(f"{label} rotation timed out")
+            angular = max(
+                -arguments.maximum_angular_speed,
+                min(
+                    arguments.maximum_angular_speed,
+                    arguments.heading_control_gain * error,
+                ),
+            )
+            self.publish_command(0.0, angular)
+            self.spin_once()
+        self.stop()
+
+    def drive_to(self, target, arguments, label):
+        initial_distance = math.hypot(
+            target[0] - self.truth_pose[0],
+            target[1] - self.truth_pose[1],
+        )
+        next_report = arguments.report_interval
+        wall_deadline = time.monotonic() + arguments.segment_wall_timeout
+        while True:
+            dx = target[0] - self.truth_pose[0]
+            dy = target[1] - self.truth_pose[1]
+            distance = math.hypot(dx, dy)
+            if distance <= arguments.position_tolerance:
+                break
+            if time.monotonic() >= wall_deadline:
+                raise RuntimeError(f"{label} traversal timed out")
+            desired_yaw = math.atan2(dy, dx)
+            heading_error = normalize_angle(desired_yaw - self.truth_pose[2])
+            angular = max(
+                -arguments.maximum_angular_speed,
+                min(
+                    arguments.maximum_angular_speed,
+                    arguments.heading_control_gain * heading_error,
+                ),
+            )
+            linear = min(arguments.linear_speed, max(0.08, distance))
+            linear *= max(0.0, math.cos(heading_error))
+            self.publish_command(linear, angular)
+            self.spin_once()
+
+            progress = initial_distance - distance
+            if progress >= next_report:
+                print(
+                    f"  {label}: {progress:.1f}/{initial_distance:.1f} m, "
+                    f"nodes={self.graph_nodes}, "
+                    f"proximity={len(self.proximity_events)}",
+                    flush=True,
+                )
+                next_report += arguments.report_interval
+        self.stop()
+        self.completed_waypoints += 1
+
+    def build_route(self, laps):
+        lap = ((24.0, 0.0), (24.0, 12.0), (0.0, 12.0), (0.0, 0.0))
+        return list(lap) * laps
+
+    def map_pose(self):
+        return compose_pose(self.map_to_odom, self.odom_pose)
+
+    def evaluate(self, arguments, starts, route):
+        truth_motion = relative_pose(starts["truth"], self.truth_pose)
+        odom_motion = relative_pose(starts["odom"], self.odom_pose)
+        slam_motion = relative_pose(starts["slam"], self.map_pose())
+        truth_closure = math.hypot(truth_motion[0], truth_motion[1])
+        odom_error = math.hypot(
+            odom_motion[0] - truth_motion[0],
+            odom_motion[1] - truth_motion[1],
+        )
+        slam_error = math.hypot(
+            slam_motion[0] - truth_motion[0],
+            slam_motion[1] - truth_motion[1],
+        )
+        slam_yaw_error = abs(normalize_angle(slam_motion[2] - truth_motion[2]))
+
+        grid = self.latest_grid
+        map_width = grid.info.width * grid.info.resolution
+        map_height = grid.info.height * grid.info.resolution
+        known_cells = sum(value >= 0 for value in grid.data)
+        free_cells = sum(value == 0 for value in grid.data)
+        occupied_cells = sum(value >= 50 for value in grid.data)
+
+        checks = {
+            "all_waypoints_reached": self.completed_waypoints == len(route),
+            "route_distance_reached": (
+                self.truth_distance >= arguments.minimum_route_distance
+            ),
+            "truth_route_closed": truth_closure <= arguments.maximum_truth_closure,
+            "rtabmap_graph_large_enough": (
+                self.graph_nodes >= arguments.minimum_graph_nodes
+            ),
+            "proximity_loop_detected": (
+                len(self.proximity_events) >= arguments.minimum_proximity_events
+            ),
+            "map_to_odom_correction_observed": (
+                self.maximum_map_correction
+                >= arguments.minimum_map_correction
+            ),
+            "slam_translation_error_bounded": (
+                slam_error <= arguments.maximum_slam_translation_error
+            ),
+            "slam_yaw_error_bounded": (
+                slam_yaw_error
+                <= math.radians(arguments.maximum_slam_yaw_error_degrees)
+            ),
+            "map_width_bounded": (
+                arguments.minimum_map_width <= map_width
+                <= arguments.maximum_map_width
+            ),
+            "map_height_bounded": (
+                arguments.minimum_map_height <= map_height
+                <= arguments.maximum_map_height
+            ),
+            "map_has_known_space": known_cells >= arguments.minimum_known_cells,
+            "map_has_free_space": free_cells >= arguments.minimum_free_cells,
+            "map_has_obstacles": (
+                occupied_cells >= arguments.minimum_occupied_cells
+            ),
+            "no_critical_runtime_logs": not self.critical_logs,
+            "ekf_rate_warnings_bounded": (
+                self.ekf_rate_warnings <= arguments.maximum_ekf_rate_warnings
+            ),
+        }
+
+        print("\nstructured 3D loop regression result")
+        print(
+            f"route       : {self.truth_distance:.1f} m, "
+            f"waypoints={self.completed_waypoints}/{len(route)}"
+        )
+        print(
+            f"closure     : truth={truth_closure:.3f} m, "
+            f"odom error={odom_error:.3f} m, SLAM error={slam_error:.3f} m / "
+            f"{math.degrees(slam_yaw_error):.3f} deg"
+        )
+        print(
+            f"graph       : nodes={self.graph_nodes}, "
+            f"proximity={len(self.proximity_events)}, "
+            f"map correction peak={self.maximum_map_correction:.3f} m"
+        )
+        print(
+            f"map         : {map_width:.2f} x {map_height:.2f} m, "
+            f"known/free/occupied={known_cells}/{free_cells}/{occupied_cells}"
+        )
+        print(f"runtime     : EKF rate warnings={self.ekf_rate_warnings}")
+        for name, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
+        if self.critical_logs:
+            print("critical runtime logs:")
+            for message in self.critical_logs:
+                print(f"  - {message}")
+        return all(checks.values())
+
+    def run(self, arguments):
+        self.wait_for_inputs(arguments.startup_timeout)
+        self.settle(arguments.initial_settle_time)
+        starts = {
+            "truth": self.truth_pose,
+            "odom": self.odom_pose,
+            "slam": self.map_pose(),
+        }
+        self.previous_truth_pose = self.truth_pose
+        self.measuring = True
+        route = self.build_route(arguments.laps)
+
+        print(
+            f"Driving {arguments.laps} structured-loop lap(s), "
+            f"{len(route)} waypoints",
+            flush=True,
+        )
+        for index, target in enumerate(route, start=1):
+            desired_yaw = math.atan2(
+                target[1] - self.truth_pose[1],
+                target[0] - self.truth_pose[0],
+            )
+            label = f"waypoint {index}/{len(route)}"
+            self.rotate_to(desired_yaw, arguments, label)
+            self.drive_to(target, arguments, label)
+
+        self.stop()
+        self.settle(arguments.final_settle_time)
+        if self.latest_grid is None:
+            raise RuntimeError("RTAB-Map did not publish /rtabmap/map")
+        return self.evaluate(arguments, starts, route)
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--laps", type=int, default=2)
+    parser.add_argument("--startup-timeout", type=float, default=60.0)
+    parser.add_argument("--initial-settle-time", type=float, default=5.0)
+    parser.add_argument("--final-settle-time", type=float, default=8.0)
+    parser.add_argument("--linear-speed", type=float, default=0.45)
+    parser.add_argument("--maximum-angular-speed", type=float, default=0.7)
+    parser.add_argument("--heading-control-gain", type=float, default=1.8)
+    parser.add_argument("--heading-tolerance-degrees", type=float, default=2.0)
+    parser.add_argument("--position-tolerance", type=float, default=0.12)
+    parser.add_argument("--segment-wall-timeout", type=float, default=180.0)
+    parser.add_argument("--report-interval", type=float, default=5.0)
+    parser.add_argument("--minimum-route-distance", type=float, default=138.0)
+    parser.add_argument("--maximum-truth-closure", type=float, default=0.25)
+    parser.add_argument("--minimum-graph-nodes", type=int, default=300)
+    parser.add_argument("--minimum-proximity-events", type=int, default=1)
+    parser.add_argument("--minimum-map-correction", type=float, default=0.02)
+    parser.add_argument(
+        "--maximum-slam-translation-error", type=float, default=0.35
+    )
+    parser.add_argument(
+        "--maximum-slam-yaw-error-degrees", type=float, default=5.0
+    )
+    parser.add_argument("--minimum-map-width", type=float, default=26.0)
+    parser.add_argument("--maximum-map-width", type=float, default=31.0)
+    parser.add_argument("--minimum-map-height", type=float, default=14.0)
+    parser.add_argument("--maximum-map-height", type=float, default=19.0)
+    parser.add_argument("--minimum-known-cells", type=int, default=30000)
+    parser.add_argument("--minimum-free-cells", type=int, default=25000)
+    parser.add_argument("--minimum-occupied-cells", type=int, default=1500)
+    parser.add_argument("--maximum-ekf-rate-warnings", type=int, default=3)
+    arguments = parser.parse_args(argv)
+    if arguments.laps < 1:
+        parser.error("--laps must be at least 1")
+    return arguments
+
+
+def main(argv=None):
+    raw_arguments = sys.argv if argv is None else [sys.argv[0], *argv]
+    arguments = parse_arguments(remove_ros_args(args=raw_arguments)[1:])
+    rclpy.init(args=raw_arguments)
+    node = StructuredLoopRegression()
+    try:
+        passed = node.run(arguments)
+        return 0 if passed else 1
+    except Exception as error:  # noqa: B902 - process boundary reports failures.
+        node.get_logger().error(str(error))
+        return 2
+    finally:
+        node.stop()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

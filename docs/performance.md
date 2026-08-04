@@ -377,8 +377,8 @@ MOLA 只发布 `map -> odom`；`odom -> base_footprint` 和机器人固定 TF �
 | 生命周期节点 | `controller_server`、`planner_server`、`bt_navigator`、`behavior_server`、两个 costmap 全部 `active` |
 | 代价地图输出 | `/global_costmap/costmap` `0.500 Hz`（配置 `1.0`），`/local_costmap/costmap` `1.667 Hz`（配置 `2.0`）；隔离运行复测一致，非资源竞争所致，实际发布率与配置的差异待后续排查 |
 | 静态层地图源 | `static_layer.map_topic = /rtabmap/map`（官方参数文件中无此键，由 `RewrittenYaml` 注入） |
-| 机器人足迹 | 八边形多边形生效，官方默认的 `robot_radius` 被 Nav2 忽略 |
-| 局部体素层垂直范围 | `z_voxels=20`、`z_resolution=0.05`、`origin_z=0.0`，上界 `1.00 m`，与 `max_obstacle_height` 一致 |
+| 机器人足迹 | 两个代价地图和 MPPI `CostCritic` 均使用八边形多边形；运行日志确认 `collision check based on footprint cost` |
+| 局部体素层垂直范围 | `z_voxels=16`、`z_resolution=0.0625`、`origin_z=0.0`，覆盖 `0–1.00 m` 且不超过 `nav2_voxel_grid` 的 16 层上限 |
 | Map Server / AMCL | 未启动，`map -> odom` 仍由 RTAB-Map 独占 |
 
 这一轮只验收接口、参数落地和 TF 职责，**不是**导航质量结论；规划成功率、
@@ -415,6 +415,35 @@ MOLA 只发布 `map -> odom`；`odom -> base_footprint` 和机器人固定 TF �
 `0.5 m` 的回环修正当作异常拒绝。把它改成 `2.00` 做对照后，`0.50` 组同样
 做出了 `2.4527 m` 的修正，假设不成立——该参数约束的是 ICP 相对初值的增量
 配准，而不是位姿图优化累积出的 `map -> odom`。配置维持 `0.50` 不变。
+
+### 结构化两圈自动回归
+
+上述临时测量已固化为仓库内的 `structured_loop_regression.launch.py`。回归
+按真值闭环控制固定路线，但真值只用于驱动和评分，不进入 RTAB-Map。它不只
+检查末端误差，还要求 proximity 约束和非零 `map -> odom` 修正同时出现。
+
+2026-08-04 首次正式运行：
+
+| 指标 | 结果 |
+| --- | --- |
+| 路线 | `143.1 m`，`8/8` 路点完成 |
+| 图与回环 | `346` 节点，`181` 次 proximity 约束 |
+| 航迹推算 / SLAM 误差 | `0.531 m` / `0.004 m`、`0.075°` |
+| `map -> odom` 峰值修正 | `0.534 m` |
+| 栅格 | `28.05 × 16.20 m`；已知/自由/占据 `82692/78110/4582` |
+| EKF 周期超时 | `0` |
+| 自动判据 | `15/15 PASS` |
+
+运行命令：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_loop_regression.launch.py
+```
+
+纯 LiDAR RTAB-Map 不依赖相机才能建图，但没有图像时视觉词袋回环与视觉重定位
+被禁用，回环范围收窄为空间 proximity 预测加 3D ICP 验证。运行中的
+`Missing visual features` 提示对应这一能力边界，不表示当前 LiDAR ICP 回环
+失败；后续相机用于增强全局地点识别。
 
 ### EKF 周期裕度与一次测量方法教训
 

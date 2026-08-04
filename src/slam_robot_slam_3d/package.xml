@@ -17,16 +17,20 @@
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>mola_bridge_ros2</exec_depend>
   <exec_depend>mola_lidar_odometry</exec_depend>
   <exec_depend>mola_metric_maps</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>rtabmap_msgs</exec_depend>
   <exec_depend>rtabmap_rviz_plugins</exec_depend>
   <exec_depend>rtabmap_slam</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>slam_robot_gazebo</exec_depend>
   <exec_depend>slam_robot_navigation</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

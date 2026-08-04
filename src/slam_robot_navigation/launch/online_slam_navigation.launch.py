@@ -26,10 +26,12 @@ MAX_OBSTACLE_HEIGHT = "1.00"
 # origin_z + z_voxels * z_resolution. Nav2's defaults span only 0.80 m, so
 # points between 0.80 m and MAX_OBSTACLE_HEIGHT would pass the observation
 # filter and then be dropped by VoxelLayer::worldToMap3D without any warning.
-# 20 voxels x 0.05 m makes the voxel ceiling match the configured band.
+# nav2_voxel_grid stores each vertical column in a 32-bit word and supports at
+# most 16 z values. 16 voxels x 0.0625 m keeps the same 1.00 m ceiling without
+# triggering VoxelGrid::resize()'s unsupported-size path.
 VOXEL_ORIGIN_Z = "0.0"
-VOXEL_RESOLUTION_Z = "0.05"
-VOXEL_COUNT_Z = "20"
+VOXEL_RESOLUTION_Z = "0.0625"
+VOXEL_COUNT_Z = "16"
 
 
 def generate_launch_description():
@@ -68,6 +70,11 @@ def generate_launch_description():
                 "base_footprint",
             "global_costmap.global_costmap.ros__parameters.footprint":
                 ROBOT_FOOTPRINT,
+            # The robot footprint is asymmetric, with a longer rear overhang.
+            # Keep MPPI collision scoring consistent with both costmaps instead
+            # of falling back to the official circular-cost default.
+            "controller_server.ros__parameters.FollowPath."
+            "CostCritic.consider_footprint": "true",
             "global_costmap.global_costmap.ros__parameters.static_layer.map_topic":
                 map_topic,
             "global_costmap.global_costmap.ros__parameters."

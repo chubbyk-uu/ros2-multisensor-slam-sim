@@ -87,8 +87,20 @@ ros2 run slam_robot_slam_3d grid_contract_check
 `grid_contract_check` 是**事后**校验工具，不是启动门控。这一点和
 `pointcloud_contract_check` 不同：点云在节点起来时就应该存在，所以它用
 `OnProcessExit` 门控 RTAB-Map 启动；而栅格要等机器人跑出一段距离才存在，
-在启动期检查只会必然超时。它最终应当被导航自动回归在跑完固定路线后调用，
-见 [plan.md](../../plan.md) 中未完成的回归条目。
+在启动期检查只会必然超时。除基本布局外，它支持分辨率、米制边界以及
+自由/占据单元数量阈值；结构化世界自动回归在路线结束后执行等价硬判据。
+
+运行可重复的两圈结构化 3D 回归：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_loop_regression.launch.py
+```
+
+回归沿固定 `72 m` 环线运行两圈，同时比较真值、局部 `/odom` 和
+`map -> odom` 修正后的 SLAM 位姿。通过条件包括完成 `138 m` 以上路线、
+至少一次 proximity 约束和非零全局修正、SLAM 闭合误差、图节点数量、地图
+范围和自由/占据单元数量。`/ground_truth/odom` 只用于路线控制和评分，不进入
+RTAB-Map。
 
 该栅格是 RTAB-Map + Nav2 在线导航入口的地图输入：
 
@@ -97,8 +109,14 @@ ros2 launch slam_robot_slam_3d rtabmap_navigation_simulation.launch.py
 ```
 
 该入口与既有 SLAM Toolbox / AMCL 导航入口**互斥**，不能同时启动——两者都会
-发布 `map -> odom`。它已完成接口、TF 职责和栅格契约验收，尚未完成受控闭环
-路线的建图质量与规划成功率验收。
+发布 `map -> odom`。它已完成接口、TF 职责、栅格契约和受控闭环建图验收，
+尚未完成 Nav2 多目标规划成功率验收。
+
+纯 LiDAR 模式仍是一条完整可运行的 RTAB-Map SLAM 基线，但没有相机时视觉
+词袋回环和基于图像的重定位会被禁用，只保留空间邻近预测加 3D ICP 验证。
+因此单圈末端漂移较大时可能错过重访；两圈回归会显式要求 proximity 约束和
+`map -> odom` 修正，避免把局部里程计碰巧闭合误判为 SLAM 生效。后续相机
+接入用于增强全局地点识别，不是当前 3D 点云建图的启动前提。
 
 ### 输入同步与 QoS
 
