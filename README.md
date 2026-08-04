@@ -9,8 +9,8 @@
 并沿该方向保留轮式里程计预测，长闭环和三档原地旋转回归同时要求正常
 几何下零退化误报；155 m 固定 rosbag 的 2× 离线回归也已通过。3D LiDAR
 的互斥机器人变体、点云桥接、TF、RViz 和基础性能验收
-也已完成；机器人同时具备 100 Hz IMU，并提供可选的轮速 + IMU 二维
-EKF 对照链路。在线 3D SLAM 基线已接入 RTAB-Map，使用局部里程计预测、
+也已完成；机器人同时具备 100 Hz IMU，默认 2D 局部里程计采用轮速 + IMU
+二维 EKF 融合。在线 3D SLAM 基线已接入 RTAB-Map，使用局部里程计预测、
 3D 点云 ICP 和位姿图，并把二维投影栅格接入 Nav2 组成不依赖离线地图和
 AMCL 的在线导航链路；MOLA GICP 保留为不伪造逐点时间的纯激光里程计
 对照。下一步将建立 3D 回环世界、导航自动回归和可重复 rosbag 回归；
@@ -37,7 +37,7 @@ AMCL 的在线导航链路；MOLA GICP 保留为不伪造逐点时间的纯激�
 | 定位与导航 | 已完成 | Map Server、AMCL、Nav2 官方完整组件和 RViz |
 | 导航自动回归 | 已完成 | 多目标导航与动态障碍物重规划 |
 | 自研 C++ 2D SLAM | 已完成 2D 基线 | 已完成前后端、场景回归及 155 m 固定 rosbag 的 2× 离线回放 |
-| IMU / 二维 EKF | 已完成可选基线 | 100 Hz IMU；适配节点补充有限协方差，可选轮速平移 + IMU 偏航角速度融合 |
+| IMU / 二维 EKF | 已完成并默认启用 | 100 Hz IMU；轮速平移 + IMU 偏航角速度融合，可显式回退纯轮式模式 |
 | 3D LiDAR | 在线基线与闭环回归已完成 | RTAB-Map 已验证点云、TF、数据库与栅格契约；结构化世界两圈自动回归通过，并接入 Nav2 在线导航；Nav2 多目标规划回归待建 |
 | 视觉 / 多传感器融合 | 计划中 | 在 3D 激光链路稳定后逐步接入 |
 
@@ -147,7 +147,7 @@ ros2 launch slam_robot_gazebo simulation.launch.py \
 | --- | --- |
 | `/clock` | Gazebo 仿真时间 |
 | `/cmd_vel` | 差速底盘速度指令 |
-| `/odom` | 默认轮式里程计；可选轮速 + IMU EKF 输出 |
+| `/odom` | 默认轮速 + IMU EKF 输出；可选纯轮式里程计对照 |
 | `/ground_truth/odom` | Gazebo 无噪声真值，仅用于算法评估 |
 | `/joint_states` | 轮子关节状态 |
 | `/scan` | 2D 激光扫描 |
@@ -176,19 +176,18 @@ ros2 run tf2_ros tf2_echo base_link lidar_3d_link
 存在，固定在底盘内部的 `imu_link`；静止时 `linear_acceleration.z`
 应约为 `+9.81 m/s²`。
 
-默认 `odometry_mode:=wheel` 保留已有 2D 回归结果。需要比较轮速 + IMU
-局部里程计时可使用：
+默认 `odometry_mode:=wheel_imu` 启用轮速 + IMU EKF 局部里程计。Gazebo
+裸消息先进入 `/wheel/odom_raw` 和 `/imu/data_raw`，轻量适配节点补充有限、
+非零的协方差，再发布 `/wheel/odom` 与 `/imu/data`。`robot_localization`
+只融合轮速的平面线速度和 IMU 的偏航角速度，唯一发布 `/odom` 及
+`odom -> base_footprint`；IMU 的绝对姿态和线加速度不进入二维 EKF。
+
+需要复现历史纯轮式回归结果或比较基线时，可显式回退：
 
 ```bash
 ros2 launch slam_robot_bringup mapping_simulation.launch.py \
-  odometry_mode:=wheel_imu
+  odometry_mode:=wheel
 ```
-
-此模式下 Gazebo 的裸消息先进入 `/wheel/odom_raw` 和 `/imu/data_raw`，
-轻量适配节点为轮速和 IMU 补充有限、非零的协方差，再发布
-`/wheel/odom` 与 `/imu/data`。`robot_localization` 只融合轮速的平面线速度
-和 IMU 的偏航角速度，唯一发布 `/odom` 及 `odom -> base_footprint`。
-IMU 的绝对姿态和线加速度暂不进入二维 EKF。
 
 ### 3. 建图
 

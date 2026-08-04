@@ -65,6 +65,9 @@ def generate_launch_description():
                     'use_rviz': use_rviz,
                     'use_wsl_gpu': use_wsl_gpu,
                     'wsl_gpu_adapter': wsl_gpu_adapter,
+                    # Keep historical regression thresholds tied to their
+                    # original wheel-only odometry input.
+                    'odometry_mode': 'wheel',
                 }.items(),
             ),
         ]

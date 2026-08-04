@@ -73,6 +73,9 @@ def generate_launch_description():
                     'use_rviz': use_rviz,
                     'use_wsl_gpu': use_wsl_gpu,
                     'wsl_gpu_adapter': wsl_gpu_adapter,
+                    # Preserve the frozen wheel-only reference behavior. The
+                    # user-facing 2D entry points default to wheel_imu.
+                    'odometry_mode': 'wheel',
                     'reject_degenerate_loop_closures':
                         reject_degenerate_loop_closures,
                 }.items(),

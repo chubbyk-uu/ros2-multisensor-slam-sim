@@ -65,6 +65,8 @@ def generate_launch_description():
                     'use_rviz': use_rviz,
                     'use_wsl_gpu': use_wsl_gpu,
                     'wsl_gpu_adapter': wsl_gpu_adapter,
+                    # Keep the recorded large-scale baseline reproducible.
+                    'odometry_mode': 'wheel',
                 }.items(),
             ),
         ]

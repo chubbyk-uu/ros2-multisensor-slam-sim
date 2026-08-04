@@ -8,7 +8,9 @@
 ros2 launch slam_robot_bringup mapping_simulation.launch.py
 ```
 
-该 launch 会启动 Gazebo、机器人、ROS-Gazebo bridge、SLAM Toolbox 和建图 RViz。
+该 launch 会启动 Gazebo、机器人、ROS-Gazebo bridge、默认的轮速 + IMU
+二维 EKF、SLAM Toolbox 和建图 RViz。EKF 唯一发布 `/odom` 和
+`odom -> base_footprint`；需要纯轮式对照时显式传入 `odometry_mode:=wheel`。
 
 默认只打开一个使用 `map` 固定坐标系的建图 RViz。无界面运行时传入：
 
@@ -31,7 +33,8 @@ ros2 launch slam_robot_bringup navigation_simulation.launch.py
 ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
-当前入口启动 Gazebo、自研 C++ 激光预处理、扫描匹配/位姿图节点和专用
+当前入口启动 Gazebo、默认的轮速 + IMU 二维 EKF、自研 C++ 激光预处理、
+扫描匹配/位姿图节点和专用
 RViz，不启动 SLAM Toolbox。它发布 `/custom_slam/map` 和
 `map -> odom`，但不占用标准 `/map`；因此不能与 SLAM Toolbox 建图入口
 同时运行。

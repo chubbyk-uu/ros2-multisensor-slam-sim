@@ -30,12 +30,13 @@ ros2 launch slam_robot_gazebo lidar_3d_simulation.launch.py
 配置没有 `/scan`，默认 2D 配置也不承担 3D 点云开销。两种配置均发布
 100 Hz `/imu/data_raw`，噪声、启动偏置及频率可通过 launch 参数调整。
 
-默认 `odometry_mode:=wheel` 由 Gazebo 唯一发布 `/odom` 和
-`odom -> base_footprint`。可选 `odometry_mode:=wheel_imu` 将 Gazebo 的裸
-轮速消息桥接为 `/wheel/odom_raw`，再由轻量适配节点补充有限、非零且可调
+默认 `odometry_mode:=wheel_imu` 将 Gazebo 的裸轮速消息桥接为
+`/wheel/odom_raw`，再由轻量适配节点补充有限、非零且可调
 的协方差，发布 `/wheel/odom` 和 `/imu/data`。`robot_localization` 只融合
-轮速平移和 IMU 偏航角速度，唯一发布 `/odom` 与该 TF。两种模式使用不同
-bridge YAML，但始终只启动一个 `ros_gz_bridge` 进程。
+轮速平移和 IMU 偏航角速度，唯一发布 `/odom` 与该 TF。显式设置
+`odometry_mode:=wheel` 时由 Gazebo 唯一发布 `/odom` 和
+`odom -> base_footprint`，作为纯轮式对照。两种模式使用不同 bridge YAML，
+但始终只启动一个 `ros_gz_bridge` 进程。
 
 适配参数位于 `config/sensor_covariance.yaml`。其中轮速横向速度标准差
 `0.005 m/s` 小于纵向的 `0.02 m/s`，用有限协方差表达差速底盘的非完整

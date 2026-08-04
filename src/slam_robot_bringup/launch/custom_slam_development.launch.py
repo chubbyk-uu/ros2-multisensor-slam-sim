@@ -94,7 +94,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "odometry_mode",
-                default_value="wheel",
+                default_value="wheel_imu",
                 description="Odometry source: wheel or wheel_imu.",
             ),
             DeclareLaunchArgument(
