@@ -73,6 +73,28 @@ ros2 launch slam_robot_bringup imu_fusion_regression.launch.py \
 `large_scale_slam_regression.launch.py` 可执行两圈约 155 m 的长时间
 回归，验证关键帧、Path、回环重建和资源占用随运行时间增长时的稳定性。
 
+`worlds/structured_loop_3d.sdf` 是给 3D LiDAR SLAM 用的 `27 × 15 m` 环形
+走廊：机器人从原点朝 `+x` 出发，沿南 24 m、东 12 m、北 24 m、西 12 m
+走完 72 m 回到起点，全程净宽 `2.8 m`，最窄处仍有 `1.94 m`。
+
+与其余几个世界不同，它的立体结构是按传感器几何布置的，而不是把墙加高。
+16 线、垂直 `±15°`、装在 `0.18 m` 的雷达，面对 `1.4 m` 外的侧墙只能采到
+`0.75 m` 一条窄带，因此高墙对侧向观测没有任何贡献。真正填满垂直视场的是
+沿视线方向、`5–15 m` 处的结构：东侧三道净空 `2.08 m` 的过顶桁架、北侧
+`0.6 / 1.4 / 2.3 m` 三级阶梯货架和一块雨棚、西侧一组高度各异的柱体。
+南侧 24 m 刻意只在两端各放一个矮标志，中段 21 m 没有纵向几何。
+
+需要注意南段是**弱观测**而不是完全退化：`20 m` 量程的 3D 雷达从中段仍能
+打到 `27 m` 外壳的两端墙面，要做到真正秩亏需要超过 40 m 的直段，应另建
+专用世界。
+
+可用现有 3D 启动入口指定该世界运行：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py \
+  world:=$(ros2 pkg prefix slam_robot_gazebo)/share/slam_robot_gazebo/worlds/structured_loop_3d.sdf
+```
+
 `/ground_truth/odom` 由 Gazebo OdometryPublisher 根据世界位姿生成，父坐标系为 `world`，子坐标系为 `base_footprint`。它只用于算法误差评估，不能作为 SLAM 或导航输入。
 
 默认会打开 RViz；仅运行 Gazebo 时可传入 `rviz:=false`。
