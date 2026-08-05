@@ -1,3 +1,4 @@
+from functools import partial
 from pathlib import Path
 
 from launch import LaunchDescription
@@ -5,6 +6,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
     LogInfo,
+    OpaqueFunction,
     RegisterEventHandler,
 )
 from launch.event_handlers import OnProcessExit
@@ -14,7 +16,9 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
-def start_rtabmap_after_contract(event, context):
+def start_rtabmap_after_contract(
+    event, context, reset_database, database_path, lidar_topic
+):
     if event.returncode != 0:
         reason = (
             "3D point-cloud input contract failed with exit code "
@@ -22,8 +26,7 @@ def start_rtabmap_after_contract(event, context):
         )
         return [LogInfo(msg=reason), EmitEvent(event=Shutdown(reason=reason))]
 
-    reset_database = LaunchConfiguration("reset_database").perform(context)
-    database_arguments = ["-d"] if reset_database.lower() == "true" else []
+    database_arguments = ["-d"] if reset_database else []
 
     return [
         LogInfo(
@@ -46,14 +49,47 @@ def start_rtabmap_after_contract(event, context):
                         "rtabmap_3d.yaml",
                     ]
                 ),
-                {"database_path": LaunchConfiguration("database_path")},
+                {"database_path": database_path},
             ],
             remappings=[
                 ("odom", "/odom"),
-                ("scan_cloud", LaunchConfiguration("lidar_topic")),
+                ("scan_cloud", lidar_topic),
             ],
             arguments=database_arguments,
         ),
+    ]
+
+
+def register_rtabmap_start(context, contract_check):
+    """
+    Resolve every value the deferred handler needs while the scope still exists.
+
+    The handler runs when the contract check exits, which is long after this
+    launch description has been visited. A caller that wraps the include in a
+    scoped GroupAction has popped the surrounding scope by then, so resolving
+    LaunchConfiguration inside the handler aborts the whole launch with
+    "launch configuration 'reset_database' does not exist". Capturing the plain
+    values here keeps the file correct under any scoping the caller chooses.
+    """
+    reset_database = context.perform_substitution(
+        LaunchConfiguration("reset_database")
+    ).lower() in ("1", "true", "yes", "on")
+    database_path = context.perform_substitution(
+        LaunchConfiguration("database_path")
+    )
+    lidar_topic = context.perform_substitution(LaunchConfiguration("lidar_topic"))
+    return [
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=contract_check,
+                on_exit=partial(
+                    start_rtabmap_after_contract,
+                    reset_database=reset_database,
+                    database_path=database_path,
+                    lidar_topic=lidar_topic,
+                ),
+            )
+        )
     ]
 
 
@@ -104,11 +140,9 @@ def generate_launch_description():
                 default_value="true",
                 description="Delete database_path before starting a fresh mapping run.",
             ),
-            RegisterEventHandler(
-                OnProcessExit(
-                    target_action=contract_check,
-                    on_exit=start_rtabmap_after_contract,
-                )
+            OpaqueFunction(
+                function=register_rtabmap_start,
+                args=[contract_check],
             ),
             contract_check,
         ]
