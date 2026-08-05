@@ -20,7 +20,7 @@ ros2 launch slam_robot_slam mapping.launch.py
 - 启用扫描匹配和回环检测。
 - 关闭交互式位姿图编辑，减少不必要的后台开销。
 
-通过本包的 `mapping.launch.py` 或项目统一建图 launch 启动时，自动保存默认开启。按一次 `Ctrl+C` 后，会在 SLAM Toolbox 退出前保存导航占据栅格和可恢复的位姿图。默认前缀是启动命令当前目录下的 `maps/slam_map`。
+通过本包的 `mapping.launch.py` 或项目统一建图 launch 启动时，自动保存默认开启。按一次 `Ctrl+C` 后，会在 SLAM Toolbox 退出前保存导航占据栅格和可恢复的位姿图。默认前缀是启动命令当前目录下的 `maps/slam_map`；`maps/` 是运行输出目录，其中的地图不进入版本控制，因此自动保存不会弄脏工作区。
 
 自定义前缀：
 
@@ -91,6 +91,8 @@ ros2 launch slam_robot_bringup custom_slam_development.launch.py
 节点。可使用 `map_output_prefix` 更改文件前缀，或传入
 `auto_save_map:=false` 关闭。当前自研位姿图不支持序列化，因而不会生成
 `.posegraph` 和 `.data`；保存的 YAML/PGM 用于 AMCL 和 Nav2 静态地图定位。
+该输出不进入版本控制；随仓库分发的自研 SLAM 演示地图在
+`maps/reference/custom_slam_map.yaml/.pgm`。
 
 专用 RViz 使用 `map` 固定坐标系：黑白栅格为自研地图，红色为原始
 `/scan`，绿色为预处理点集，青色为局部子图匹配后的扫描，黄色为匹配

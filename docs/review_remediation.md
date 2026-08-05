@@ -181,8 +181,27 @@
 - 所有“仿真 + 算法”复合 3D 回归入口都用 scoped `GroupAction` 隔离 include
   参数；3D 包显式声明 Eigen 依赖，GICP 的 float 旋转输出归一为严格正交
   旋转矩阵。
-- 地图默认输出到启动目录的行为按现有项目工作流保留，不在本轮更改。Gazebo
-  `--force-version 8` 也作为 ROS 2 Jazzy + Gazebo Harmonic 的明确环境契约
-  保留，而不是改为随宿主环境静默变化。
+- `matcher.maximum_rmse` 增加启动期上界。它的平方是被接受匹配的标称方差，
+  必须低于不可观测方差 `0.25`，否则 `translationCovariance` 的前置条件被
+  违反并抛出——那只会表现为一条节流 ERROR，而
+  `/custom_slam_3d/laser_odom` 静默停发。现在改为构造时 `RCLCPP_FATAL`
+  退出，已实测 `0.6` 拒绝启动、`0.15` 正常启动。
+- 地图默认输出到启动目录的行为保留。`maps/` 与 RTAB-Map 数据库的角色不同：
+  数据库是没有其他入口消费的中间态工作文件，所以放在仓库外的 `~/.ros/`；
+  地图是 `navigation_simulation.launch.py` 的默认输入，属于成品，留在
+  `maps/` 才能让"建图 → 导航"闭环自洽。Gazebo `--force-version 8` 同样作为
+  ROS 2 Jazzy + Gazebo Harmonic 的明确环境契约保留，而不是改为随宿主环境
+  静默变化。
+- 改为按路径而不是按策略区分产物与仓库资产：`maps/` 根目录下的
+  `*.pgm/*.yaml/*.posegraph/*.data` 全部取消跟踪并加入 `.gitignore`，
+  自动保存因此在物理上不可能弄脏被跟踪的文件；策展过的演示地图移入
+  `maps/reference/`（gitignore 的 `*` 不跨 `/`，该子目录不受上述规则影响）。
+  `reference/` 只保留 `.yaml/.pgm`，不保留合计约 `40 MB` 的
+  `.posegraph/.data`——位姿图和传感器数据只对产生它的机器的"继续建图"
+  有意义，clone 之后无法接着用。五个 launch 入口的默认地图路径全部不变，
+  所以"自己建图 → 导航"仍是零参数；只有在尚未建图、想直接使用演示地图时
+  才需要显式传 `map:=`。两份 `maps/reference/` 地图均已用
+  `nav2_map_server` 实际加载验证（`239x200` / `244x204`，`origin` 与 YAML
+  一致）。
 - 回归的严重日志状态继续跨阶段保持粘性：任一阶段出现严重日志会使整个
   profile 失败。分阶段输出可能重复显示该失败，但不会把早期故障误当成恢复。

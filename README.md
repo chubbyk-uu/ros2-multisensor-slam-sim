@@ -81,6 +81,8 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard \
 - `maps/slam_map.yaml`、`maps/slam_map.pgm`
 - `maps/slam_map.posegraph`、`maps/slam_map.data`
 
+`maps/` 是每次运行的输出目录，其中的地图不进入版本控制。
+
 ### 定位与导航
 
 ```bash
@@ -88,6 +90,13 @@ ros2 launch slam_robot_bringup navigation_simulation.launch.py
 ```
 
 在 RViz 使用 `Nav2 Goal` 设置目标。导航前退出键盘遥控，避免多个速度发布者。
+
+想跳过建图直接看导航效果，可以使用随仓库分发的演示地图：
+
+```bash
+ros2 launch slam_robot_bringup navigation_simulation.launch.py \
+  map:="${SLAM_WS}/maps/reference/slam_map.yaml"
+```
 
 ### 自研 2D SLAM
 

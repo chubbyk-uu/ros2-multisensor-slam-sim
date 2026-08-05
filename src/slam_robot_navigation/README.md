@@ -26,7 +26,9 @@ ros2 launch slam_robot_navigation navigation.launch.py \
   map:="${SLAM_WS}/maps/slam_map.yaml"
 ```
 
-其中 `SLAM_WS` 应指向仓库根目录。
+其中 `SLAM_WS` 应指向仓库根目录。`maps/` 下的地图是每次建图的产物，不进入
+版本控制；随仓库分发的演示地图在 `maps/reference/`，尚未自己建图时可直接
+指向 `maps/reference/slam_map.yaml`。
 
 如果机器人不是从保存地图时的原点出生，可通过 RViz 的 `2D Pose Estimate` 重新设置初始位姿。
 

@@ -50,6 +50,10 @@ ros2 run tf2_ros tf2_echo map odom
 - `maps/slam_map.yaml`、`maps/slam_map.pgm`：Map Server 和 AMCL 使用。
 - `maps/slam_map.posegraph`、`maps/slam_map.data`：恢复 SLAM Toolbox 位姿图。
 
+`maps/` 根目录下的地图都是每次运行的产物，不进入版本控制，因此自动保存
+不会弄脏工作区。随仓库分发的演示地图单独放在 `maps/reference/`，说明见
+[地图目录](../maps/README.md)。
+
 指定输出前缀：
 
 ```bash
@@ -77,6 +81,13 @@ ros2 launch slam_robot_bringup mapping_simulation.launch.py \
 
 ```bash
 ros2 launch slam_robot_bringup navigation_simulation.launch.py
+```
+
+还没有自己建过图时，可以先用演示地图跑通链路：
+
+```bash
+ros2 launch slam_robot_bringup navigation_simulation.launch.py \
+  map:="${SLAM_WS}/maps/reference/slam_map.yaml"
 ```
 
 机器人默认从建图原点出生，AMCL 使用 `(0, 0, 0)` 初始化。在 RViz 点击
@@ -157,6 +168,9 @@ ros2 launch slam_robot_bringup custom_slam_development.launch.py \
 ros2 launch slam_robot_bringup navigation_simulation.launch.py \
   map:="${SLAM_WS}/maps/custom_slam_map.yaml"
 ```
+
+自研 SLAM 的演示地图同样随仓库分发，位于
+`maps/reference/custom_slam_map.yaml`。
 
 导航前必须先关闭自研 SLAM，避免它和 AMCL 同时发布 `map -> odom`。
 

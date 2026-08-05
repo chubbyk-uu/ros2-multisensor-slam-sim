@@ -4,6 +4,16 @@ install/
 log/
 bags/
 
+# Mapping output. maps/ is the working directory every mapping run writes into,
+# so nothing loose in it belongs to the repository. The curated demo maps live
+# in maps/reference/ and stay tracked: a gitignore '*' does not cross '/', so
+# none of these rules reach into that subdirectory. Promoting a map is then an
+# explicit copy rather than a side effect of pressing Ctrl+C.
+maps/*.pgm
+maps/*.yaml
+maps/*.posegraph
+maps/*.data
+
 # RTAB-Map SQLite databases. The launch default is ~/.ros/rtabmap_3d.db, which
 # is outside the repository on purpose so it does not depend on the launching
 # terminal's working directory; these rules only cover an explicit
