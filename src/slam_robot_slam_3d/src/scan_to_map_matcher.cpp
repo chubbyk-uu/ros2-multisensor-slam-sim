@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include <Eigen/Eigenvalues>
 #include <pcl/common/point_tests.h>
 #include <pcl/common/transforms.h>
 #include <pcl/registration/gicp.h>
@@ -27,6 +28,17 @@ double rotationAngle(const Eigen::Matrix3d & rotation)
 {
   return Eigen::AngleAxisd(rotation).angle();
 }
+
+class ObservableGicp
+  : public pcl::GeneralizedIterativeClosestPoint<
+    pcl::PointXYZI, pcl::PointXYZI>
+{
+public:
+  const MatricesVector & targetCovariances() const
+  {
+    return *target_covariances_;
+  }
+};
 
 }  // namespace
 
@@ -63,8 +75,7 @@ ScanToMapResult ScanToMapMatcher::match(
 
   const auto scan_pointer = scan.makeShared();
   const auto map_pointer = local_map.makeShared();
-  pcl::GeneralizedIterativeClosestPoint<
-    pcl::PointXYZI, pcl::PointXYZI> matcher;
+  ObservableGicp matcher;
   matcher.setInputSource(scan_pointer);
   matcher.setInputTarget(map_pointer);
   matcher.setMaximumIterations(parameters_.maximum_iterations);
@@ -110,6 +121,8 @@ ScanToMapResult ScanToMapMatcher::match(
     parameters_.maximum_correspondence_distance *
     parameters_.maximum_correspondence_distance;
   double squared_error_sum = 0.0;
+  Eigen::Matrix2d translation_information = Eigen::Matrix2d::Zero();
+  Eigen::Matrix3d planar_information = Eigen::Matrix3d::Zero();
   std::vector<int> indices(1);
   std::vector<float> squared_distances(1);
   for (const auto & point : aligned_scan) {
@@ -118,6 +131,30 @@ ScanToMapResult ScanToMapMatcher::match(
     {
       ++result.correspondence_count;
       squared_error_sum += squared_distances.front();
+
+      const Eigen::Matrix3d & covariance =
+        matcher.targetCovariances()[indices.front()];
+      const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(covariance);
+      if (solver.info() != Eigen::Success) {
+        continue;
+      }
+      const Eigen::Vector3d normal = solver.eigenvectors().col(0);
+      if (!normal.allFinite()) {
+        continue;
+      }
+      const Eigen::Vector2d translation_jacobian(normal.x(), normal.y());
+      const Eigen::Vector3d relative_point(
+        static_cast<double>(point.x) - result.pose.translation().x(),
+        static_cast<double>(point.y) - result.pose.translation().y(),
+        static_cast<double>(point.z) - result.pose.translation().z());
+      Eigen::Vector3d planar_jacobian;
+      planar_jacobian.head<2>() = translation_jacobian;
+      planar_jacobian.z() = normal.dot(
+        Eigen::Vector3d::UnitZ().cross(relative_point));
+      translation_information +=
+        translation_jacobian * translation_jacobian.transpose();
+      planar_information += planar_jacobian * planar_jacobian.transpose();
+      ++result.observability_correspondences;
     }
   }
   if (result.correspondence_count < parameters_.minimum_correspondences) {
@@ -129,6 +166,38 @@ ScanToMapResult ScanToMapMatcher::match(
   if (!std::isfinite(result.rmse) || result.rmse > parameters_.maximum_rmse) {
     result.status = ScanToMapStatus::kFitnessTooHigh;
     return result;
+  }
+
+  if (result.observability_correspondences > 0U) {
+    const double inverse_count =
+      1.0 / static_cast<double>(result.observability_correspondences);
+    translation_information *= inverse_count;
+    planar_information *= inverse_count;
+    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix2d> translation_solver(
+      translation_information);
+    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> planar_solver(
+      planar_information);
+    if (translation_solver.info() == Eigen::Success &&
+      planar_solver.info() == Eigen::Success)
+    {
+      result.translation_information_eigenvalues =
+        translation_solver.eigenvalues();
+      result.planar_information_eigenvalues = planar_solver.eigenvalues();
+      const double maximum_translation_information =
+        result.translation_information_eigenvalues.maxCoeff();
+      if (maximum_translation_information > 0.0) {
+        result.translation_information_ratio =
+          result.translation_information_eigenvalues.minCoeff() /
+          maximum_translation_information;
+      }
+      result.yaw_information = planar_information(2, 2);
+      result.degenerate =
+        result.translation_information_ratio <
+        parameters_.minimum_translation_information_ratio ||
+        result.planar_information_eigenvalues.minCoeff() <
+        parameters_.minimum_planar_information ||
+        result.yaw_information < parameters_.minimum_yaw_information;
+    }
   }
 
   result.status = ScanToMapStatus::kSuccess;
@@ -176,7 +245,14 @@ void ScanToMapMatcher::validateParameters() const
     !std::isfinite(parameters_.maximum_correction_translation) ||
     parameters_.maximum_correction_translation <= 0.0 ||
     !std::isfinite(parameters_.maximum_correction_rotation) ||
-    parameters_.maximum_correction_rotation <= 0.0)
+    parameters_.maximum_correction_rotation <= 0.0 ||
+    !std::isfinite(parameters_.minimum_translation_information_ratio) ||
+    parameters_.minimum_translation_information_ratio <= 0.0 ||
+    parameters_.minimum_translation_information_ratio > 1.0 ||
+    !std::isfinite(parameters_.minimum_planar_information) ||
+    parameters_.minimum_planar_information <= 0.0 ||
+    !std::isfinite(parameters_.minimum_yaw_information) ||
+    parameters_.minimum_yaw_information <= 0.0)
   {
     throw std::invalid_argument("registration acceptance limits must be positive");
   }

@@ -44,6 +44,27 @@ pcl::PointCloud<pcl::PointXYZI> makeStructuredCloud()
   return cloud;
 }
 
+pcl::PointCloud<pcl::PointXYZI> makeParallelCorridor()
+{
+  pcl::PointCloud<pcl::PointXYZI> cloud;
+  for (double x = -4.0; x <= 4.0; x += 0.10) {
+    for (double z = 0.0; z <= 2.0; z += 0.10) {
+      for (double y : {-1.0, 1.0}) {
+        pcl::PointXYZI point;
+        point.x = static_cast<float>(x);
+        point.y = static_cast<float>(y);
+        point.z = static_cast<float>(z);
+        point.intensity = 1.0F;
+        cloud.push_back(point);
+      }
+    }
+  }
+  cloud.width = cloud.size();
+  cloud.height = 1U;
+  cloud.is_dense = true;
+  return cloud;
+}
+
 Eigen::Isometry3d makePose(double x, double y, double z, double yaw)
 {
   Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
@@ -77,6 +98,24 @@ TEST(ScanToMapMatcher, RecoversStructuredCloudPoseFromMotionInitialGuess)
   EXPECT_LT(rotationError(expected_pose, result.pose), 0.02);
   EXPECT_GE(result.correspondence_count, parameters.minimum_correspondences);
   EXPECT_LT(result.rmse, parameters.maximum_rmse);
+  EXPECT_GT(result.translation_information_ratio, 0.10);
+  EXPECT_GT(result.yaw_information, 0.01);
+  EXPECT_FALSE(result.degenerate);
+}
+
+TEST(ScanToMapMatcher, DetectsUnobservableCorridorTranslation)
+{
+  const auto corridor = makeParallelCorridor();
+  ScanToMapMatcher matcher(ScanToMapMatcherParameters{});
+
+  const auto result = matcher.match(
+    corridor, corridor, Eigen::Isometry3d::Identity());
+
+  ASSERT_TRUE(result.success()) << toString(result.status);
+  EXPECT_EQ(result.observability_correspondences, result.correspondence_count);
+  EXPECT_LT(result.translation_information_ratio, 0.01);
+  EXPECT_GT(result.translation_information_eigenvalues.maxCoeff(), 0.50);
+  EXPECT_TRUE(result.degenerate);
 }
 
 TEST(ScanToMapMatcher, RejectsTooFewAndNonFinitePoints)

@@ -220,6 +220,16 @@ private:
     parameters.maximum_correction_rotation = declare_parameter<double>(
       "matcher.maximum_correction_rotation",
       parameters.maximum_correction_rotation);
+    parameters.minimum_translation_information_ratio =
+      declare_parameter<double>(
+      "matcher.minimum_translation_information_ratio",
+      parameters.minimum_translation_information_ratio);
+    parameters.minimum_planar_information = declare_parameter<double>(
+      "matcher.minimum_planar_information",
+      parameters.minimum_planar_information);
+    parameters.minimum_yaw_information = declare_parameter<double>(
+      "matcher.minimum_yaw_information",
+      parameters.minimum_yaw_information);
     return parameters;
   }
 
@@ -253,6 +263,15 @@ private:
     while (odom_buffer_.size() > maximum_odom_buffer_size_) {
       odom_buffer_.pop_front();
     }
+    if (pending_cloud_ != nullptr) {
+      const auto * odometry = nearestOdom(
+        rclcpp::Time(pending_cloud_->header.stamp));
+      if (odometry != nullptr) {
+        auto cloud = std::move(pending_cloud_);
+        pending_cloud_.reset();
+        processCloud(cloud, *odometry);
+      }
+    }
   }
 
   const nav_msgs::msg::Odometry * nearestOdom(
@@ -280,20 +299,30 @@ private:
 
   void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr message)
   {
-    const auto started = std::chrono::steady_clock::now();
-    try {
-      const auto * odometry = nearestOdom(rclcpp::Time(message->header.stamp));
-      if (odometry == nullptr) {
+    const auto * odometry = nearestOdom(rclcpp::Time(message->header.stamp));
+    if (odometry == nullptr) {
+      if (pending_cloud_ != nullptr) {
         RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 5000,
-          "No odometry within %.3f s of 3D scan", maximum_odom_age_);
-        return;
+          "Replacing a 3D scan still waiting for synchronized odometry");
       }
+      pending_cloud_ = message;
+      return;
+    }
+    processCloud(message, *odometry);
+  }
+
+  void processCloud(
+    const sensor_msgs::msg::PointCloud2::SharedPtr & message,
+    const nav_msgs::msg::Odometry & odometry)
+  {
+    const auto started = std::chrono::steady_clock::now();
+    try {
       const auto base_to_lidar_message = tf_buffer_.lookupTransform(
         base_frame_, message->header.frame_id, tf2::TimePointZero);
       const Eigen::Isometry3d base_to_lidar =
         transformToEigen(base_to_lidar_message.transform);
-      const Eigen::Isometry3d odom_pose = poseToEigen(odometry->pose.pose);
+      const Eigen::Isometry3d odom_pose = poseToEigen(odometry.pose.pose);
 
       pcl::PointCloud<pcl::PointXYZI> scan;
       pcl::fromROSMsg(*message, scan);
@@ -306,7 +335,7 @@ private:
         local_submap_.addKeyframe(scan, lidar_pose);
         initialized_ = true;
         publishOutputs(
-          *message, *odometry, scan, lidar_pose, nullptr, true, started);
+          *message, odometry, scan, lidar_pose, nullptr, true, started);
         return;
       }
 
@@ -344,7 +373,7 @@ private:
       }
       last_odom_pose_ = odom_pose;
       publishOutputs(
-        *message, *odometry, scan, lidar_pose, &match_result,
+        *message, odometry, scan, lidar_pose, &match_result,
         keyframe_added, started);
     } catch (const tf2::TransformException & error) {
       RCLCPP_WARN_THROTTLE(
@@ -433,6 +462,35 @@ private:
       "correction_rotation",
       std::to_string(result == nullptr ? 0.0 : result->correction_rotation)));
     status.values.push_back(makeValue(
+      "observability_correspondences",
+      std::to_string(
+        result == nullptr ? 0U : result->observability_correspondences)));
+    status.values.push_back(makeValue(
+      "translation_information_min",
+      std::to_string(
+        result == nullptr ? 0.0 :
+        result->translation_information_eigenvalues.minCoeff())));
+    status.values.push_back(makeValue(
+      "translation_information_max",
+      std::to_string(
+        result == nullptr ? 0.0 :
+        result->translation_information_eigenvalues.maxCoeff())));
+    status.values.push_back(makeValue(
+      "translation_information_ratio",
+      std::to_string(
+        result == nullptr ? 0.0 : result->translation_information_ratio)));
+    status.values.push_back(makeValue(
+      "planar_information_min",
+      std::to_string(
+        result == nullptr ? 0.0 :
+        result->planar_information_eigenvalues.minCoeff())));
+    status.values.push_back(makeValue(
+      "yaw_information",
+      std::to_string(result == nullptr ? 0.0 : result->yaw_information)));
+    status.values.push_back(makeValue(
+      "degenerate",
+      result != nullptr && result->degenerate ? "true" : "false"));
+    status.values.push_back(makeValue(
       "keyframe_added", keyframe_added ? "true" : "false"));
     status.values.push_back(makeValue(
       "local_keyframes", std::to_string(local_submap_.keyframeCount())));
@@ -463,6 +521,7 @@ private:
   Eigen::Isometry3d last_odom_pose_{Eigen::Isometry3d::Identity()};
   Eigen::Isometry3d last_keyframe_base_pose_{Eigen::Isometry3d::Identity()};
   std::deque<nav_msgs::msg::Odometry> odom_buffer_;
+  sensor_msgs::msg::PointCloud2::SharedPtr pending_cloud_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscription_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odometry_publisher_;

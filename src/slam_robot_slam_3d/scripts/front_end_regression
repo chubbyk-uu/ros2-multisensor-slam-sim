@@ -55,6 +55,7 @@ class FrontEndRegression(Node):
         self.declare_parameter("maximum_position_error", 0.50)
         self.declare_parameter("maximum_yaw_error", 0.20)
         self.declare_parameter("maximum_pair_age", 0.03)
+        self.declare_parameter("maximum_degenerate_ratio", 0.0)
 
         self.minimum_samples = self.get_parameter("minimum_samples").value
         self.minimum_truth_distance = self.get_parameter(
@@ -74,6 +75,9 @@ class FrontEndRegression(Node):
             "maximum_yaw_error"
         ).value
         self.maximum_pair_age = self.get_parameter("maximum_pair_age").value
+        self.maximum_degenerate_ratio = self.get_parameter(
+            "maximum_degenerate_ratio"
+        ).value
 
         self.truth_buffer = deque(maxlen=200)
         self.custom_origin = None
@@ -87,6 +91,10 @@ class FrontEndRegression(Node):
         self.accepted_matches = 0
         self.diagnostic_samples = 0
         self.processing_times = []
+        self.translation_information_ratios = []
+        self.planar_information_minima = []
+        self.yaw_information_values = []
+        self.degenerate_matches = 0
         self.result = None
 
         self.create_subscription(
@@ -151,6 +159,14 @@ class FrontEndRegression(Node):
             try:
                 accepted = values["match_accepted"].lower() == "true"
                 processing_ms = float(values["processing_ms"])
+                translation_ratio = float(
+                    values["translation_information_ratio"]
+                )
+                planar_information_minimum = float(
+                    values["planar_information_min"]
+                )
+                yaw_information = float(values["yaw_information"])
+                degenerate = values["degenerate"].lower() == "true"
             except (KeyError, ValueError) as error:
                 self.get_logger().error(f"Invalid diagnostics sample: {error}")
                 self.result = 2
@@ -162,6 +178,10 @@ class FrontEndRegression(Node):
             self.diagnostic_samples += 1
             self.accepted_matches += int(accepted)
             self.processing_times.append(processing_ms)
+            self.translation_information_ratios.append(translation_ratio)
+            self.planar_information_minima.append(planar_information_minimum)
+            self.yaw_information_values.append(yaw_information)
+            self.degenerate_matches += int(degenerate)
         self._finish_if_ready()
 
     def _finish_if_ready(self):
@@ -179,6 +199,16 @@ class FrontEndRegression(Node):
         sorted_times = sorted(self.processing_times)
         p95_index = math.ceil(0.95 * len(sorted_times)) - 1
         p95_processing_ms = sorted_times[p95_index]
+        sorted_translation_ratios = sorted(
+            self.translation_information_ratios
+        )
+        p05_index = max(
+            0, math.ceil(0.05 * len(sorted_translation_ratios)) - 1
+        )
+        p05_translation_ratio = sorted_translation_ratios[p05_index]
+        minimum_planar_information = min(self.planar_information_minima)
+        minimum_yaw_information = min(self.yaw_information_values)
+        degenerate_ratio = self.degenerate_matches / self.diagnostic_samples
         self.get_logger().info(
             "RESULT "
             f"samples={self.diagnostic_samples} "
@@ -186,6 +216,10 @@ class FrontEndRegression(Node):
             f"accepted={acceptance_ratio:.3f} "
             f"processing_mean={mean_processing_ms:.3f}ms "
             f"processing_p95={p95_processing_ms:.3f}ms "
+            f"translation_ratio_p05={p05_translation_ratio:.4f} "
+            f"planar_information_min={minimum_planar_information:.4f} "
+            f"yaw_information_min={minimum_yaw_information:.4f} "
+            f"degenerate={degenerate_ratio:.4f} "
             f"position_error={self.latest_position_error:.3f}m "
             f"position_error_max={self.maximum_observed_position_error:.3f}m "
             f"yaw_error={math.degrees(self.latest_yaw_error):.3f}deg"
@@ -206,6 +240,10 @@ class FrontEndRegression(Node):
             (
                 self.latest_yaw_error <= self.maximum_yaw_error,
                 "yaw error",
+            ),
+            (
+                degenerate_ratio <= self.maximum_degenerate_ratio,
+                "degenerate match ratio",
             ),
         ]
         failures = [name for passed, name in checks if not passed]
