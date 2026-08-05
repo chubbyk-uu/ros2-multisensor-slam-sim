@@ -145,7 +145,17 @@ ScanToMapResult ScanToMapMatcher::match(
     result.status = ScanToMapStatus::kInvalidInput;
     return result;
   }
-  result.pose.matrix() = final_matrix;
+  Eigen::Quaterniond final_rotation(final_matrix.block<3, 3>(0, 0));
+  if (!final_rotation.coeffs().allFinite() ||
+    final_rotation.squaredNorm() <= std::numeric_limits<double>::epsilon())
+  {
+    result.status = ScanToMapStatus::kInvalidInput;
+    return result;
+  }
+  final_rotation.normalize();
+  result.pose = Eigen::Isometry3d::Identity();
+  result.pose.linear() = final_rotation.toRotationMatrix();
+  result.pose.translation() = final_matrix.block<3, 1>(0, 3);
 
   const Eigen::Isometry3d correction = initial_pose.inverse() * result.pose;
   result.correction_translation = correction.translation().norm();

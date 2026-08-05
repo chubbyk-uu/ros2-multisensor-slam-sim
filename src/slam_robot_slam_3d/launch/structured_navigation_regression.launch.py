@@ -4,6 +4,7 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
+    GroupAction,
     IncludeLaunchDescription,
     RegisterEventHandler,
 )
@@ -63,17 +64,26 @@ def generate_launch_description():
                 default_value="true" if running_in_wsl() else "false",
             ),
             DeclareLaunchArgument("wsl_gpu_adapter", default_value="NVIDIA"),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(simulation_launch),
-                launch_arguments={
-                    "world": structured_world,
-                    "gui": LaunchConfiguration("gui"),
-                    "rviz": LaunchConfiguration("rviz"),
-                    "database_path": LaunchConfiguration("database_path"),
-                    "reset_database": "true",
-                    "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
-                    "wsl_gpu_adapter": LaunchConfiguration("wsl_gpu_adapter"),
-                }.items(),
+            GroupAction(
+                scoped=True,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(simulation_launch),
+                        launch_arguments={
+                            "world": structured_world,
+                            "gui": LaunchConfiguration("gui"),
+                            "rviz": LaunchConfiguration("rviz"),
+                            "database_path": LaunchConfiguration(
+                                "database_path"
+                            ),
+                            "reset_database": "true",
+                            "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
+                            "wsl_gpu_adapter": LaunchConfiguration(
+                                "wsl_gpu_adapter"
+                            ),
+                        }.items(),
+                    )
+                ],
             ),
             regression,
             RegisterEventHandler(

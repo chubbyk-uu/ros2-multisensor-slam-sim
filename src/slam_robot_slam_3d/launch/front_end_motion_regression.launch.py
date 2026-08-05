@@ -4,6 +4,7 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
+    GroupAction,
     IncludeLaunchDescription,
     RegisterEventHandler,
     TimerAction,
@@ -67,22 +68,34 @@ def generate_launch_description():
                 default_value="true" if running_in_wsl() else "false",
             ),
             DeclareLaunchArgument("wsl_gpu_adapter", default_value="NVIDIA"),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(simulation_launch),
-                launch_arguments={
-                    "world": structured_world,
-                    "gui": LaunchConfiguration("gui"),
-                    "rviz": LaunchConfiguration("rviz"),
-                    "sensor_variant": "3d",
-                    "odometry_mode": "wheel_imu",
-                    "left_wheel_friction": left_wheel_friction,
-                    "right_wheel_friction": "1.2",
-                    "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
-                    "wsl_gpu_adapter": LaunchConfiguration("wsl_gpu_adapter"),
-                }.items(),
+            GroupAction(
+                scoped=True,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(simulation_launch),
+                        launch_arguments={
+                            "world": structured_world,
+                            "gui": LaunchConfiguration("gui"),
+                            "rviz": LaunchConfiguration("rviz"),
+                            "sensor_variant": "3d",
+                            "odometry_mode": "wheel_imu",
+                            "left_wheel_friction": left_wheel_friction,
+                            "right_wheel_friction": "1.2",
+                            "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
+                            "wsl_gpu_adapter": LaunchConfiguration(
+                                "wsl_gpu_adapter"
+                            ),
+                        }.items(),
+                    )
+                ],
             ),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(front_end_launch)
+            GroupAction(
+                scoped=True,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(front_end_launch)
+                    )
+                ],
             ),
             TimerAction(period=5.0, actions=[regression]),
             RegisterEventHandler(

@@ -115,6 +115,9 @@ TEST(ScanToMapMatcher, RecoversStructuredCloudPoseFromMotionInitialGuess)
   ASSERT_TRUE(result.success()) << toString(result.status);
   EXPECT_LT((result.pose.translation() - expected_pose.translation()).norm(), 0.02);
   EXPECT_LT(rotationError(expected_pose, result.pose), 0.02);
+  EXPECT_TRUE((result.pose.rotation().transpose() * result.pose.rotation()).isApprox(
+      Eigen::Matrix3d::Identity(), 1.0e-12));
+  EXPECT_NEAR(result.pose.rotation().determinant(), 1.0, 1.0e-12);
   EXPECT_GE(result.correspondence_count, parameters.minimum_correspondences);
   EXPECT_LT(result.rmse, parameters.maximum_rmse);
   EXPECT_GT(result.translation_information_ratio, 0.10);

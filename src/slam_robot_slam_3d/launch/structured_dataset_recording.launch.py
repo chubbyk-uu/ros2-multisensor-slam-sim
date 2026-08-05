@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -49,20 +53,36 @@ def generate_launch_description():
                 default_value="true" if running_in_wsl() else "false",
             ),
             DeclareLaunchArgument("wsl_gpu_adapter", default_value="NVIDIA"),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(structured_regression),
-                launch_arguments={
-                    "laps": LaunchConfiguration("laps"),
-                    "gui": LaunchConfiguration("gui"),
-                    "rviz": LaunchConfiguration("rviz"),
-                    "database_path": LaunchConfiguration("database_path"),
-                    "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
-                    "wsl_gpu_adapter": LaunchConfiguration("wsl_gpu_adapter"),
-                }.items(),
+            GroupAction(
+                scoped=True,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(structured_regression),
+                        launch_arguments={
+                            "laps": LaunchConfiguration("laps"),
+                            "gui": LaunchConfiguration("gui"),
+                            "rviz": LaunchConfiguration("rviz"),
+                            "database_path": LaunchConfiguration(
+                                "database_path"
+                            ),
+                            "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
+                            "wsl_gpu_adapter": LaunchConfiguration(
+                                "wsl_gpu_adapter"
+                            ),
+                        }.items(),
+                    )
+                ],
             ),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(recorder),
-                launch_arguments={"output": LaunchConfiguration("output")}.items(),
+            GroupAction(
+                scoped=True,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(recorder),
+                        launch_arguments={
+                            "output": LaunchConfiguration("output")
+                        }.items(),
+                    )
+                ],
             ),
         ]
     )

@@ -11,6 +11,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common filters kdtree registration)
@@ -26,10 +27,12 @@ target_include_directories(
   point_cloud_preprocessor
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
     ${PCL_INCLUDE_DIRS}
 )
-target_link_libraries(point_cloud_preprocessor PUBLIC ${PCL_LIBRARIES})
+target_link_libraries(
+  point_cloud_preprocessor
+  PUBLIC Eigen3::Eigen ${PCL_LIBRARIES}
+)
 
 add_library(scan_to_map_matcher src/scan_to_map_matcher.cpp)
 target_compile_features(scan_to_map_matcher PUBLIC cxx_std_17)
@@ -40,7 +43,7 @@ target_include_directories(
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     ${PCL_INCLUDE_DIRS}
 )
-target_link_libraries(scan_to_map_matcher PUBLIC ${PCL_LIBRARIES})
+target_link_libraries(scan_to_map_matcher PUBLIC Eigen3::Eigen ${PCL_LIBRARIES})
 
 add_library(local_submap src/local_submap.cpp)
 target_compile_features(local_submap PUBLIC cxx_std_17)
@@ -51,7 +54,7 @@ target_include_directories(
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     ${PCL_INCLUDE_DIRS}
 )
-target_link_libraries(local_submap PUBLIC ${PCL_LIBRARIES})
+target_link_libraries(local_submap PUBLIC Eigen3::Eigen ${PCL_LIBRARIES})
 
 add_library(odometry_interpolator src/odometry_interpolator.cpp)
 target_compile_features(odometry_interpolator PUBLIC cxx_std_17)
@@ -62,6 +65,7 @@ target_include_directories(
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 ament_target_dependencies(odometry_interpolator nav_msgs rclcpp)
+target_link_libraries(odometry_interpolator Eigen3::Eigen)
 
 add_library(match_failure_recovery src/match_failure_recovery.cpp)
 target_compile_features(match_failure_recovery PUBLIC cxx_std_17)
