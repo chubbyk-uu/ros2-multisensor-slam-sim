@@ -4,6 +4,24 @@
 里程计对照。两者使用相同的 3D LiDAR 机器人变体，但不能同时发布
 `map -> odom`。
 
+## 固定 3D 数据集
+
+自研算法与 RTAB-Map 的统一输入已经固化为结构化世界两圈 MCAP：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_dataset_recording.launch.py \
+  output:="${SLAM_WS}/bags/structured_3d_reference"
+```
+
+数据包不记录动态 `/tf` 或任何 SLAM 输出。使用前运行：
+
+```bash
+ros2 run slam_robot_slam_3d dataset_contract_check \
+  "${SLAM_WS}/bags/structured_3d_reference"
+```
+
+完整话题契约、哈希和回放方式见[固定数据集](datasets.md)。
+
 ## RTAB-Map 在线 3D SLAM
 
 启动 3D 机器人、轮速 + IMU EKF、点云检查、RTAB-Map 和 RViz：

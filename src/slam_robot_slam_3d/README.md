@@ -25,6 +25,32 @@ sudo apt install ros-jazzy-rtabmap-ros
 
 ## 启动
 
+### 固定数据集
+
+录制结构化世界的两圈固定输入：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_dataset_recording.launch.py \
+  output:="${SLAM_WS}/bags/structured_3d_reference"
+```
+
+录制内容只有 3D 点云、轮速、IMU、统一 `/odom` 运动初值、静态外参、机器人
+描述、仿真时钟和仅供评分的真值，不包含 RTAB-Map 或自研算法输出。检查并
+回放：
+
+```bash
+ros2 run slam_robot_slam_3d dataset_contract_check \
+  "${SLAM_WS}/bags/structured_3d_reference"
+
+ros2 launch slam_robot_slam_3d play_3d_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/structured_3d_reference" rate:=2.0
+```
+
+固定包的消息数量、哈希和使用边界见
+[数据集说明](../../docs/datasets.md)。
+
+### 在线 RTAB-Map
+
 启动 Gazebo 3D 机器人、点云输入检查、RTAB-Map 和专用 RViz：
 
 ```bash

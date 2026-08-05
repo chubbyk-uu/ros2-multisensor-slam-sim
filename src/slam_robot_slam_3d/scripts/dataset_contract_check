@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+
+"""Validate that a rosbag contains only the fixed 3D SLAM data contract."""
+
+import argparse
+from pathlib import Path
+import sys
+
+import yaml
+
+
+EXPECTED_TOPICS = {
+    "/clock": "rosgraph_msgs/msg/Clock",
+    "/lidar_3d/points": "sensor_msgs/msg/PointCloud2",
+    "/wheel/odom": "nav_msgs/msg/Odometry",
+    "/imu/data": "sensor_msgs/msg/Imu",
+    "/odom": "nav_msgs/msg/Odometry",
+    "/ground_truth/odom": "nav_msgs/msg/Odometry",
+    "/tf_static": "tf2_msgs/msg/TFMessage",
+    "/robot_description": "std_msgs/msg/String",
+}
+
+
+def validate_metadata(metadata, minimum_duration, minimum_clouds):
+    errors = []
+    information = metadata.get("rosbag2_bagfile_information", {})
+    if information.get("storage_identifier") != "mcap":
+        errors.append("storage identifier must be mcap")
+
+    duration = information.get("duration", {}).get("nanoseconds", 0) * 1.0e-9
+    if duration < minimum_duration:
+        errors.append(
+            f"duration {duration:.3f} s is below {minimum_duration:.3f} s"
+        )
+
+    topics = {}
+    for entry in information.get("topics_with_message_count", []):
+        topic_metadata = entry.get("topic_metadata", {})
+        name = topic_metadata.get("name", "")
+        topics[name] = {
+            "type": topic_metadata.get("type", ""),
+            "count": entry.get("message_count", 0),
+        }
+
+    missing = sorted(set(EXPECTED_TOPICS) - set(topics))
+    unexpected = sorted(set(topics) - set(EXPECTED_TOPICS))
+    if missing:
+        errors.append(f"missing topics: {', '.join(missing)}")
+    if unexpected:
+        errors.append(f"unexpected topics: {', '.join(unexpected)}")
+
+    for name, expected_type in EXPECTED_TOPICS.items():
+        if name not in topics:
+            continue
+        if topics[name]["type"] != expected_type:
+            errors.append(
+                f"{name} type {topics[name]['type']} != {expected_type}"
+            )
+        if topics[name]["count"] <= 0:
+            errors.append(f"{name} contains no messages")
+
+    cloud_count = topics.get("/lidar_3d/points", {}).get("count", 0)
+    if cloud_count < minimum_clouds:
+        errors.append(
+            f"point cloud count {cloud_count} is below {minimum_clouds}"
+        )
+
+    return errors, duration, topics
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("bag", type=Path)
+    parser.add_argument("--minimum-duration", type=float, default=120.0)
+    parser.add_argument("--minimum-clouds", type=int, default=1200)
+    arguments = parser.parse_args()
+
+    metadata_path = arguments.bag.expanduser().resolve() / "metadata.yaml"
+    if not metadata_path.is_file():
+        print(f"FAIL: missing rosbag metadata: {metadata_path}", file=sys.stderr)
+        return 1
+    try:
+        metadata = yaml.safe_load(metadata_path.read_text()) or {}
+    except (OSError, yaml.YAMLError) as error:
+        print(f"FAIL: cannot read metadata: {error}", file=sys.stderr)
+        return 1
+
+    errors, duration, topics = validate_metadata(
+        metadata, arguments.minimum_duration, arguments.minimum_clouds
+    )
+    print(
+        f"3D dataset: duration={duration:.3f} s, "
+        f"clouds={topics.get('/lidar_3d/points', {}).get('count', 0)}, "
+        f"topics={len(topics)}"
+    )
+    for name in sorted(topics):
+        print(f"  {name}: {topics[name]['count']} {topics[name]['type']}")
+    if errors:
+        for error in errors:
+            print(f"FAIL: {error}", file=sys.stderr)
+        return 1
+    print("PASS: fixed 3D dataset contract is valid")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
