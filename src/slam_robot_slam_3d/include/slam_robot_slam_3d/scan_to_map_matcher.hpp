@@ -25,8 +25,12 @@ struct ScanToMapMatcherParameters
   double maximum_correction_translation{0.60};
   double maximum_correction_rotation{0.40};
   double minimum_translation_information_ratio{0.05};
+  double full_suppression_translation_information_ratio{0.01};
+  double minimum_translation_information{0.01};
+  double full_suppression_translation_information{0.002};
   double minimum_planar_information{0.01};
   double minimum_yaw_information{0.10};
+  bool degeneracy_handling_enabled{true};
 };
 
 enum class ScanToMapStatus
@@ -51,11 +55,14 @@ struct ScanToMapResult
   std::size_t observability_correspondences{0U};
   Eigen::Vector2d translation_information_eigenvalues{
     Eigen::Vector2d::Zero()};
+  Eigen::Vector2d weak_translation_direction{Eigen::Vector2d::UnitX()};
   Eigen::Vector3d planar_information_eigenvalues{
     Eigen::Vector3d::Zero()};
   double translation_information_ratio{0.0};
   double yaw_information{0.0};
   bool degenerate{true};
+  bool degeneracy_handling_applied{false};
+  double weak_translation_correction_scale{1.0};
 
   bool success() const;
 };

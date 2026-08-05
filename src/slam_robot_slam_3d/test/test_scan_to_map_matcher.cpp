@@ -116,6 +116,9 @@ TEST(ScanToMapMatcher, DetectsUnobservableCorridorTranslation)
   EXPECT_LT(result.translation_information_ratio, 0.01);
   EXPECT_GT(result.translation_information_eigenvalues.maxCoeff(), 0.50);
   EXPECT_TRUE(result.degenerate);
+  EXPECT_TRUE(result.degeneracy_handling_applied);
+  EXPECT_DOUBLE_EQ(result.weak_translation_correction_scale, 0.0);
+  EXPECT_GT(std::abs(result.weak_translation_direction.x()), 0.90);
 }
 
 TEST(ScanToMapMatcher, RejectsTooFewAndNonFinitePoints)
@@ -160,6 +163,16 @@ TEST(ScanToMapMatcher, RejectsInvalidParameters)
 
   parameters = ScanToMapMatcherParameters{};
   parameters.minimum_points = 5U;
+  EXPECT_THROW((void)ScanToMapMatcher{parameters}, std::invalid_argument);
+
+  parameters = ScanToMapMatcherParameters{};
+  parameters.full_suppression_translation_information_ratio =
+    parameters.minimum_translation_information_ratio;
+  EXPECT_THROW((void)ScanToMapMatcher{parameters}, std::invalid_argument);
+
+  parameters = ScanToMapMatcherParameters{};
+  parameters.full_suppression_translation_information =
+    parameters.minimum_translation_information;
   EXPECT_THROW((void)ScanToMapMatcher{parameters}, std::invalid_argument);
 }
 

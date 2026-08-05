@@ -1,0 +1,478 @@
+#!/usr/bin/env python3
+
+"""Drive and score the custom 3D front end in a degenerate corridor."""
+
+import argparse
+import math
+import sys
+import time
+
+from diagnostic_msgs.msg import DiagnosticArray
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from rcl_interfaces.msg import Log
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.utilities import remove_ros_args
+
+
+STATUS_NAME = "custom_slam_3d/scan_to_map_front_end"
+CRITICAL_LOG_FRAGMENTS = (
+    "3D front-end callback failed",
+    "Replacing a 3D scan still waiting for synchronized odometry",
+    "process has died",
+)
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def pose_from_odometry(message):
+    position = message.pose.pose.position
+    orientation = message.pose.pose.orientation
+    yaw = math.atan2(
+        2.0
+        * (orientation.w * orientation.z + orientation.x * orientation.y),
+        1.0
+        - 2.0
+        * (orientation.y * orientation.y + orientation.z * orientation.z),
+    )
+    return position.x, position.y, yaw
+
+
+def relative_pose(origin, pose):
+    delta_x = pose[0] - origin[0]
+    delta_y = pose[1] - origin[1]
+    cosine = math.cos(origin[2])
+    sine = math.sin(origin[2])
+    return (
+        cosine * delta_x + sine * delta_y,
+        -sine * delta_x + cosine * delta_y,
+        normalize_angle(pose[2] - origin[2]),
+    )
+
+
+def safe_ratio(numerator, denominator):
+    return numerator / denominator if denominator > 0 else 0.0
+
+
+class Corridor3DRegression(Node):
+    def __init__(self):
+        super().__init__(
+            "corridor_3d_regression",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
+        self.truth_pose = None
+        self.front_end_pose = None
+        self.odom_pose = None
+        self.starts = None
+        self.measuring = False
+        self.received_diagnostics = False
+        self.total_matches = 0
+        self.accepted_matches = 0
+        self.degenerate_samples = 0
+        self.degenerate_detections = 0
+        self.full_suppression_samples = 0
+        self.entry_samples = 0
+        self.entry_false_detections = 0
+        self.recovery_samples = 0
+        self.recovery_false_detections = 0
+        self.translation_ratios = []
+        self.processing_times = []
+        self.maximum_position_error = 0.0
+        self.maximum_lateral_error = 0.0
+        self.maximum_yaw_error = 0.0
+        self.latest_position_error = math.inf
+        self.latest_yaw_error = math.inf
+        self.latest_odom_position_error = math.inf
+        self.last_front_end_stamp = None
+        self.maximum_front_end_gap = 0.0
+        self.malformed_diagnostics = 0
+        self.critical_logs = []
+
+        self.command_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.create_subscription(
+            Odometry, "/ground_truth/odom", self._truth_callback, 100
+        )
+        self.create_subscription(
+            Odometry,
+            "/custom_slam_3d/laser_odom",
+            self._front_end_callback,
+            50,
+        )
+        self.create_subscription(Odometry, "/odom", self._odom_callback, 100)
+        self.create_subscription(
+            DiagnosticArray,
+            "/custom_slam_3d/front_end_diagnostics",
+            self._diagnostics_callback,
+            100,
+        )
+        self.create_subscription(Log, "/rosout", self._log_callback, 100)
+
+    def _truth_callback(self, message):
+        self.truth_pose = pose_from_odometry(message)
+
+    def _front_end_callback(self, message):
+        self.front_end_pose = pose_from_odometry(message)
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        if self.last_front_end_stamp is not None and stamp > self.last_front_end_stamp:
+            self.maximum_front_end_gap = max(
+                self.maximum_front_end_gap,
+                stamp - self.last_front_end_stamp,
+            )
+        self.last_front_end_stamp = stamp
+        if not self.measuring or self.starts is None or self.truth_pose is None:
+            return
+        truth = relative_pose(self.starts["truth"], self.truth_pose)
+        estimate = relative_pose(
+            self.starts["front_end"], self.front_end_pose
+        )
+        position_error = math.hypot(
+            estimate[0] - truth[0], estimate[1] - truth[1]
+        )
+        yaw_error = abs(normalize_angle(estimate[2] - truth[2]))
+        self.latest_position_error = position_error
+        self.latest_yaw_error = yaw_error
+        self.maximum_position_error = max(
+            self.maximum_position_error, position_error
+        )
+        self.maximum_lateral_error = max(
+            self.maximum_lateral_error, abs(estimate[1] - truth[1])
+        )
+        self.maximum_yaw_error = max(self.maximum_yaw_error, yaw_error)
+
+    def _odom_callback(self, message):
+        self.odom_pose = pose_from_odometry(message)
+        if not self.measuring or self.starts is None or self.truth_pose is None:
+            return
+        truth = relative_pose(self.starts["truth"], self.truth_pose)
+        odom = relative_pose(self.starts["odom"], self.odom_pose)
+        self.latest_odom_position_error = math.hypot(
+            odom[0] - truth[0], odom[1] - truth[1]
+        )
+
+    def _diagnostics_callback(self, message):
+        for status in message.status:
+            if status.name != STATUS_NAME:
+                continue
+            self.received_diagnostics = True
+            if not self.measuring or status.message == "initialized":
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            try:
+                accepted = values["match_accepted"].lower() == "true"
+                degenerate = values["degenerate"].lower() == "true"
+                translation_ratio = float(
+                    values["translation_information_ratio"]
+                )
+                processing_ms = float(values["processing_ms"])
+                handling_applied = (
+                    values["degeneracy_handling_applied"].lower() == "true"
+                )
+                correction_scale = float(
+                    values["weak_translation_correction_scale"]
+                )
+            except (KeyError, ValueError):
+                self.malformed_diagnostics += 1
+                continue
+            if not 0.0 <= correction_scale <= 1.0:
+                self.malformed_diagnostics += 1
+                continue
+            if self.starts is None or self.truth_pose is None:
+                continue
+            progress = relative_pose(
+                self.starts["truth"], self.truth_pose
+            )[0]
+            self.total_matches += 1
+            self.accepted_matches += int(accepted)
+            self.translation_ratios.append(translation_ratio)
+            self.processing_times.append(processing_ms)
+            if self.arguments.degenerate_start <= progress <= self.arguments.degenerate_end:
+                self.degenerate_samples += 1
+                self.degenerate_detections += int(degenerate)
+                self.full_suppression_samples += int(
+                    handling_applied
+                    and correction_scale
+                    <= self.arguments.maximum_full_suppression_scale
+                )
+            elif progress <= self.arguments.entry_end:
+                self.entry_samples += 1
+                self.entry_false_detections += int(degenerate)
+            elif progress >= self.arguments.recovery_start:
+                self.recovery_samples += 1
+                self.recovery_false_detections += int(degenerate)
+
+    def _log_callback(self, message):
+        if any(fragment in message.msg for fragment in CRITICAL_LOG_FRAGMENTS):
+            if message.msg not in self.critical_logs:
+                self.critical_logs.append(message.msg)
+
+    def spin_once(self, timeout=0.025):
+        rclpy.spin_once(self, timeout_sec=timeout)
+
+    def simulation_time(self):
+        return self.get_clock().now().nanoseconds * 1.0e-9
+
+    def publish_command(self, linear=0.0, angular=0.0):
+        message = Twist()
+        message.linear.x = linear
+        message.angular.z = angular
+        self.command_publisher.publish(message)
+
+    def stop(self):
+        for _ in range(5):
+            self.publish_command()
+            self.spin_once()
+
+    def wait_for_inputs(self, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.spin_once(0.1)
+            if (
+                self.truth_pose is not None
+                and self.front_end_pose is not None
+                and self.odom_pose is not None
+                and self.received_diagnostics
+            ):
+                return
+        raise RuntimeError("timed out waiting for truth and custom 3D front end")
+
+    def settle(self, duration):
+        start = self.simulation_time()
+        deadline = time.monotonic() + duration * 5.0 + 20.0
+        while self.simulation_time() - start < duration:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("simulation time stalled during settle")
+            self.publish_command()
+            self.spin_once()
+
+    def drive(self):
+        target_yaw = self.starts["truth"][2]
+        next_report = self.arguments.report_interval
+        deadline = time.monotonic() + self.arguments.wall_timeout
+        while True:
+            progress = relative_pose(
+                self.starts["truth"], self.truth_pose
+            )[0]
+            if progress >= self.arguments.distance:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("3D corridor traversal timed out")
+            heading_error = normalize_angle(target_yaw - self.truth_pose[2])
+            angular = max(
+                -self.arguments.maximum_heading_correction,
+                min(
+                    self.arguments.maximum_heading_correction,
+                    self.arguments.heading_control_gain * heading_error,
+                ),
+            )
+            self.publish_command(self.arguments.linear_speed, angular)
+            self.spin_once()
+            if progress >= next_report:
+                print(
+                    f"  progress={progress:.1f}/{self.arguments.distance:.1f} m "
+                    f"degenerate={self.degenerate_detections}/"
+                    f"{self.degenerate_samples}",
+                    flush=True,
+                )
+                next_report += self.arguments.report_interval
+        self.stop()
+
+    def evaluate(self):
+        truth = relative_pose(self.starts["truth"], self.truth_pose)
+        detection_ratio = safe_ratio(
+            self.degenerate_detections, self.degenerate_samples
+        )
+        full_suppression_ratio = safe_ratio(
+            self.full_suppression_samples, self.degenerate_samples
+        )
+        entry_false_ratio = safe_ratio(
+            self.entry_false_detections, self.entry_samples
+        )
+        recovery_false_ratio = safe_ratio(
+            self.recovery_false_detections, self.recovery_samples
+        )
+        acceptance_ratio = safe_ratio(
+            self.accepted_matches, self.total_matches
+        )
+        sorted_times = sorted(self.processing_times)
+        p95_index = max(0, math.ceil(0.95 * len(sorted_times)) - 1)
+        processing_p95 = sorted_times[p95_index] if sorted_times else math.inf
+        minimum_ratio = min(self.translation_ratios, default=math.inf)
+
+        checks = {
+            "distance_reached": truth[0] >= self.arguments.distance,
+            "enough_degenerate_samples": (
+                self.degenerate_samples >= self.arguments.minimum_degenerate_samples
+            ),
+            "degenerate_detection_ratio": (
+                detection_ratio >= self.arguments.minimum_detection_ratio
+            ),
+            "degenerate_handling_ratio": (
+                full_suppression_ratio
+                >= self.arguments.minimum_full_suppression_ratio
+            ),
+            "enough_entry_samples": (
+                self.entry_samples >= self.arguments.minimum_regular_samples
+            ),
+            "entry_false_detection_bounded": (
+                entry_false_ratio <= self.arguments.maximum_false_detection_ratio
+            ),
+            "enough_recovery_samples": (
+                self.recovery_samples >= self.arguments.minimum_regular_samples
+            ),
+            "recovery_false_detection_bounded": (
+                recovery_false_ratio
+                <= self.arguments.maximum_false_detection_ratio
+            ),
+            "match_acceptance_bounded": (
+                acceptance_ratio >= self.arguments.minimum_acceptance_ratio
+            ),
+            "final_position_error_bounded": (
+                self.latest_position_error
+                <= self.arguments.maximum_final_position_error
+            ),
+            "weak_direction_not_worse_than_odom": (
+                self.latest_position_error
+                <= self.latest_odom_position_error
+                + self.arguments.maximum_excess_over_odom
+            ),
+            "final_yaw_error_bounded": (
+                self.latest_yaw_error
+                <= math.radians(self.arguments.maximum_final_yaw_error_degrees)
+            ),
+            "lateral_error_bounded": (
+                self.maximum_lateral_error
+                <= self.arguments.maximum_lateral_error
+            ),
+            "front_end_gap_bounded": (
+                self.maximum_front_end_gap
+                <= self.arguments.maximum_front_end_gap
+            ),
+            "processing_budget": (
+                processing_p95 <= self.arguments.maximum_processing_p95
+            ),
+            "diagnostics_well_formed": self.malformed_diagnostics == 0,
+            "no_critical_runtime_logs": not self.critical_logs,
+        }
+
+        print("\ncustom 3D degenerate-corridor regression result")
+        print(
+            f"route        : {truth[0]:.3f} m, matches={self.total_matches}, "
+            f"accepted={acceptance_ratio:.3f}"
+        )
+        print(
+            f"degenerate   : {self.degenerate_detections}/"
+            f"{self.degenerate_samples} ({detection_ratio:.3f}), "
+            f"minimum ratio={minimum_ratio:.5f}"
+        )
+        print(
+            f"suppression  : {self.full_suppression_samples}/"
+            f"{self.degenerate_samples} ({full_suppression_ratio:.3f})"
+        )
+        print(
+            f"normal       : entry false={self.entry_false_detections}/"
+            f"{self.entry_samples}, recovery false="
+            f"{self.recovery_false_detections}/{self.recovery_samples}"
+        )
+        print(
+            f"trajectory   : final={self.latest_position_error:.3f} m / "
+            f"{math.degrees(self.latest_yaw_error):.3f} deg, "
+            f"odom baseline={self.latest_odom_position_error:.3f} m, "
+            f"max position={self.maximum_position_error:.3f} m, "
+            f"max lateral={self.maximum_lateral_error:.3f} m"
+        )
+        print(
+            f"runtime      : P95={processing_p95:.3f} ms, "
+            f"max gap={self.maximum_front_end_gap:.3f} s"
+        )
+        for name, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
+        if self.critical_logs:
+            for message in self.critical_logs:
+                print(f"  critical: {message}")
+        return all(checks.values())
+
+    def run(self, arguments):
+        self.arguments = arguments
+        self.wait_for_inputs(arguments.startup_timeout)
+        self.settle(arguments.initial_settle_time)
+        self.starts = {
+            "truth": self.truth_pose,
+            "front_end": self.front_end_pose,
+            "odom": self.odom_pose,
+        }
+        self.measuring = True
+        self.last_front_end_stamp = None
+        print("Driving custom 3D front end through degenerate corridor", flush=True)
+        self.drive()
+        self.settle(arguments.final_settle_time)
+        return self.evaluate()
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--distance", type=float, default=55.0)
+    parser.add_argument("--linear-speed", type=float, default=0.70)
+    parser.add_argument("--heading-control-gain", type=float, default=1.5)
+    parser.add_argument("--maximum-heading-correction", type=float, default=0.20)
+    parser.add_argument("--startup-timeout", type=float, default=60.0)
+    parser.add_argument("--initial-settle-time", type=float, default=5.0)
+    parser.add_argument("--final-settle-time", type=float, default=3.0)
+    parser.add_argument("--wall-timeout", type=float, default=240.0)
+    parser.add_argument("--report-interval", type=float, default=5.0)
+    parser.add_argument("--entry-end", type=float, default=5.0)
+    parser.add_argument("--degenerate-start", type=float, default=25.0)
+    parser.add_argument("--degenerate-end", type=float, default=39.0)
+    parser.add_argument("--recovery-start", type=float, default=53.0)
+    parser.add_argument("--minimum-degenerate-samples", type=int, default=120)
+    parser.add_argument("--minimum-regular-samples", type=int, default=35)
+    parser.add_argument("--minimum-detection-ratio", type=float, default=0.80)
+    parser.add_argument(
+        "--minimum-full-suppression-ratio", type=float, default=0.80
+    )
+    parser.add_argument(
+        "--maximum-full-suppression-scale", type=float, default=0.01
+    )
+    parser.add_argument(
+        "--maximum-false-detection-ratio", type=float, default=0.10
+    )
+    parser.add_argument("--minimum-acceptance-ratio", type=float, default=0.95)
+    parser.add_argument("--maximum-final-position-error", type=float, default=2.50)
+    parser.add_argument("--maximum-excess-over-odom", type=float, default=0.20)
+    parser.add_argument(
+        "--maximum-final-yaw-error-degrees", type=float, default=2.0
+    )
+    parser.add_argument("--maximum-lateral-error", type=float, default=0.12)
+    parser.add_argument("--maximum-front-end-gap", type=float, default=0.20)
+    parser.add_argument("--maximum-processing-p95", type=float, default=100.0)
+    arguments = parser.parse_args(argv)
+    if not (
+        0.0 < arguments.entry_end < arguments.degenerate_start
+        < arguments.degenerate_end < arguments.recovery_start
+        < arguments.distance
+    ):
+        parser.error("corridor segment boundaries must be strictly ordered")
+    return arguments
+
+
+def main(argv=None):
+    raw_arguments = sys.argv if argv is None else [sys.argv[0], *argv]
+    arguments = parse_arguments(remove_ros_args(args=raw_arguments)[1:])
+    rclpy.init(args=raw_arguments)
+    node = Corridor3DRegression()
+    try:
+        return 0 if node.run(arguments) else 1
+    except Exception as error:  # noqa: B902 - process boundary reports failures.
+        node.get_logger().error(str(error))
+        return 2
+    finally:
+        node.stop()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

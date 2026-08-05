@@ -224,12 +224,26 @@ private:
       declare_parameter<double>(
       "matcher.minimum_translation_information_ratio",
       parameters.minimum_translation_information_ratio);
+    parameters.full_suppression_translation_information_ratio =
+      declare_parameter<double>(
+      "matcher.full_suppression_translation_information_ratio",
+      parameters.full_suppression_translation_information_ratio);
+    parameters.minimum_translation_information = declare_parameter<double>(
+      "matcher.minimum_translation_information",
+      parameters.minimum_translation_information);
+    parameters.full_suppression_translation_information =
+      declare_parameter<double>(
+      "matcher.full_suppression_translation_information",
+      parameters.full_suppression_translation_information);
     parameters.minimum_planar_information = declare_parameter<double>(
       "matcher.minimum_planar_information",
       parameters.minimum_planar_information);
     parameters.minimum_yaw_information = declare_parameter<double>(
       "matcher.minimum_yaw_information",
       parameters.minimum_yaw_information);
+    parameters.degeneracy_handling_enabled = declare_parameter<bool>(
+      "matcher.degeneracy_handling_enabled",
+      parameters.degeneracy_handling_enabled);
     return parameters;
   }
 
@@ -490,6 +504,23 @@ private:
     status.values.push_back(makeValue(
       "degenerate",
       result != nullptr && result->degenerate ? "true" : "false"));
+    status.values.push_back(makeValue(
+      "degeneracy_handling_applied",
+      result != nullptr && result->degeneracy_handling_applied ?
+      "true" : "false"));
+    status.values.push_back(makeValue(
+      "weak_translation_direction_x",
+      std::to_string(
+        result == nullptr ? 1.0 : result->weak_translation_direction.x())));
+    status.values.push_back(makeValue(
+      "weak_translation_direction_y",
+      std::to_string(
+        result == nullptr ? 0.0 : result->weak_translation_direction.y())));
+    status.values.push_back(makeValue(
+      "weak_translation_correction_scale",
+      std::to_string(
+        result == nullptr ? 1.0 :
+        result->weak_translation_correction_scale)));
     status.values.push_back(makeValue(
       "keyframe_added", keyframe_added ? "true" : "false"));
     status.values.push_back(makeValue(

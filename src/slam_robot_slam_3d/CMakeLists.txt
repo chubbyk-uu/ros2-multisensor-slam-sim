@@ -111,6 +111,7 @@ install(
 install(
   PROGRAMS
     scripts/dataset_contract_check
+    scripts/corridor_3d_regression
     scripts/front_end_regression
     scripts/grid_contract_check
     scripts/pointcloud_contract_check
@@ -166,6 +167,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_front_end_regression
     test/test_front_end_regression.py
+  )
+  ament_add_pytest_test(
+    test_corridor_3d_regression
+    test/test_corridor_3d_regression.py
   )
   ament_add_pytest_test(
     test_pointcloud_contract

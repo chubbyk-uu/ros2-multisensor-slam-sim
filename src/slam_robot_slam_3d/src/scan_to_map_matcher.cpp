@@ -182,6 +182,8 @@ ScanToMapResult ScanToMapMatcher::match(
     {
       result.translation_information_eigenvalues =
         translation_solver.eigenvalues();
+      result.weak_translation_direction =
+        translation_solver.eigenvectors().col(0);
       result.planar_information_eigenvalues = planar_solver.eigenvalues();
       const double maximum_translation_information =
         result.translation_information_eigenvalues.maxCoeff();
@@ -194,9 +196,40 @@ ScanToMapResult ScanToMapMatcher::match(
       result.degenerate =
         result.translation_information_ratio <
         parameters_.minimum_translation_information_ratio ||
+        result.translation_information_eigenvalues.minCoeff() <
+        parameters_.minimum_translation_information ||
         result.planar_information_eigenvalues.minCoeff() <
         parameters_.minimum_planar_information ||
         result.yaw_information < parameters_.minimum_yaw_information;
+      if (parameters_.degeneracy_handling_enabled) {
+        const double ratio_scale = std::clamp(
+          (result.translation_information_ratio -
+          parameters_.full_suppression_translation_information_ratio) /
+          (parameters_.minimum_translation_information_ratio -
+          parameters_.full_suppression_translation_information_ratio),
+          0.0, 1.0);
+        const double absolute_scale = std::clamp(
+          (result.translation_information_eigenvalues.minCoeff() -
+          parameters_.full_suppression_translation_information) /
+          (parameters_.minimum_translation_information -
+          parameters_.full_suppression_translation_information),
+          0.0, 1.0);
+        result.weak_translation_correction_scale =
+          std::min(ratio_scale, absolute_scale);
+        if (result.weak_translation_correction_scale < 1.0) {
+          Eigen::Vector2d translation_correction =
+            result.pose.translation().head<2>() -
+            initial_pose.translation().head<2>();
+          const double weak_correction = translation_correction.dot(
+            result.weak_translation_direction);
+          translation_correction -=
+            (1.0 - result.weak_translation_correction_scale) *
+            weak_correction * result.weak_translation_direction;
+          result.pose.translation().head<2>() =
+            initial_pose.translation().head<2>() + translation_correction;
+          result.degeneracy_handling_applied = true;
+        }
+      }
     }
   }
 
@@ -249,6 +282,17 @@ void ScanToMapMatcher::validateParameters() const
     !std::isfinite(parameters_.minimum_translation_information_ratio) ||
     parameters_.minimum_translation_information_ratio <= 0.0 ||
     parameters_.minimum_translation_information_ratio > 1.0 ||
+    !std::isfinite(
+      parameters_.full_suppression_translation_information_ratio) ||
+    parameters_.full_suppression_translation_information_ratio < 0.0 ||
+    parameters_.full_suppression_translation_information_ratio >=
+    parameters_.minimum_translation_information_ratio ||
+    !std::isfinite(parameters_.minimum_translation_information) ||
+    parameters_.minimum_translation_information <= 0.0 ||
+    !std::isfinite(parameters_.full_suppression_translation_information) ||
+    parameters_.full_suppression_translation_information < 0.0 ||
+    parameters_.full_suppression_translation_information >=
+    parameters_.minimum_translation_information ||
     !std::isfinite(parameters_.minimum_planar_information) ||
     parameters_.minimum_planar_information <= 0.0 ||
     !std::isfinite(parameters_.minimum_yaw_information) ||

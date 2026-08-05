@@ -37,11 +37,16 @@
       maximum_rmse: 0.15
       maximum_correction_translation: 0.60
       maximum_correction_rotation: 0.40
-      # Observability thresholds are diagnostic-only in this first front end.
-      # They do not reject or alter a converged pose yet.
+      # In weak translation directions, continuously scale the GICP correction
+      # toward the wheel+IMU prediction. Below the full-suppression threshold,
+      # keep the prediction exactly; between both thresholds, use a linear ramp.
       minimum_translation_information_ratio: 0.05
+      full_suppression_translation_information_ratio: 0.01
+      minimum_translation_information: 0.01
+      full_suppression_translation_information: 0.002
       minimum_planar_information: 0.01
       minimum_yaw_information: 0.10
+      degeneracy_handling_enabled: true
 
     front_end:
       input_topic: /custom_slam_3d/points_filtered
