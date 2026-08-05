@@ -42,7 +42,8 @@ ros2 run tf2_ros tf2_echo map odom
 ### 自动保存地图
 
 建图完成后，在 launch 终端按一次 `Ctrl+C`。关机钩子会先保存再退出，请等待
-出现 `Save completed`，不要连续按多次 `Ctrl+C`。
+出现 `Save completed`，不要连续按多次 `Ctrl+C`。保存阶段会同步等待服务和
+磁盘写入，异常时最多约 45 秒后放弃保存并继续关闭 SLAM 进程。
 
 默认生成：
 
@@ -135,7 +136,8 @@ RViz 中红色为原始扫描，绿色为预处理点，青色为匹配后的扫
 
 等待终端显示 `[custom_auto_save_map] Save completed` 后再启动导航。自研 SLAM
 目前不序列化位姿图，因此不会生成 SLAM Toolbox 使用的 `.posegraph` 和
-`.data`。指定其他输出前缀：
+`.data`。保存器异常时最多等待 30 秒，随后仍会关闭自研 SLAM 节点，避免留下
+继续发布 `/custom_slam/map` 的孤儿进程。指定其他输出前缀：
 
 ```bash
 ros2 launch slam_robot_bringup custom_slam_development.launch.py \

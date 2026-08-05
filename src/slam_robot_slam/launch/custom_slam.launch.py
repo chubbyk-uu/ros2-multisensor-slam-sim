@@ -38,19 +38,20 @@ def save_custom_map_before_shutdown(
     if not auto_save:
         return signal_scan_matcher
 
-    output_prefix = Path(output_prefix_value).expanduser().resolve()
-    package_prefix = Path(
-        context.perform_substitution(FindPackagePrefix("nav2_map_server"))
-    )
-    save_executable = (
-        package_prefix / "lib" / "nav2_map_server" / "map_saver_cli"
-    )
-
-    print(
-        f"\n[custom_auto_save_map] Saving {map_topic} to: {output_prefix}",
-        flush=True,
-    )
     try:
+        output_prefix = Path(output_prefix_value).expanduser().resolve()
+        package_prefix = Path(
+            context.perform_substitution(FindPackagePrefix("nav2_map_server"))
+        )
+        save_executable = (
+            package_prefix / "lib" / "nav2_map_server" / "map_saver_cli"
+        )
+
+        print(
+            f"\n[custom_auto_save_map] Saving {map_topic} to: "
+            f"{output_prefix}",
+            flush=True,
+        )
         output_prefix.parent.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             [
@@ -68,9 +69,9 @@ def save_custom_map_before_shutdown(
             env=dict(context.environment),
             timeout=30.0,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except Exception as error:  # Keep the detached SLAM process recoverable.
         print(
-            f"[custom_auto_save_map] Save failed to run: {error}",
+            f"[custom_auto_save_map] Save failed: {error}",
             flush=True,
         )
         return signal_scan_matcher

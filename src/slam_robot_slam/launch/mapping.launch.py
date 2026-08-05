@@ -43,29 +43,32 @@ def save_map_before_shutdown(context, slam_toolbox_node):
     if auto_save not in ("1", "true", "yes", "on"):
         return signal_slam
 
-    output_prefix = Path(
-        context.perform_substitution(LaunchConfiguration("map_output_prefix"))
-    ).expanduser().resolve()
-    package_prefix = Path(
-        context.perform_substitution(FindPackagePrefix("slam_robot_slam"))
-    )
-    save_executable = (
-        package_prefix / "lib" / "slam_robot_slam" / "save_slam_map"
-    )
-
-    print(
-        f"\n[auto_save_map] Saving map to: {output_prefix}",
-        flush=True,
-    )
     try:
+        output_prefix = Path(
+            context.perform_substitution(
+                LaunchConfiguration("map_output_prefix")
+            )
+        ).expanduser().resolve()
+        package_prefix = Path(
+            context.perform_substitution(FindPackagePrefix("slam_robot_slam"))
+        )
+        save_executable = (
+            package_prefix / "lib" / "slam_robot_slam" / "save_slam_map"
+        )
+
+        print(
+            f"\n[auto_save_map] Saving map to: {output_prefix}",
+            flush=True,
+        )
         result = subprocess.run(
             [str(save_executable), str(output_prefix)],
             check=False,
             env=dict(context.environment),
+            timeout=45.0,
         )
-    except OSError as error:
+    except Exception as error:  # Keep the detached SLAM process recoverable.
         print(
-            f"[auto_save_map] Failed to start map saver: {error}",
+            f"[auto_save_map] Save failed: {error}",
             flush=True,
         )
         return signal_slam
