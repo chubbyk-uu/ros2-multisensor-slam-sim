@@ -1,7 +1,13 @@
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+    SetEnvironmentVariable,
+)
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
@@ -92,18 +98,33 @@ def generate_launch_description():
             DeclareLaunchArgument("initial_pose_x", default_value="0.0"),
             DeclareLaunchArgument("initial_pose_y", default_value="0.0"),
             DeclareLaunchArgument("initial_pose_yaw", default_value="0.0"),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(simulation_launch),
-                launch_arguments={
-                    "world": world,
-                    "gui": gui,
-                    "rviz": "false",
-                    "use_wsl_gpu": use_wsl_gpu,
-                    "wsl_gpu_adapter": wsl_gpu_adapter,
-                    "odometry_mode": odometry_mode,
-                    "left_wheel_friction": left_wheel_friction,
-                    "right_wheel_friction": right_wheel_friction,
-                }.items(),
+            SetEnvironmentVariable(
+                "GALLIUM_DRIVER",
+                "d3d12",
+                condition=IfCondition(use_wsl_gpu),
+            ),
+            SetEnvironmentVariable(
+                "MESA_D3D12_DEFAULT_ADAPTER_NAME",
+                wsl_gpu_adapter,
+                condition=IfCondition(use_wsl_gpu),
+            ),
+            GroupAction(
+                scoped=True,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(simulation_launch),
+                        launch_arguments={
+                            "world": world,
+                            "gui": gui,
+                            "rviz": "false",
+                            "use_wsl_gpu": use_wsl_gpu,
+                            "wsl_gpu_adapter": wsl_gpu_adapter,
+                            "odometry_mode": odometry_mode,
+                            "left_wheel_friction": left_wheel_friction,
+                            "right_wheel_friction": right_wheel_friction,
+                        }.items(),
+                    )
+                ],
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(navigation_launch),

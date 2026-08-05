@@ -3,6 +3,7 @@ from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     SetEnvironmentVariable,
     TimerAction,
@@ -122,18 +123,23 @@ def generate_launch_description():
                 wsl_gpu_adapter,
                 condition=IfCondition(use_wsl_gpu),
             ),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(simulation_launch),
-                launch_arguments={
-                    "world": world,
-                    "gui": gui,
-                    "rviz": "false",
-                    "use_wsl_gpu": use_wsl_gpu,
-                    "wsl_gpu_adapter": wsl_gpu_adapter,
-                    "odometry_mode": odometry_mode,
-                    "left_wheel_friction": left_wheel_friction,
-                    "right_wheel_friction": right_wheel_friction,
-                }.items(),
+            GroupAction(
+                scoped=True,
+                actions=[
+                    IncludeLaunchDescription(
+                        PythonLaunchDescriptionSource(simulation_launch),
+                        launch_arguments={
+                            "world": world,
+                            "gui": gui,
+                            "rviz": "false",
+                            "use_wsl_gpu": use_wsl_gpu,
+                            "wsl_gpu_adapter": wsl_gpu_adapter,
+                            "odometry_mode": odometry_mode,
+                            "left_wheel_friction": left_wheel_friction,
+                            "right_wheel_friction": right_wheel_friction,
+                        }.items(),
+                    )
+                ],
             ),
             # Let Gazebo spawn the robot and begin publishing TF first.
             # RViz then fills its TF cache before filtered clouds are emitted.
