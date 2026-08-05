@@ -1,0 +1,22 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+    input_topic: /lidar_3d/points
+    output_topic: /custom_slam_3d/points_filtered
+
+    # Match the simulated sensor's useful range and reduce the 720x16 scan
+    # before scan-to-local-map registration.
+    minimum_range: 0.25
+    maximum_range: 20.0
+    voxel_leaf_size: 0.10
+
+    # Axis-aligned robot envelope expressed in lidar_3d_link. Returns inside
+    # this volume cannot be external obstacles or useful map structure.
+    self_filter:
+      enabled: true
+      min_x: -0.30
+      max_x: 0.30
+      min_y: -0.23
+      max_y: 0.23
+      min_z: -0.30
+      max_z: 0.05

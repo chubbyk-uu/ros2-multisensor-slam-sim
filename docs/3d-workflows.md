@@ -22,6 +22,31 @@ ros2 run slam_robot_slam_3d dataset_contract_check \
 
 完整话题契约、哈希和回放方式见[固定数据集](datasets.md)。
 
+## 自研点云预处理
+
+先启动预处理节点，再回放同一固定输入：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_preprocessing.launch.py
+
+ros2 launch slam_robot_slam_3d play_3d_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/structured_3d_reference" rate:=10.0
+```
+
+节点输出 `/custom_slam_3d/points_filtered`，其 `frame_id` 和时间戳与原始扫描
+一致。过滤顺序为非有限值、量程、本体包围盒、`0.10 m` 体素；参数全部在
+`custom_3d_slam.yaml`。该阶段不发布任何 TF。用下面的工具收集多帧诊断并
+检查平均处理预算：
+
+```bash
+ros2 run slam_robot_slam_3d preprocessing_regression \
+  --ros-args -p minimum_samples:=1000
+```
+
+地面分类和离群点过滤尚未接入。下一步以过滤点云和轮速 + IMU 运动初值实现
+scan-to-local-map 前端，再根据配准对地面约束的需求确定地面分类输出，而不
+直接把地面全部删除。
+
 ## RTAB-Map 在线 3D SLAM
 
 启动 3D 机器人、轮速 + IMU EKF、点云检查、RTAB-Map 和 RViz：
@@ -140,7 +165,8 @@ SLAM 能力。
 
 ## 后续路线
 
-RTAB-Map 是成熟算法验收基线，后续逐步以自研 3D 前端、局部子图、回环后端
+RTAB-Map 是成熟算法验收基线；自研点云预处理已经完成，后续逐步以自研 3D
+前端、局部子图、回环后端
 和地图输出模块替换，同时保留相同的输入契约、TF 职责和回归场景。自研链路
 完成后将接入现有 Nav2 在线入口：自研 SLAM 发布实时二维导航投影并独占
 `map -> odom`，Nav2 继续使用 3D 点云局部避障。

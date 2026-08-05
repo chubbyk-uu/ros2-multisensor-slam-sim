@@ -10,6 +10,8 @@ ROS 2 Jazzy 下安装：
 
 ```bash
 sudo apt install \
+  libpcl-dev \
+  ros-jazzy-pcl-conversions \
   ros-jazzy-mola-lidar-odometry \
   ros-jazzy-mola-bridge-ros2 \
   ros-jazzy-mola-metric-maps
@@ -48,6 +50,33 @@ ros2 launch slam_robot_slam_3d play_3d_slam_data.launch.py \
 
 固定包的消息数量、哈希和使用边界见
 [数据集说明](../../docs/datasets.md)。
+
+### 自研 3D 点云预处理
+
+第一段自研 C++17 数据链路已经可独立运行：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_preprocessing.launch.py
+```
+
+节点订阅 `/lidar_3d/points`，依次执行有限值检查、欧氏量程裁剪、雷达坐标系下
+的机器人本体包围盒裁剪和 PCL `VoxelGrid` 体素降采样，再发布
+`/custom_slam_3d/points_filtered`。默认参数集中在
+`config/custom_3d_slam.yaml`，不发布 TF，也不与 RTAB-Map 或 MOLA 争用
+`map -> odom`。
+
+输出保留 `x/y/z/intensity` 和原始消息头；`ring` 不参与当前几何配准，因此不
+复制到降采样点云。原始点云仍完整保留在 `/lidar_3d/points`。每帧的输入、
+各级过滤点数和处理耗时发布到
+`/custom_slam_3d/preprocessing_diagnostics`。固定包回放时可运行硬判据：
+
+```bash
+ros2 run slam_robot_slam_3d preprocessing_regression \
+  --ros-args -p minimum_samples:=1000
+```
+
+当前阶段尚未加入地面分类和离群点过滤；这两项将在前端确定需要的地面约束
+表达后实现，避免预处理提前删除配准所需几何。
 
 ### 在线 RTAB-Map
 

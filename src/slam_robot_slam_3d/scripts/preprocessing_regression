@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+
+"""Measure and validate the custom 3D preprocessing stream."""
+
+import math
+import time
+
+from diagnostic_msgs.msg import DiagnosticArray
+import rclpy
+from rclpy.node import Node
+
+
+STATUS_NAME = "custom_slam_3d/point_cloud_preprocessor"
+
+
+class PreprocessingRegression(Node):
+    def __init__(self):
+        super().__init__("preprocessing_regression")
+        self.declare_parameter(
+            "topic", "/custom_slam_3d/preprocessing_diagnostics"
+        )
+        self.declare_parameter("minimum_samples", 200)
+        self.declare_parameter("timeout_sec", 30.0)
+        self.declare_parameter("maximum_mean_processing_ms", 10.0)
+
+        self.topic = self.get_parameter("topic").value
+        self.minimum_samples = self.get_parameter("minimum_samples").value
+        self.timeout_sec = self.get_parameter("timeout_sec").value
+        self.maximum_mean_processing_ms = self.get_parameter(
+            "maximum_mean_processing_ms"
+        ).value
+        if self.minimum_samples <= 0:
+            raise ValueError("minimum_samples must be positive")
+        if self.timeout_sec <= 0.0:
+            raise ValueError("timeout_sec must be positive")
+        if self.maximum_mean_processing_ms <= 0.0:
+            raise ValueError("maximum_mean_processing_ms must be positive")
+
+        self.samples = []
+        self.result = None
+        self.subscription = self.create_subscription(
+            DiagnosticArray, self.topic, self._diagnostics_callback, 100
+        )
+        self.get_logger().info(
+            f"Waiting for {self.minimum_samples} preprocessing samples on "
+            f"{self.topic}"
+        )
+
+    def _diagnostics_callback(self, message):
+        for status in message.status:
+            if status.name != STATUS_NAME:
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            try:
+                input_points = int(values["input_points"])
+                output_points = int(values["output_points"])
+                processing_ms = float(values["processing_ms"])
+            except (KeyError, ValueError) as error:
+                self.get_logger().error(f"Invalid diagnostics sample: {error}")
+                self.result = 2
+                return
+            if (
+                input_points <= 0
+                or output_points <= 0
+                or output_points > input_points
+                or not math.isfinite(processing_ms)
+                or processing_ms < 0.0
+            ):
+                self.get_logger().error(
+                    "Invalid preprocessing values: "
+                    f"input={input_points}, output={output_points}, "
+                    f"processing_ms={processing_ms}"
+                )
+                self.result = 2
+                return
+            self.samples.append((input_points, output_points, processing_ms))
+            if len(self.samples) >= self.minimum_samples:
+                self._finish()
+                return
+
+    def _finish(self):
+        processing_times = sorted(sample[2] for sample in self.samples)
+        mean_processing_ms = sum(processing_times) / len(processing_times)
+        percentile_index = math.ceil(0.95 * len(processing_times)) - 1
+        p95_processing_ms = processing_times[percentile_index]
+        maximum_processing_ms = processing_times[-1]
+        mean_input_points = sum(sample[0] for sample in self.samples) / len(
+            self.samples
+        )
+        mean_output_points = sum(sample[1] for sample in self.samples) / len(
+            self.samples
+        )
+        retained_percent = 100.0 * mean_output_points / mean_input_points
+
+        self.get_logger().info(
+            "RESULT "
+            f"samples={len(self.samples)} "
+            f"input_mean={mean_input_points:.1f} "
+            f"output_mean={mean_output_points:.1f} "
+            f"retained={retained_percent:.1f}% "
+            f"processing_mean={mean_processing_ms:.3f}ms "
+            f"processing_p95={p95_processing_ms:.3f}ms "
+            f"processing_max={maximum_processing_ms:.3f}ms"
+        )
+        if mean_processing_ms > self.maximum_mean_processing_ms:
+            self.get_logger().error(
+                f"Mean processing time {mean_processing_ms:.3f} ms exceeds "
+                f"{self.maximum_mean_processing_ms:.3f} ms"
+            )
+            self.result = 2
+        else:
+            self.get_logger().info("PASS: preprocessing stream is valid")
+            self.result = 0
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    try:
+        node = PreprocessingRegression()
+    except (ValueError, TypeError) as error:
+        rclpy.logging.get_logger("preprocessing_regression").error(str(error))
+        rclpy.shutdown()
+        return 2
+
+    deadline = time.monotonic() + node.timeout_sec
+    try:
+        while rclpy.ok() and node.result is None:
+            if time.monotonic() >= deadline:
+                node.get_logger().error(
+                    f"Timed out after {node.timeout_sec:.1f} s with "
+                    f"{len(node.samples)}/{node.minimum_samples} samples"
+                )
+                node.result = 3
+                break
+            rclpy.spin_once(node, timeout_sec=0.1)
+        return node.result if node.result is not None else 4
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
