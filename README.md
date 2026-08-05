@@ -28,7 +28,7 @@ RTAB-Map 3D LiDAR 在线建图与 Nav2 高度语义导航基线。
 | 3D LiDAR 模型与接口 | 已完成 | 点云、TF、QoS、RViz 和输入契约 |
 | RTAB-Map 3D SLAM | 已完成成熟基线 | ICP、proximity 回环、位姿图、数据库和二维导航投影 |
 | 3D 在线导航 | 已完成基线验收 | Nav2 直接使用 RTAB-Map 地图和 3D 点云障碍层 |
-| 自研 3D SLAM | 下一阶段 | 前端、局部子图、回环后端、3D 地图与二维导航投影 |
+| 自研 3D SLAM | 进行中 | GICP 前端和局部子图已完成；下一步实现回环后端、3D 地图与二维导航投影 |
 | Frontier Exploration | 计划中 | 自研 3D 在线建图 + Nav2，自主选择未知边界并完成探索 |
 | 视觉融合 | 计划中 | 后续接入相机，研究 3D LiDAR + 相机 + IMU |
 

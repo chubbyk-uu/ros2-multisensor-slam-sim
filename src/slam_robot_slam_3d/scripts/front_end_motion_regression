@@ -425,8 +425,8 @@ def parse_arguments(argv):
     parser.add_argument(
         "--maximum-yaw-excess-over-odom-degrees", type=float, default=1.0
     )
-    parser.add_argument("--maximum-front-end-gap", type=float, default=0.20)
-    parser.add_argument("--maximum-processing-p95", type=float, default=100.0)
+    parser.add_argument("--maximum-front-end-gap", type=float, default=0.12)
+    parser.add_argument("--maximum-processing-p95", type=float, default=60.0)
     arguments = parser.parse_args(argv)
     positive_values = (
         *arguments.angular_speeds,

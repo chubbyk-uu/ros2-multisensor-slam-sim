@@ -25,6 +25,8 @@ def test_relative_pose_and_error_use_origin_heading():
 def test_parse_arguments_rejects_invalid_motion():
     arguments = MODULE.parse_arguments(["--profile", "rotation"])
     assert arguments.angular_speeds == (0.30, 0.60, 0.90)
+    assert arguments.maximum_front_end_gap == 0.12
+    assert arguments.maximum_processing_p95 == 60.0
 
     try:
         MODULE.parse_arguments(

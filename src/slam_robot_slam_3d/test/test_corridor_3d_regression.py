@@ -25,3 +25,10 @@ def test_relative_pose_uses_origin_heading():
 def test_safe_ratio_handles_empty_segment():
     assert MODULE.safe_ratio(3, 4) == 0.75
     assert MODULE.safe_ratio(0, 0) == 0.0
+
+
+def test_default_runtime_budget_preserves_ten_hertz_margin():
+    arguments = MODULE.parse_arguments([])
+
+    assert arguments.maximum_front_end_gap == 0.12
+    assert arguments.maximum_processing_p95 == 90.0
