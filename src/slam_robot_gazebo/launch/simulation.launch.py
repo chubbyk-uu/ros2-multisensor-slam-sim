@@ -3,13 +3,13 @@ from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    IncludeLaunchDescription,
+    ExecuteProcess,
     SetEnvironmentVariable,
 )
 from launch.conditions import IfCondition, UnlessCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     Command,
+    FindExecutable,
     LaunchConfiguration,
     PathJoinSubstitution,
     PythonExpression,
@@ -56,10 +56,6 @@ def generate_launch_description():
     rviz_config_path = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "rviz", "simulation.rviz"]
     )
-    gz_sim_launch_path = PathJoinSubstitution(
-        [FindPackageShare("ros_gz_sim"), "launch", "gz_sim.launch.py"]
-    )
-
     world = LaunchConfiguration("world")
     gui = LaunchConfiguration("gui")
     rviz = LaunchConfiguration("rviz")
@@ -169,19 +165,41 @@ def generate_launch_description():
         value_type=str,
     )
 
-    gazebo_with_gui = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(gz_sim_launch_path),
+    # Launch Gazebo without an intermediate shell so SIGINT reaches it directly.
+    # The Jazzy ros_gz_sim wrapper uses shell=True, which can leave the parent
+    # launch process waiting after its ROS nodes have already stopped.
+    gazebo_with_gui = ExecuteProcess(
+        cmd=[
+            FindExecutable(name="gz"),
+            "sim",
+            world,
+            "-r",
+            "-v",
+            "3",
+            "--force-version",
+            "8",
+        ],
+        name="gazebo",
+        output="screen",
         condition=IfCondition(gui),
-        launch_arguments={
-            "gz_args": [world, " -r -v 3"],
-        }.items(),
+        shell=False,
     )
-    gazebo_headless = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(gz_sim_launch_path),
+    gazebo_headless = ExecuteProcess(
+        cmd=[
+            FindExecutable(name="gz"),
+            "sim",
+            world,
+            "-s",
+            "-r",
+            "-v",
+            "3",
+            "--force-version",
+            "8",
+        ],
+        name="gazebo",
+        output="screen",
         condition=UnlessCondition(gui),
-        launch_arguments={
-            "gz_args": [world, " -s -r -v 3"],
-        }.items(),
+        shell=False,
     )
 
     return LaunchDescription(

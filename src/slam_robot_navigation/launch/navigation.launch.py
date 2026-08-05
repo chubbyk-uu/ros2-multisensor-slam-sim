@@ -116,8 +116,11 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "use_composition",
-                default_value="True",
-                description="Use the official composed Nav2 bringup.",
+                default_value="False",
+                description=(
+                    "Use the official composed Nav2 bringup; disabled by default "
+                    "for reliable interactive shutdown."
+                ),
             ),
             DeclareLaunchArgument(
                 "initial_pose_x",
