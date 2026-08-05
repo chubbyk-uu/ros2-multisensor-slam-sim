@@ -5,7 +5,6 @@
 #include <deque>
 #include <exception>
 #include <functional>
-#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -27,6 +26,7 @@
 #include <tf2_ros/transform_listener.h>
 
 #include "slam_robot_slam_3d/local_submap.hpp"
+#include "slam_robot_slam_3d/odometry_interpolator.hpp"
 #include "slam_robot_slam_3d/scan_to_map_matcher.hpp"
 
 namespace slam_robot_slam_3d
@@ -142,15 +142,19 @@ public:
       "front_end.keyframe_rotation", 0.15);
     const auto buffer_size = declare_parameter<int>(
       "front_end.maximum_odom_buffer_size", 200);
+    const auto pending_cloud_limit = declare_parameter<int>(
+      "front_end.maximum_pending_clouds", 5);
     if (input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
       local_frame_.empty() || !std::isfinite(maximum_odom_age_) ||
       maximum_odom_age_ <= 0.0 || !std::isfinite(keyframe_translation_) ||
       keyframe_translation_ <= 0.0 || !std::isfinite(keyframe_rotation_) ||
-      keyframe_rotation_ <= 0.0 || buffer_size <= 1)
+      keyframe_rotation_ <= 0.0 || buffer_size <= 1 ||
+      pending_cloud_limit <= 0)
     {
       throw std::invalid_argument("front-end parameters are invalid");
     }
     maximum_odom_buffer_size_ = static_cast<std::size_t>(buffer_size);
+    maximum_pending_clouds_ = static_cast<std::size_t>(pending_cloud_limit);
 
     odometry_publisher_ = create_publisher<nav_msgs::msg::Odometry>(
       "/custom_slam_3d/laser_odom", 10);
@@ -277,53 +281,52 @@ private:
     while (odom_buffer_.size() > maximum_odom_buffer_size_) {
       odom_buffer_.pop_front();
     }
-    if (pending_cloud_ != nullptr) {
-      const auto * odometry = nearestOdom(
-        rclcpp::Time(pending_cloud_->header.stamp));
-      if (odometry != nullptr) {
-        auto cloud = std::move(pending_cloud_);
-        pending_cloud_.reset();
-        processCloud(cloud, *odometry);
-      }
-    }
+    processPendingClouds();
   }
 
-  const nav_msgs::msg::Odometry * nearestOdom(
-    const rclcpp::Time & cloud_time) const
+  bool pendingCloudIsStale(const rclcpp::Time & cloud_time) const
   {
-    const nav_msgs::msg::Odometry * nearest = nullptr;
-    double nearest_age = std::numeric_limits<double>::infinity();
-    for (auto iterator = odom_buffer_.rbegin();
-      iterator != odom_buffer_.rend(); ++iterator)
-    {
-      const double age = std::abs(
-        (cloud_time - rclcpp::Time(iterator->header.stamp)).seconds());
-      if (age < nearest_age) {
-        nearest_age = age;
-        nearest = &*iterator;
+    return std::any_of(
+      odom_buffer_.begin(), odom_buffer_.end(),
+      [&](const auto & sample) {
+        return (rclcpp::Time(sample.header.stamp) - cloud_time).seconds() >
+               maximum_odom_age_;
+      });
+  }
+
+  void processPendingClouds()
+  {
+    while (!pending_clouds_.empty()) {
+      const auto & pending_cloud = pending_clouds_.front();
+      const auto odometry = interpolateOdometry(
+        odom_buffer_,
+        rclcpp::Time(pending_cloud->header.stamp), maximum_odom_age_);
+      if (!odometry.has_value()) {
+        if (pendingCloudIsStale(rclcpp::Time(pending_cloud->header.stamp))) {
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 5000,
+            "Dropping a 3D scan without a valid odometry time bracket");
+          pending_clouds_.pop_front();
+          continue;
+        }
+        return;
       }
-      if (rclcpp::Time(iterator->header.stamp) < cloud_time &&
-        age > nearest_age)
-      {
-        break;
-      }
+      auto cloud = pending_cloud;
+      pending_clouds_.pop_front();
+      processCloud(cloud, *odometry);
     }
-    return nearest_age <= maximum_odom_age_ ? nearest : nullptr;
   }
 
   void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr message)
   {
-    const auto * odometry = nearestOdom(rclcpp::Time(message->header.stamp));
-    if (odometry == nullptr) {
-      if (pending_cloud_ != nullptr) {
-        RCLCPP_WARN_THROTTLE(
-          get_logger(), *get_clock(), 5000,
-          "Replacing a 3D scan still waiting for synchronized odometry");
-      }
-      pending_cloud_ = message;
-      return;
+    pending_clouds_.push_back(message);
+    if (pending_clouds_.size() > maximum_pending_clouds_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "Replacing a 3D scan still waiting for synchronized odometry");
+      pending_clouds_.pop_front();
     }
-    processCloud(message, *odometry);
+    processPendingClouds();
   }
 
   void processCloud(
@@ -547,12 +550,13 @@ private:
   double keyframe_translation_{0.25};
   double keyframe_rotation_{0.15};
   std::size_t maximum_odom_buffer_size_{200U};
+  std::size_t maximum_pending_clouds_{5U};
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};
   Eigen::Isometry3d last_odom_pose_{Eigen::Isometry3d::Identity()};
   Eigen::Isometry3d last_keyframe_base_pose_{Eigen::Isometry3d::Identity()};
   std::deque<nav_msgs::msg::Odometry> odom_buffer_;
-  sensor_msgs::msg::PointCloud2::SharedPtr pending_cloud_;
+  std::deque<sensor_msgs::msg::PointCloud2::SharedPtr> pending_clouds_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_subscription_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odometry_publisher_;

@@ -53,6 +53,16 @@ target_include_directories(
 )
 target_link_libraries(local_submap PUBLIC ${PCL_LIBRARIES})
 
+add_library(odometry_interpolator src/odometry_interpolator.cpp)
+target_compile_features(odometry_interpolator PUBLIC cxx_std_17)
+target_compile_options(odometry_interpolator PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  odometry_interpolator
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+ament_target_dependencies(odometry_interpolator nav_msgs rclcpp)
+
 add_executable(
   point_cloud_preprocessor_node
   src/point_cloud_preprocessor_node.cpp
@@ -78,6 +88,7 @@ target_compile_options(
 target_link_libraries(
   scan_to_map_odometry_node
   local_submap
+  odometry_interpolator
   scan_to_map_matcher
   ${PCL_LIBRARIES}
 )
@@ -160,6 +171,14 @@ if(BUILD_TESTING)
   target_link_libraries(
     test_local_submap
     local_submap
+  )
+  ament_add_gtest(
+    test_odometry_interpolator
+    test/test_odometry_interpolator.cpp
+  )
+  target_link_libraries(
+    test_odometry_interpolator
+    odometry_interpolator
   )
   ament_add_pytest_test(
     test_grid_contract
