@@ -180,7 +180,8 @@
   边界；保存失败后仍必定向 `setsid` 隔离的 SLAM 进程发送 `SIGINT`。
 - 所有“仿真 + 算法”复合 3D 回归入口都用 scoped `GroupAction` 隔离 include
   参数；3D 包显式声明 Eigen 依赖，GICP 的 float 旋转输出归一为严格正交
-  旋转矩阵。
+  旋转矩阵。**该条当时只做了静态核对，没有实际启动验证，随后被发现使三个
+  入口无法启动**，详见下一节。
 - `matcher.maximum_rmse` 增加启动期上界。它的平方是被接受匹配的标称方差，
   必须低于不可观测方差 `0.25`，否则 `translationCovariance` 的前置条件被
   违反并抛出——那只会表现为一条节流 ERROR，而
@@ -205,3 +206,52 @@
   一致）。
 - 回归的严重日志状态继续跨阶段保持粘性：任一阶段出现严重日志会使整个
   profile 失败。分阶段输出可能重复显示该失败，但不会把早期故障误当成恢复。
+
+## 2026-08-05 scoped `GroupAction` 引入的启动回归
+
+`ffc720d` 按审查建议给五个复合 3D 入口加了 scoped `GroupAction`，隔离
+`IncludeLaunchDescription` 泄漏到父作用域的参数。审查当时只做了静态核对
+（确认被包含的 launch 之间没有同名参数，判定"目前无害、只是潜在风险"），
+没有实际启动验证，因此漏掉了真正的耦合。
+
+`rtabmap_3d.launch.py` 把 `LaunchConfiguration` 的解析推迟到
+`OnProcessExit` 处理器里。处理器在点云契约检查进程退出时才触发，那时
+scoped `GroupAction` 早已弹出作用域，于是 launch 中止在
+`launch configuration 'reset_database' does not exist`。受影响的入口：
+
+- `structured_loop_regression.launch.py`
+- `structured_navigation_regression.launch.py`
+- `structured_dataset_recording.launch.py`（包含前者）
+
+`corridor_3d_regression` 和 `front_end_motion_regression` 不受影响：它们
+包含的 `simulation.launch.py` 与 `custom_3d_front_end.launch.py` 都不在
+事件处理器里解析配置。
+
+归因用受控 A/B 确认，而不是"改完就好了"。因为修复本身删除了延迟求值，
+无论根因是什么都会让故障消失，所以单凭修复生效不能证明是 scoping 导致的。
+保留延迟求值、只切换 scoping 的对照如下：
+
+| 测试 | scoped `GroupAction` | 延迟求值 | 作用域错误 | RTAB-Map 启动 |
+| --- | --- | --- | ---: | ---: |
+| A | 开 | 保留 | `1` | `0` |
+| B | 关 | 保留 | `0` | `1` |
+
+两者唯一差别就是 `GroupAction(scoped=True)`，因此 scoping 是触发条件。
+测试 B 同时说明 `rtabmap_3d.launch.py` 的延迟求值本来就是脆弱写法，只是在
+没有 scoping 时碰巧正确：按回归算账在 `ffc720d`，按根因算在
+`rtabmap_3d.launch.py`。
+
+修复因此没有回退 scoping，而是消除根因：`rtabmap_3d.launch.py` 改用
+`OpaqueFunction` 在作用域仍然存在时取出 `reset_database`、`database_path`
+和 `lidar_topic` 的实际值，再用闭包传给处理器；后两个原本也在延迟创建的
+Node 里以 `LaunchConfiguration` 引用，同样会失效。这与
+`custom_slam.launch.py` 里既有的 "capture scoped launch values before
+registering the shutdown hook" 模式一致，使该文件在调用方任意 scoping 下
+都成立。修复后启动不再报作用域错误，两圈回归完整跑完 `17/17 PASS`。
+
+教训有两条。其一，launch 作用域缺陷是延迟求值的生命周期问题，静态比对
+参数名发现不了，`plan.md` 已记录后续为复合入口补一个短时启动冒烟检查。
+其二，上一节关于 scoping 的整改记录只写了"做了什么"，没有写"怎么验证"，
+而同一节的其他条目都附了实测结论；恰恰是这条唯一只能靠实际启动验证的
+改动缺少验证记录。此后凡是只能靠运行验证的改动，整改记录必须写明验证
+方式和结果。
