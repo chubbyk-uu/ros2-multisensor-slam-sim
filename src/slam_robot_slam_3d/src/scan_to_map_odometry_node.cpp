@@ -35,6 +35,14 @@ namespace slam_robot_slam_3d
 namespace
 {
 
+// Variance published for a translation or yaw direction the geometry does not
+// constrain. ScanToMapResult::translationCovariance requires it to stay at or
+// above the nominal variance, which this node derives from the accepted RMSE,
+// so maximum_rmse must remain below its square root. That bound is enforced at
+// construction rather than left to fail per callback: the throw would surface
+// only as a throttled error while /custom_slam_3d/laser_odom went silent.
+constexpr double kUnobservableVariance = 0.25;
+
 diagnostic_msgs::msg::KeyValue makeValue(
   const std::string & key, const std::string & value)
 {
@@ -223,6 +231,14 @@ private:
       static_cast<std::size_t>(minimum_correspondences);
     parameters.maximum_rmse = declare_parameter<double>(
       "matcher.maximum_rmse", parameters.maximum_rmse);
+    if (parameters.maximum_rmse * parameters.maximum_rmse >=
+      kUnobservableVariance)
+    {
+      throw std::invalid_argument(
+              "matcher.maximum_rmse must stay below the square root of the "
+              "unobservable variance so an accepted match never publishes a "
+              "nominal variance above it");
+    }
     parameters.maximum_correction_translation = declare_parameter<double>(
       "matcher.maximum_correction_translation",
       parameters.maximum_correction_translation);
@@ -436,16 +452,15 @@ private:
     odometry.child_frame_id = base_frame_;
     odometry.pose.pose = eigenToPose(estimated_base_pose_);
     odometry.twist = input_odometry.twist;
-    constexpr double unobservable_variance = 0.25;
     const double position_variance = match_result != nullptr &&
       match_result->success() ?
       std::max(1.0e-4, match_result->rmse * match_result->rmse) :
-      unobservable_variance;
+      kUnobservableVariance;
     Eigen::Matrix2d translation_covariance =
       position_variance * Eigen::Matrix2d::Identity();
     if (match_result != nullptr && match_result->success()) {
       translation_covariance = match_result->translationCovariance(
-        position_variance, unobservable_variance);
+        position_variance, kUnobservableVariance);
     }
     odometry.pose.covariance[0] = translation_covariance(0, 0);
     odometry.pose.covariance[1] = translation_covariance(0, 1);
@@ -456,7 +471,7 @@ private:
     odometry.pose.covariance[28] = force_planar_motion_ ? 1.0e-4 : 0.05;
     const double yaw_variance = match_result != nullptr &&
       match_result->success() && !match_result->yaw_degenerate ? 0.01 :
-      unobservable_variance;
+      kUnobservableVariance;
     odometry.pose.covariance[35] = yaw_variance;
     odometry_publisher_->publish(odometry);
 
