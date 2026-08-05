@@ -75,6 +75,8 @@ class Corridor3DRegression(Node):
         self.degenerate_samples = 0
         self.degenerate_detections = 0
         self.full_suppression_samples = 0
+        self.degenerate_covariance_samples = 0
+        self.degenerate_component_samples = 0
         self.entry_samples = 0
         self.entry_false_detections = 0
         self.recovery_samples = 0
@@ -164,6 +166,10 @@ class Corridor3DRegression(Node):
             try:
                 accepted = values["match_accepted"].lower() == "true"
                 degenerate = values["degenerate"].lower() == "true"
+                translation_degenerate = (
+                    values["translation_degenerate"].lower() == "true"
+                )
+                translation_rank = int(values["translation_observable_rank"])
                 translation_ratio = float(
                     values["translation_information_ratio"]
                 )
@@ -174,10 +180,32 @@ class Corridor3DRegression(Node):
                 correction_scale = float(
                     values["weak_translation_correction_scale"]
                 )
+                covariance_xx = float(values["translation_covariance_xx"])
+                covariance_xy = float(values["translation_covariance_xy"])
+                covariance_yy = float(values["translation_covariance_yy"])
+                applied_correction = float(
+                    values["applied_correction_translation"]
+                )
             except (KeyError, ValueError):
                 self.malformed_diagnostics += 1
                 continue
-            if not 0.0 <= correction_scale <= 1.0:
+            covariance_trace = covariance_xx + covariance_yy
+            covariance_discriminant = math.sqrt(
+                max(
+                    0.0,
+                    (covariance_xx - covariance_yy) ** 2
+                    + 4.0 * covariance_xy**2,
+                )
+            )
+            maximum_covariance = 0.5 * (
+                covariance_trace + covariance_discriminant
+            )
+            if (
+                not 0.0 <= correction_scale <= 1.0
+                or translation_rank not in (0, 1, 2)
+                or not math.isfinite(maximum_covariance)
+                or not math.isfinite(applied_correction)
+            ):
                 self.malformed_diagnostics += 1
                 continue
             if self.starts is None or self.truth_pose is None:
@@ -196,6 +224,12 @@ class Corridor3DRegression(Node):
                     handling_applied
                     and correction_scale
                     <= self.arguments.maximum_full_suppression_scale
+                )
+                self.degenerate_component_samples += int(
+                    translation_degenerate and translation_rank < 2
+                )
+                self.degenerate_covariance_samples += int(
+                    maximum_covariance >= 0.10
                 )
             elif progress <= self.arguments.entry_end:
                 self.entry_samples += 1
@@ -288,6 +322,12 @@ class Corridor3DRegression(Node):
         full_suppression_ratio = safe_ratio(
             self.full_suppression_samples, self.degenerate_samples
         )
+        component_detection_ratio = safe_ratio(
+            self.degenerate_component_samples, self.degenerate_samples
+        )
+        covariance_inflation_ratio = safe_ratio(
+            self.degenerate_covariance_samples, self.degenerate_samples
+        )
         entry_false_ratio = safe_ratio(
             self.entry_false_detections, self.entry_samples
         )
@@ -313,6 +353,12 @@ class Corridor3DRegression(Node):
             "degenerate_handling_ratio": (
                 full_suppression_ratio
                 >= self.arguments.minimum_full_suppression_ratio
+            ),
+            "translation_component_detection": (
+                component_detection_ratio >= self.arguments.minimum_detection_ratio
+            ),
+            "weak_covariance_inflated": (
+                covariance_inflation_ratio >= self.arguments.minimum_detection_ratio
             ),
             "enough_entry_samples": (
                 self.entry_samples >= self.arguments.minimum_regular_samples
@@ -371,6 +417,11 @@ class Corridor3DRegression(Node):
         print(
             f"suppression  : {self.full_suppression_samples}/"
             f"{self.degenerate_samples} ({full_suppression_ratio:.3f})"
+        )
+        print(
+            f"uncertainty  : component={self.degenerate_component_samples}/"
+            f"{self.degenerate_samples}, inflated covariance="
+            f"{self.degenerate_covariance_samples}/{self.degenerate_samples}"
         )
         print(
             f"normal       : entry false={self.entry_false_detections}/"

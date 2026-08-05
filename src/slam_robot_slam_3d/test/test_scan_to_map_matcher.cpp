@@ -65,6 +65,25 @@ pcl::PointCloud<pcl::PointXYZI> makeParallelCorridor()
   return cloud;
 }
 
+pcl::PointCloud<pcl::PointXYZI> makeGroundPlane()
+{
+  pcl::PointCloud<pcl::PointXYZI> cloud;
+  for (double x = -2.0; x <= 2.0; x += 0.10) {
+    for (double y = -2.0; y <= 2.0; y += 0.10) {
+      pcl::PointXYZI point;
+      point.x = static_cast<float>(x);
+      point.y = static_cast<float>(y);
+      point.z = 0.0F;
+      point.intensity = 1.0F;
+      cloud.push_back(point);
+    }
+  }
+  cloud.width = cloud.size();
+  cloud.height = 1U;
+  cloud.is_dense = true;
+  return cloud;
+}
+
 Eigen::Isometry3d makePose(double x, double y, double z, double yaw)
 {
   Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
@@ -100,7 +119,13 @@ TEST(ScanToMapMatcher, RecoversStructuredCloudPoseFromMotionInitialGuess)
   EXPECT_LT(result.rmse, parameters.maximum_rmse);
   EXPECT_GT(result.translation_information_ratio, 0.10);
   EXPECT_GT(result.yaw_information, 0.01);
+  EXPECT_EQ(result.translation_observable_rank, 2);
+  EXPECT_FALSE(result.translation_degenerate);
+  EXPECT_FALSE(result.planar_degenerate);
+  EXPECT_FALSE(result.yaw_degenerate);
   EXPECT_FALSE(result.degenerate);
+  EXPECT_TRUE(result.translationCovariance(0.01, 0.25).isApprox(
+      0.01 * Eigen::Matrix2d::Identity()));
 }
 
 TEST(ScanToMapMatcher, DetectsUnobservableCorridorTranslation)
@@ -116,9 +141,15 @@ TEST(ScanToMapMatcher, DetectsUnobservableCorridorTranslation)
   EXPECT_LT(result.translation_information_ratio, 0.01);
   EXPECT_GT(result.translation_information_eigenvalues.maxCoeff(), 0.50);
   EXPECT_TRUE(result.degenerate);
+  EXPECT_EQ(result.translation_observable_rank, 1);
+  EXPECT_TRUE(result.translation_degenerate);
   EXPECT_TRUE(result.degeneracy_handling_applied);
   EXPECT_DOUBLE_EQ(result.weak_translation_correction_scale, 0.0);
   EXPECT_GT(std::abs(result.weak_translation_direction.x()), 0.90);
+  const Eigen::Matrix2d covariance = result.translationCovariance(0.01, 0.25);
+  EXPECT_GT(covariance(0, 0), 0.20);
+  EXPECT_NEAR(covariance(1, 1), 0.01, 1.0e-3);
+  EXPECT_NEAR(covariance(0, 1), covariance(1, 0), 1.0e-12);
 }
 
 TEST(ScanToMapMatcher, ReusesTargetOnlyWhileSubmapVersionIsUnchanged)
@@ -139,6 +170,26 @@ TEST(ScanToMapMatcher, ReusesTargetOnlyWhileSubmapVersionIsUnchanged)
   EXPECT_FALSE(first.target_cache_reused);
   EXPECT_TRUE(reused.target_cache_reused);
   EXPECT_FALSE(invalidated.target_cache_reused);
+}
+
+TEST(ScanToMapMatcher, TreatsGroundOnlyGeometryAsFullyUnobservableInTranslation)
+{
+  const auto ground = makeGroundPlane();
+  ScanToMapMatcher matcher(ScanToMapMatcherParameters{});
+  const auto initial_pose = makePose(0.05, -0.05, 0.0, 0.0);
+
+  const auto result = matcher.match(ground, ground, 1U, initial_pose);
+
+  ASSERT_TRUE(result.success()) << toString(result.status);
+  EXPECT_EQ(result.observability_correspondences, 0U);
+  EXPECT_EQ(result.translation_observable_rank, 0);
+  EXPECT_TRUE(result.translation_degenerate);
+  EXPECT_TRUE(result.degeneracy_handling_applied);
+  EXPECT_DOUBLE_EQ(result.weak_translation_correction_scale, 0.0);
+  EXPECT_TRUE(result.pose.translation().head<2>().isApprox(
+      initial_pose.translation().head<2>()));
+  EXPECT_TRUE(result.translationCovariance(0.01, 0.25).isApprox(
+      0.25 * Eigen::Matrix2d::Identity()));
 }
 
 TEST(ScanToMapMatcher, RejectsTooFewAndNonFinitePoints)

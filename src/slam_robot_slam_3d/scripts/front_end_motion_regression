@@ -119,6 +119,18 @@ class FrontEndMotionRegression(Node):
                     "stamp": stamp,
                     "accepted": values["match_accepted"].lower() == "true",
                     "degenerate": values["degenerate"].lower() == "true",
+                    "translation_degenerate": (
+                        values["translation_degenerate"].lower() == "true"
+                    ),
+                    "planar_degenerate": (
+                        values["planar_degenerate"].lower() == "true"
+                    ),
+                    "yaw_degenerate": (
+                        values["yaw_degenerate"].lower() == "true"
+                    ),
+                    "translation_rank": int(
+                        values["translation_observable_rank"]
+                    ),
                     "handling": (
                         values["degeneracy_handling_applied"].lower()
                         == "true"
@@ -126,6 +138,18 @@ class FrontEndMotionRegression(Node):
                     "processing_ms": float(values["processing_ms"]),
                     "correction_rotation": float(
                         values["correction_rotation"]
+                    ),
+                    "applied_correction_translation": float(
+                        values["applied_correction_translation"]
+                    ),
+                    "covariance_xx": float(
+                        values["translation_covariance_xx"]
+                    ),
+                    "covariance_xy": float(
+                        values["translation_covariance_xy"]
+                    ),
+                    "covariance_yy": float(
+                        values["translation_covariance_yy"]
                     ),
                 }
             except (KeyError, ValueError):
@@ -135,6 +159,11 @@ class FrontEndMotionRegression(Node):
                 not math.isfinite(sample["processing_ms"])
                 or sample["processing_ms"] < 0.0
                 or not math.isfinite(sample["correction_rotation"])
+                or not math.isfinite(sample["applied_correction_translation"])
+                or not math.isfinite(sample["covariance_xx"])
+                or not math.isfinite(sample["covariance_xy"])
+                or not math.isfinite(sample["covariance_yy"])
+                or sample["translation_rank"] not in (0, 1, 2)
             ):
                 self.malformed_diagnostics += 1
                 continue
@@ -192,6 +221,11 @@ class FrontEndMotionRegression(Node):
         accepted = sum(sample["accepted"] for sample in samples)
         degenerate = sum(sample["degenerate"] for sample in samples)
         handling = sum(sample["handling"] for sample in samples)
+        translation_degenerate = sum(
+            sample["translation_degenerate"] for sample in samples
+        )
+        planar_degenerate = sum(sample["planar_degenerate"] for sample in samples)
+        yaw_degenerate = sum(sample["yaw_degenerate"] for sample in samples)
         acceptance_ratio = accepted / len(samples) if samples else 0.0
         processing = sorted(sample["processing_ms"] for sample in samples)
         p95_index = max(0, math.ceil(0.95 * len(processing)) - 1)
@@ -211,6 +245,19 @@ class FrontEndMotionRegression(Node):
             "match_acceptance": acceptance_ratio >= args.minimum_acceptance_ratio,
             "no_false_degeneracy": degenerate == 0,
             "no_false_handling": handling == 0,
+            "translation_rank_two": all(
+                sample["translation_rank"] == 2 for sample in samples
+            ),
+            "no_false_component_degeneracy": (
+                translation_degenerate == 0
+                and planar_degenerate == 0
+                and yaw_degenerate == 0
+            ),
+            "normal_covariance_bounded": all(
+                max(sample["covariance_xx"], sample["covariance_yy"])
+                <= 0.05
+                for sample in samples
+            ),
             "position_error": position_error <= args.maximum_position_error,
             "yaw_error": yaw_error <= math.radians(args.maximum_yaw_error_degrees),
             "not_worse_than_odom_position": (

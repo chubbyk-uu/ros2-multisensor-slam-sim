@@ -18,6 +18,8 @@ namespace slam_robot_slam_3d
 namespace
 {
 
+constexpr double kMinimumHorizontalNormalSquared = 0.01;
+
 bool cloudIsFinite(const pcl::PointCloud<pcl::PointXYZI> & cloud)
 {
   return std::all_of(
@@ -65,6 +67,26 @@ public:
 bool ScanToMapResult::success() const
 {
   return status == ScanToMapStatus::kSuccess;
+}
+
+Eigen::Matrix2d ScanToMapResult::translationCovariance(
+  double nominal_variance, double unobservable_variance) const
+{
+  if (!std::isfinite(nominal_variance) || nominal_variance <= 0.0 ||
+    !std::isfinite(unobservable_variance) ||
+    unobservable_variance < nominal_variance)
+  {
+    throw std::invalid_argument("translation variances are invalid");
+  }
+  if (translation_observable_rank <= 0) {
+    return unobservable_variance * Eigen::Matrix2d::Identity();
+  }
+  const double weak_variance = nominal_variance +
+    (1.0 - std::clamp(weak_translation_correction_scale, 0.0, 1.0)) *
+    (unobservable_variance - nominal_variance);
+  return nominal_variance * Eigen::Matrix2d::Identity() +
+         (weak_variance - nominal_variance) *
+         weak_translation_direction * weak_translation_direction.transpose();
 }
 
 ScanToMapMatcher::ScanToMapMatcher(ScanToMapMatcherParameters parameters)
@@ -128,6 +150,8 @@ ScanToMapResult ScanToMapMatcher::match(
   const Eigen::Isometry3d correction = initial_pose.inverse() * result.pose;
   result.correction_translation = correction.translation().norm();
   result.correction_rotation = rotationAngle(correction.rotation());
+  result.applied_correction_translation = result.correction_translation;
+  result.applied_correction_rotation = result.correction_rotation;
   if (result.correction_translation >
     parameters_.maximum_correction_translation ||
     result.correction_rotation > parameters_.maximum_correction_rotation)
@@ -164,6 +188,11 @@ ScanToMapResult ScanToMapMatcher::match(
         continue;
       }
       const Eigen::Vector2d translation_jacobian(normal.x(), normal.y());
+      if (translation_jacobian.squaredNorm() <
+        kMinimumHorizontalNormalSquared)
+      {
+        continue;
+      }
       const Eigen::Vector3d relative_point(
         static_cast<double>(point.x) - result.pose.translation().x(),
         static_cast<double>(point.y) - result.pose.translation().y(),
@@ -214,15 +243,33 @@ ScanToMapResult ScanToMapMatcher::match(
           maximum_translation_information;
       }
       result.yaw_information = planar_information(2, 2);
-      result.degenerate =
+      const double minimum_translation_information =
+        result.translation_information_eigenvalues.minCoeff();
+      if (maximum_translation_information <
+        parameters_.minimum_translation_information)
+      {
+        result.translation_observable_rank = 0;
+      } else if (
         result.translation_information_ratio <
         parameters_.minimum_translation_information_ratio ||
-        result.translation_information_eigenvalues.minCoeff() <
-        parameters_.minimum_translation_information ||
+        minimum_translation_information <
+        parameters_.minimum_translation_information)
+      {
+        result.translation_observable_rank = 1;
+      } else {
+        result.translation_observable_rank = 2;
+      }
+      result.translation_degenerate = result.translation_observable_rank < 2;
+      result.planar_degenerate =
         result.planar_information_eigenvalues.minCoeff() <
-        parameters_.minimum_planar_information ||
+        parameters_.minimum_planar_information;
+      result.yaw_degenerate =
         result.yaw_information < parameters_.minimum_yaw_information;
-      if (parameters_.degeneracy_handling_enabled) {
+      result.degenerate = result.translation_degenerate ||
+        result.planar_degenerate || result.yaw_degenerate;
+      if (result.translation_observable_rank == 0) {
+        result.weak_translation_correction_scale = 0.0;
+      } else {
         const double ratio_scale = std::clamp(
           (result.translation_information_ratio -
           parameters_.full_suppression_translation_information_ratio) /
@@ -230,14 +277,21 @@ ScanToMapResult ScanToMapMatcher::match(
           parameters_.full_suppression_translation_information_ratio),
           0.0, 1.0);
         const double absolute_scale = std::clamp(
-          (result.translation_information_eigenvalues.minCoeff() -
+          (minimum_translation_information -
           parameters_.full_suppression_translation_information) /
           (parameters_.minimum_translation_information -
           parameters_.full_suppression_translation_information),
           0.0, 1.0);
         result.weak_translation_correction_scale =
           std::min(ratio_scale, absolute_scale);
-        if (result.weak_translation_correction_scale < 1.0) {
+      }
+      if (parameters_.degeneracy_handling_enabled &&
+        result.weak_translation_correction_scale < 1.0)
+      {
+        if (result.translation_observable_rank == 0) {
+          result.pose.translation().head<2>() =
+            initial_pose.translation().head<2>();
+        } else {
           Eigen::Vector2d translation_correction =
             result.pose.translation().head<2>() -
             initial_pose.translation().head<2>();
@@ -248,11 +302,22 @@ ScanToMapResult ScanToMapMatcher::match(
             weak_correction * result.weak_translation_direction;
           result.pose.translation().head<2>() =
             initial_pose.translation().head<2>() + translation_correction;
-          result.degeneracy_handling_applied = true;
         }
+        result.degeneracy_handling_applied = true;
       }
     }
+  } else {
+    result.weak_translation_correction_scale = 0.0;
+    if (parameters_.degeneracy_handling_enabled) {
+      result.pose.translation().head<2>() =
+        initial_pose.translation().head<2>();
+      result.degeneracy_handling_applied = true;
+    }
   }
+
+  const Eigen::Isometry3d applied_correction = initial_pose.inverse() * result.pose;
+  result.applied_correction_translation = applied_correction.translation().norm();
+  result.applied_correction_rotation = rotationAngle(applied_correction.rotation());
 
   result.status = ScanToMapStatus::kSuccess;
   return result;

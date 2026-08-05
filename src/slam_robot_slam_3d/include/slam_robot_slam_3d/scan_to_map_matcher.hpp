@@ -54,6 +54,8 @@ struct ScanToMapResult
   double rmse{0.0};
   double correction_translation{0.0};
   double correction_rotation{0.0};
+  double applied_correction_translation{0.0};
+  double applied_correction_rotation{0.0};
   std::size_t observability_correspondences{0U};
   Eigen::Vector2d translation_information_eigenvalues{
     Eigen::Vector2d::Zero()};
@@ -62,12 +64,18 @@ struct ScanToMapResult
     Eigen::Vector3d::Zero()};
   double translation_information_ratio{0.0};
   double yaw_information{0.0};
+  int translation_observable_rank{0};
+  bool translation_degenerate{true};
+  bool planar_degenerate{true};
+  bool yaw_degenerate{true};
   bool degenerate{true};
   bool degeneracy_handling_applied{false};
   double weak_translation_correction_scale{1.0};
   bool target_cache_reused{false};
 
   bool success() const;
+  Eigen::Matrix2d translationCovariance(
+    double nominal_variance, double unobservable_variance) const;
 };
 
 class ScanToMapMatcher

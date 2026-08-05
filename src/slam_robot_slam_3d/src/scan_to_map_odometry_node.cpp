@@ -418,16 +418,28 @@ private:
     odometry.child_frame_id = base_frame_;
     odometry.pose.pose = eigenToPose(estimated_base_pose_);
     odometry.twist = input_odometry.twist;
+    constexpr double unobservable_variance = 0.25;
     const double position_variance = match_result != nullptr &&
       match_result->success() ?
-      std::max(1.0e-4, match_result->rmse * match_result->rmse) : 0.25;
-    odometry.pose.covariance[0] = position_variance;
-    odometry.pose.covariance[7] = position_variance;
+      std::max(1.0e-4, match_result->rmse * match_result->rmse) :
+      unobservable_variance;
+    Eigen::Matrix2d translation_covariance =
+      position_variance * Eigen::Matrix2d::Identity();
+    if (match_result != nullptr && match_result->success()) {
+      translation_covariance = match_result->translationCovariance(
+        position_variance, unobservable_variance);
+    }
+    odometry.pose.covariance[0] = translation_covariance(0, 0);
+    odometry.pose.covariance[1] = translation_covariance(0, 1);
+    odometry.pose.covariance[6] = translation_covariance(1, 0);
+    odometry.pose.covariance[7] = translation_covariance(1, 1);
     odometry.pose.covariance[14] = force_planar_motion_ ? 1.0e-4 : position_variance;
     odometry.pose.covariance[21] = force_planar_motion_ ? 1.0e-4 : 0.05;
     odometry.pose.covariance[28] = force_planar_motion_ ? 1.0e-4 : 0.05;
-    odometry.pose.covariance[35] = match_result != nullptr &&
-      match_result->success() ? 0.01 : 0.25;
+    const double yaw_variance = match_result != nullptr &&
+      match_result->success() && !match_result->yaw_degenerate ? 0.01 :
+      unobservable_variance;
+    odometry.pose.covariance[35] = yaw_variance;
     odometry_publisher_->publish(odometry);
 
     pcl::PointCloud<pcl::PointXYZI> registered_scan;
@@ -447,13 +459,16 @@ private:
       local_map_publisher_->publish(map_message);
     }
     publishDiagnostics(
-      input_message.header, match_result, keyframe_added, started);
+      input_message.header, match_result, keyframe_added,
+      translation_covariance, yaw_variance, started);
   }
 
   void publishDiagnostics(
     const std_msgs::msg::Header & header,
     const ScanToMapResult * result,
     bool keyframe_added,
+    const Eigen::Matrix2d & translation_covariance,
+    double yaw_variance,
     const std::chrono::steady_clock::time_point & started)
   {
     diagnostic_msgs::msg::DiagnosticArray message;
@@ -478,6 +493,14 @@ private:
     status.values.push_back(makeValue(
       "correction_rotation",
       std::to_string(result == nullptr ? 0.0 : result->correction_rotation)));
+    status.values.push_back(makeValue(
+      "applied_correction_translation",
+      std::to_string(
+        result == nullptr ? 0.0 : result->applied_correction_translation)));
+    status.values.push_back(makeValue(
+      "applied_correction_rotation",
+      std::to_string(
+        result == nullptr ? 0.0 : result->applied_correction_rotation)));
     status.values.push_back(makeValue(
       "observability_correspondences",
       std::to_string(
@@ -505,6 +528,19 @@ private:
       "yaw_information",
       std::to_string(result == nullptr ? 0.0 : result->yaw_information)));
     status.values.push_back(makeValue(
+      "translation_observable_rank",
+      std::to_string(
+        result == nullptr ? 0 : result->translation_observable_rank)));
+    status.values.push_back(makeValue(
+      "translation_degenerate",
+      result != nullptr && result->translation_degenerate ? "true" : "false"));
+    status.values.push_back(makeValue(
+      "planar_degenerate",
+      result != nullptr && result->planar_degenerate ? "true" : "false"));
+    status.values.push_back(makeValue(
+      "yaw_degenerate",
+      result != nullptr && result->yaw_degenerate ? "true" : "false"));
+    status.values.push_back(makeValue(
       "degenerate",
       result != nullptr && result->degenerate ? "true" : "false"));
     status.values.push_back(makeValue(
@@ -524,6 +560,20 @@ private:
       std::to_string(
         result == nullptr ? 1.0 :
         result->weak_translation_correction_scale)));
+    status.values.push_back(makeValue(
+      "translation_covariance_xx",
+      std::to_string(translation_covariance(0, 0))));
+    status.values.push_back(makeValue(
+      "translation_covariance_xy",
+      std::to_string(translation_covariance(0, 1))));
+    status.values.push_back(makeValue(
+      "translation_covariance_yy",
+      std::to_string(translation_covariance(1, 1))));
+    status.values.push_back(makeValue(
+      "yaw_variance", std::to_string(yaw_variance)));
+    status.values.push_back(makeValue(
+      "target_cache_reused",
+      result != nullptr && result->target_cache_reused ? "true" : "false"));
     status.values.push_back(makeValue(
       "keyframe_added", keyframe_added ? "true" : "false"));
     status.values.push_back(makeValue(
