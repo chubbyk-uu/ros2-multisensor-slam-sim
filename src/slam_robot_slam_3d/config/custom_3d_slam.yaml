@@ -20,3 +20,34 @@
       max_y: 0.23
       min_z: -0.30
       max_z: 0.05
+
+    # PCL Generalized ICP scan-to-local-map acceptance gates. The first ROS
+    # integration keeps these under the same parameter namespace as the
+    # preprocessor, but the preprocessing-only launch ignores this section.
+    matcher:
+      maximum_iterations: 30
+      maximum_optimizer_iterations: 20
+      correspondence_randomness: 20
+      maximum_correspondence_distance: 0.50
+      transformation_epsilon: 0.0001
+      rotation_epsilon: 0.0001
+      euclidean_fitness_epsilon: 0.0001
+      minimum_points: 100
+      minimum_correspondences: 80
+      maximum_rmse: 0.15
+      maximum_correction_translation: 0.60
+      maximum_correction_rotation: 0.40
+
+    front_end:
+      input_topic: /custom_slam_3d/points_filtered
+      odom_topic: /odom
+      base_frame: base_footprint
+      local_frame: custom_slam_3d_odom
+      maximum_odom_age: 0.05
+      force_planar_motion: true
+      keyframe_translation: 0.25
+      keyframe_rotation: 0.15
+      maximum_odom_buffer_size: 200
+      local_submap:
+        maximum_keyframes: 12
+        voxel_leaf_size: 0.15

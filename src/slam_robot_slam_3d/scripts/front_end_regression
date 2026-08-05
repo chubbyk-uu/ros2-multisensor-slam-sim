@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+
+"""Validate custom 3D front-end diagnostics and relative trajectory."""
+
+from collections import deque
+import math
+import time
+
+from diagnostic_msgs.msg import DiagnosticArray
+from nav_msgs.msg import Odometry
+import rclpy
+from rclpy.node import Node
+
+
+STATUS_NAME = "custom_slam_3d/scan_to_map_front_end"
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def pose2d(message):
+    position = message.pose.pose.position
+    orientation = message.pose.pose.orientation
+    yaw = math.atan2(
+        2.0
+        * (orientation.w * orientation.z + orientation.x * orientation.y),
+        1.0
+        - 2.0
+        * (orientation.y * orientation.y + orientation.z * orientation.z),
+    )
+    return position.x, position.y, yaw
+
+
+def relative_pose(origin, pose):
+    delta_x = pose[0] - origin[0]
+    delta_y = pose[1] - origin[1]
+    cosine = math.cos(origin[2])
+    sine = math.sin(origin[2])
+    return (
+        cosine * delta_x + sine * delta_y,
+        -sine * delta_x + cosine * delta_y,
+        normalize_angle(pose[2] - origin[2]),
+    )
+
+
+class FrontEndRegression(Node):
+    def __init__(self):
+        super().__init__("front_end_regression")
+        self.declare_parameter("minimum_samples", 300)
+        self.declare_parameter("minimum_truth_distance", 3.0)
+        self.declare_parameter("timeout_sec", 90.0)
+        self.declare_parameter("minimum_acceptance_ratio", 0.95)
+        self.declare_parameter("maximum_mean_processing_ms", 80.0)
+        self.declare_parameter("maximum_position_error", 0.50)
+        self.declare_parameter("maximum_yaw_error", 0.20)
+        self.declare_parameter("maximum_pair_age", 0.03)
+
+        self.minimum_samples = self.get_parameter("minimum_samples").value
+        self.minimum_truth_distance = self.get_parameter(
+            "minimum_truth_distance"
+        ).value
+        self.timeout_sec = self.get_parameter("timeout_sec").value
+        self.minimum_acceptance_ratio = self.get_parameter(
+            "minimum_acceptance_ratio"
+        ).value
+        self.maximum_mean_processing_ms = self.get_parameter(
+            "maximum_mean_processing_ms"
+        ).value
+        self.maximum_position_error = self.get_parameter(
+            "maximum_position_error"
+        ).value
+        self.maximum_yaw_error = self.get_parameter(
+            "maximum_yaw_error"
+        ).value
+        self.maximum_pair_age = self.get_parameter("maximum_pair_age").value
+
+        self.truth_buffer = deque(maxlen=200)
+        self.custom_origin = None
+        self.truth_origin = None
+        self.previous_truth = None
+        self.truth_distance = 0.0
+        self.latest_position_error = math.inf
+        self.latest_yaw_error = math.inf
+        self.maximum_observed_position_error = 0.0
+        self.trajectory_samples = 0
+        self.accepted_matches = 0
+        self.diagnostic_samples = 0
+        self.processing_times = []
+        self.result = None
+
+        self.create_subscription(
+            Odometry, "/ground_truth/odom", self._truth_callback, 100
+        )
+        self.create_subscription(
+            Odometry, "/custom_slam_3d/laser_odom", self._custom_callback, 50
+        )
+        self.create_subscription(
+            DiagnosticArray,
+            "/custom_slam_3d/front_end_diagnostics",
+            self._diagnostics_callback,
+            100,
+        )
+
+    def _truth_callback(self, message):
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        self.truth_buffer.append((stamp, pose2d(message)))
+
+    def _custom_callback(self, message):
+        if not self.truth_buffer:
+            return
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        truth_stamp, truth = min(
+            self.truth_buffer, key=lambda sample: abs(sample[0] - stamp)
+        )
+        if abs(truth_stamp - stamp) > self.maximum_pair_age:
+            return
+        custom = pose2d(message)
+        if self.custom_origin is None:
+            self.custom_origin = custom
+            self.truth_origin = truth
+            self.previous_truth = truth
+            return
+
+        self.truth_distance += math.hypot(
+            truth[0] - self.previous_truth[0],
+            truth[1] - self.previous_truth[1],
+        )
+        self.previous_truth = truth
+        custom_relative = relative_pose(self.custom_origin, custom)
+        truth_relative = relative_pose(self.truth_origin, truth)
+        self.latest_position_error = math.hypot(
+            custom_relative[0] - truth_relative[0],
+            custom_relative[1] - truth_relative[1],
+        )
+        self.latest_yaw_error = abs(
+            normalize_angle(custom_relative[2] - truth_relative[2])
+        )
+        self.maximum_observed_position_error = max(
+            self.maximum_observed_position_error,
+            self.latest_position_error,
+        )
+        self.trajectory_samples += 1
+        self._finish_if_ready()
+
+    def _diagnostics_callback(self, message):
+        for status in message.status:
+            if status.name != STATUS_NAME or status.message == "initialized":
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            try:
+                accepted = values["match_accepted"].lower() == "true"
+                processing_ms = float(values["processing_ms"])
+            except (KeyError, ValueError) as error:
+                self.get_logger().error(f"Invalid diagnostics sample: {error}")
+                self.result = 2
+                return
+            if not math.isfinite(processing_ms) or processing_ms < 0.0:
+                self.get_logger().error("Non-finite processing time")
+                self.result = 2
+                return
+            self.diagnostic_samples += 1
+            self.accepted_matches += int(accepted)
+            self.processing_times.append(processing_ms)
+        self._finish_if_ready()
+
+    def _finish_if_ready(self):
+        if (
+            self.result is not None
+            or self.diagnostic_samples < self.minimum_samples
+            or self.trajectory_samples < self.minimum_samples
+            or self.truth_distance < self.minimum_truth_distance
+        ):
+            return
+        acceptance_ratio = self.accepted_matches / self.diagnostic_samples
+        mean_processing_ms = sum(self.processing_times) / len(
+            self.processing_times
+        )
+        sorted_times = sorted(self.processing_times)
+        p95_index = math.ceil(0.95 * len(sorted_times)) - 1
+        p95_processing_ms = sorted_times[p95_index]
+        self.get_logger().info(
+            "RESULT "
+            f"samples={self.diagnostic_samples} "
+            f"truth_distance={self.truth_distance:.3f}m "
+            f"accepted={acceptance_ratio:.3f} "
+            f"processing_mean={mean_processing_ms:.3f}ms "
+            f"processing_p95={p95_processing_ms:.3f}ms "
+            f"position_error={self.latest_position_error:.3f}m "
+            f"position_error_max={self.maximum_observed_position_error:.3f}m "
+            f"yaw_error={math.degrees(self.latest_yaw_error):.3f}deg"
+        )
+        checks = [
+            (
+                acceptance_ratio >= self.minimum_acceptance_ratio,
+                "match acceptance ratio",
+            ),
+            (
+                mean_processing_ms <= self.maximum_mean_processing_ms,
+                "mean processing time",
+            ),
+            (
+                self.latest_position_error <= self.maximum_position_error,
+                "position error",
+            ),
+            (
+                self.latest_yaw_error <= self.maximum_yaw_error,
+                "yaw error",
+            ),
+        ]
+        failures = [name for passed, name in checks if not passed]
+        if failures:
+            self.get_logger().error("FAIL: " + ", ".join(failures))
+            self.result = 2
+        else:
+            self.get_logger().info("PASS: custom 3D front end is valid")
+            self.result = 0
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = FrontEndRegression()
+    deadline = time.monotonic() + node.timeout_sec
+    try:
+        while rclpy.ok() and node.result is None:
+            if time.monotonic() >= deadline:
+                node.get_logger().error(
+                    f"Timed out: diagnostics={node.diagnostic_samples}, "
+                    f"trajectory={node.trajectory_samples}, "
+                    f"distance={node.truth_distance:.3f} m"
+                )
+                node.result = 3
+                break
+            rclpy.spin_once(node, timeout_sec=0.1)
+        return node.result if node.result is not None else 4
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

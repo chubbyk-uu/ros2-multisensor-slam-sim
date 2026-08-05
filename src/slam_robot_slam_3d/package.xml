@@ -22,16 +22,18 @@
 
   <exec_depend>action_msgs</exec_depend>
   <depend>diagnostic_msgs</depend>
-  <exec_depend>geometry_msgs</exec_depend>
+  <depend>geometry_msgs</depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>libpcl-common</exec_depend>
   <exec_depend>libpcl-filters</exec_depend>
+  <exec_depend>libpcl-kdtree</exec_depend>
+  <exec_depend>libpcl-registration</exec_depend>
   <exec_depend>mola_bridge_ros2</exec_depend>
   <exec_depend>mola_lidar_odometry</exec_depend>
   <exec_depend>mola_metric_maps</exec_depend>
-  <exec_depend>nav_msgs</exec_depend>
+  <depend>nav_msgs</depend>
   <exec_depend>nav2_msgs</exec_depend>
   <depend>pcl_conversions</depend>
   <exec_depend>python3-yaml</exec_depend>
@@ -48,6 +50,7 @@
   <exec_depend>slam_robot_navigation</exec_depend>
   <depend>std_msgs</depend>
   <exec_depend>tf2_msgs</exec_depend>
+  <depend>tf2_ros</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

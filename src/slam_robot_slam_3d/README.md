@@ -78,6 +78,36 @@ ros2 run slam_robot_slam_3d preprocessing_regression \
 当前阶段尚未加入地面分类和离群点过滤；这两项将在前端确定需要的地面约束
 表达后实现，避免预处理提前删除配准所需几何。
 
+### 自研 scan-to-local-map 前端
+
+首版前端使用 PCL Generalized ICP（GICP）将每帧过滤点云配准到最近 12 个
+关键帧组成的有界局部子图。`/odom`（默认轮速 + IMU EKF）只提供帧间运动
+初值；匹配结果还必须通过收敛、对应点数、RMSE 和相对初值最大修正量门限。
+固定数据集运行方式：
+
+```bash
+# 终端 1
+ros2 launch slam_robot_slam_3d custom_3d_front_end.launch.py
+
+# 终端 2
+ros2 launch slam_robot_slam_3d play_3d_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/structured_3d_reference" rate:=1.0
+
+# 终端 3
+ros2 run slam_robot_slam_3d front_end_regression
+```
+
+前端发布 `/custom_slam_3d/laser_odom`、已配准当前帧
+`/custom_slam_3d/registered_scan`、有界 `/custom_slam_3d/local_map` 和逐帧
+`/custom_slam_3d/front_end_diagnostics`。当前局部坐标系是
+`custom_slam_3d_odom`，不发布 TF，也没有回环、位姿图或全局地图，因此此时
+仍是 3D 激光里程计前端，不能称为完整自研 3D SLAM。
+
+差速机器人默认启用平面运动约束：GICP 用完整三维几何求解，输出基座位姿再
+投影到 `x/y/yaw`，避免不可观测的微小横滚、俯仰和高度误差污染后续二维导航
+投影。弱几何退化诊断和专用回归仍是下一步，当前不可用“已收敛”替代“几何
+可观测”的判断。
+
 ### 在线 RTAB-Map
 
 启动 Gazebo 3D 机器人、点云输入检查、RTAB-Map 和专用 RViz：

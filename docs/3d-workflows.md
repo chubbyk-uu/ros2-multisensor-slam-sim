@@ -43,9 +43,32 @@ ros2 run slam_robot_slam_3d preprocessing_regression \
   --ros-args -p minimum_samples:=1000
 ```
 
-地面分类和离群点过滤尚未接入。下一步以过滤点云和轮速 + IMU 运动初值实现
-scan-to-local-map 前端，再根据配准对地面约束的需求确定地面分类输出，而不
-直接把地面全部删除。
+地面分类和离群点过滤尚未接入。首版 scan-to-local-map 前端直接使用该过滤
+点云和轮速 + IMU 运动初值；后续根据配准对地面约束的需求确定地面分类输出，
+而不直接把地面全部删除。
+
+## 自研 scan-to-local-map 前端
+
+固定包验证分三个终端运行：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_front_end.launch.py
+
+ros2 launch slam_robot_slam_3d play_3d_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/structured_3d_reference" rate:=1.0
+
+ros2 run slam_robot_slam_3d front_end_regression
+```
+
+前端采用标准 PCL GICP，并以 `/odom` 的帧间增量作为初值；它不是把 EKF 位姿
+直接当作激光结果。关键帧按平移/旋转阈值插入，局部子图只保留最近 12 帧并
+再次体素化，因此运行时间和内存不会随全局路程无限增长。诊断包含匹配状态、
+对应点数、RMSE、相对运动初值修正量、关键帧数和完整回调耗时。
+
+固定包的正式时序验收使用 `rate:=1.0`。`rate:=2.0` 可作为计算压力测试，但
+会把 50 Hz 里程计推到 100 Hz；单线程节点执行 GICP 时可能使订阅队列短暂
+错位，因此不能用加速回放的时间同步告警推断在线 10 Hz 运行也存在同样问题。
+当前节点不发布 TF、全局地图或回环结果，不能接 Nav2。
 
 ## RTAB-Map 在线 3D SLAM
 
@@ -165,8 +188,8 @@ SLAM 能力。
 
 ## 后续路线
 
-RTAB-Map 是成熟算法验收基线；自研点云预处理已经完成，后续逐步以自研 3D
-前端、局部子图、回环后端
+RTAB-Map 是成熟算法验收基线；自研点云预处理、GICP 前端和首版有界局部子图
+已经完成，后续逐步加入退化处理、回环后端
 和地图输出模块替换，同时保留相同的输入契约、TF 职责和回归场景。自研链路
 完成后将接入现有 Nav2 在线入口：自研 SLAM 发布实时二维导航投影并独占
 `map -> odom`，Nav2 继续使用 3D 点云局部避障。
