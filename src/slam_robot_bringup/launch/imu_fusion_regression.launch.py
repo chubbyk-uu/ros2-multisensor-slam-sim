@@ -73,6 +73,7 @@ def generate_launch_description():
                     "odometry_mode": odometry_mode,
                     "left_wheel_friction": left_wheel_friction,
                     "right_wheel_friction": right_wheel_friction,
+                    "auto_save_map": "false",
                 }.items(),
             ),
             TimerAction(period=5.0, actions=[regression]),

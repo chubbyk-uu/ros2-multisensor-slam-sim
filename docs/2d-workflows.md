@@ -126,6 +126,38 @@ ros2 launch slam_robot_bringup custom_slam_development.launch.py
 RViz 中红色为原始扫描，绿色为预处理点，青色为匹配后的扫描，黄色为匹配
 轨迹，紫色为位姿图路径。真值只用于回归评分，不进入算法。
 
+### 保存自研地图并交给 Nav2
+
+自研入口默认在收到一次 `Ctrl+C` 后，将 `/custom_slam/map` 保存为：
+
+- `maps/custom_slam_map.yaml`
+- `maps/custom_slam_map.pgm`
+
+等待终端显示 `[custom_auto_save_map] Save completed` 后再启动导航。自研 SLAM
+目前不序列化位姿图，因此不会生成 SLAM Toolbox 使用的 `.posegraph` 和
+`.data`。指定其他输出前缀：
+
+```bash
+ros2 launch slam_robot_bringup custom_slam_development.launch.py \
+  map_output_prefix:="${SLAM_WS}/maps/custom_room_01"
+```
+
+关闭自动保存：
+
+```bash
+ros2 launch slam_robot_bringup custom_slam_development.launch.py \
+  auto_save_map:=false
+```
+
+使用保存的自研地图启动 AMCL 与 Nav2：
+
+```bash
+ros2 launch slam_robot_bringup navigation_simulation.launch.py \
+  map:="${SLAM_WS}/maps/custom_slam_map.yaml"
+```
+
+导航前必须先关闭自研 SLAM，避免它和 AMCL 同时发布 `map -> odom`。
+
 当前实现包括轮式预测、相关扫描匹配、法向几何退化检测、关键帧局部子图、
 后台回环匹配、各向异性位姿图约束、Ceres 优化和优化后射线重放。算法结构、
 参数、话题与已知边界见

@@ -67,6 +67,7 @@ def generate_launch_description():
                     'wsl_gpu_adapter': wsl_gpu_adapter,
                     # Keep the recorded large-scale baseline reproducible.
                     'odometry_mode': 'wheel',
+                    'auto_save_map': 'false',
                 }.items(),
             ),
         ]

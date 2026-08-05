@@ -44,6 +44,9 @@ def generate_launch_description():
     odometry_mode = LaunchConfiguration("odometry_mode")
     left_wheel_friction = LaunchConfiguration("left_wheel_friction")
     right_wheel_friction = LaunchConfiguration("right_wheel_friction")
+    auto_save_map = LaunchConfiguration("auto_save_map")
+    map_output_prefix = LaunchConfiguration("map_output_prefix")
+    map_topic = LaunchConfiguration("map_topic")
     reject_degenerate_loop_closures = LaunchConfiguration(
         "reject_degenerate_loop_closures"
     )
@@ -54,6 +57,9 @@ def generate_launch_description():
             "use_sim_time": "true",
             "reject_degenerate_loop_closures":
                 reject_degenerate_loop_closures,
+            "auto_save_map": auto_save_map,
+            "map_output_prefix": map_output_prefix,
+            "map_topic": map_topic,
         }.items(),
     )
     rviz = Node(
@@ -112,6 +118,21 @@ def generate_launch_description():
                 "reject_degenerate_loop_closures",
                 default_value="true",
                 description="Reject translation-degenerate loop matches.",
+            ),
+            DeclareLaunchArgument(
+                "auto_save_map",
+                default_value="true",
+                description="Save the custom occupancy grid before shutdown.",
+            ),
+            DeclareLaunchArgument(
+                "map_output_prefix",
+                default_value=str(Path.cwd() / "maps" / "custom_slam_map"),
+                description="Auto-save path without a file extension.",
+            ),
+            DeclareLaunchArgument(
+                "map_topic",
+                default_value="/custom_slam/map",
+                description="Custom occupancy grid topic to publish and save.",
             ),
             SetEnvironmentVariable(
                 "GALLIUM_DRIVER",

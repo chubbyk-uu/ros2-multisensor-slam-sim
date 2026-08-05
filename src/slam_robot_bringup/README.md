@@ -37,7 +37,9 @@ ros2 launch slam_robot_bringup custom_slam_development.launch.py
 扫描匹配/位姿图节点和专用
 RViz，不启动 SLAM Toolbox。它发布 `/custom_slam/map` 和
 `map -> odom`，但不占用标准 `/map`；因此不能与 SLAM Toolbox 建图入口
-同时运行。
+同时运行。按一次 `Ctrl+C` 会先自动保存
+`maps/custom_slam_map.yaml/.pgm`；该静态地图可通过
+`navigation_simulation.launch.py map:=...` 交给 AMCL 和 Nav2。
 
 无界面启动自研 SLAM 退化长走廊回归环境：
 

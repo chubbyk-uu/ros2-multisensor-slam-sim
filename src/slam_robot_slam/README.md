@@ -86,6 +86,12 @@ ros2 launch slam_robot_slam custom_slam.launch.py
 ros2 launch slam_robot_bringup custom_slam_development.launch.py
 ```
 
+默认在收到一次 `Ctrl+C` 后，先把 `/custom_slam/map` 保存为启动目录下的
+`maps/custom_slam_map.yaml` 和 `maps/custom_slam_map.pgm`，再停止地图发布
+节点。可使用 `map_output_prefix` 更改文件前缀，或传入
+`auto_save_map:=false` 关闭。当前自研位姿图不支持序列化，因而不会生成
+`.posegraph` 和 `.data`；保存的 YAML/PGM 用于 AMCL 和 Nav2 静态地图定位。
+
 专用 RViz 使用 `map` 固定坐标系：黑白栅格为自研地图，红色为原始
 `/scan`，绿色为预处理点集，青色为局部子图匹配后的扫描，黄色为匹配
 轨迹，紫色为位姿图关键帧路径。当前阶段发布 `/custom_slam/map` 和

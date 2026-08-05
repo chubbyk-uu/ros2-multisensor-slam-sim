@@ -76,6 +76,7 @@ def generate_launch_description():
                     # Preserve the frozen wheel-only reference behavior. The
                     # user-facing 2D entry points default to wheel_imu.
                     'odometry_mode': 'wheel',
+                    'auto_save_map': 'false',
                     'reject_degenerate_loop_closures':
                         reject_degenerate_loop_closures,
                 }.items(),

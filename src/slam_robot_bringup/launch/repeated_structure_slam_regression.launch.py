@@ -68,6 +68,7 @@ def generate_launch_description():
                     # Keep historical regression thresholds tied to their
                     # original wheel-only odometry input.
                     'odometry_mode': 'wheel',
+                    'auto_save_map': 'false',
                 }.items(),
             ),
         ]
