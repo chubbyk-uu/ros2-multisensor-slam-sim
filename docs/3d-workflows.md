@@ -85,6 +85,21 @@ ros2 launch slam_robot_slam_3d corridor_3d_regression.launch.py
 量程和 16 线扫描单独设计，不用结构丰富的 `structured_loop_3d.sdf` 冒充
 秩亏环境。
 
+正常结构中的快速旋转与单侧轮胎打滑使用：
+
+```bash
+ros2 launch slam_robot_slam_3d front_end_motion_regression.launch.py \
+  profile:=rotation
+
+ros2 launch slam_robot_slam_3d front_end_motion_regression.launch.py \
+  profile:=slip
+```
+
+两种 profile 都检查匹配接受率、真值误差、相对 `/odom` 劣化、退化误报、
+回调间隔和 P95。打滑 profile 还要求低摩擦实际造成可测的里程计误差。
+首版 GICP、关键帧和局部子图参数由固定包、长走廊、快速旋转和打滑四类测试
+共同约束；进入回环后端阶段后，修改这些参数必须复跑该集合。
+
 ## RTAB-Map 在线 3D SLAM
 
 启动 3D 机器人、轮速 + IMU EKF、点云检查、RTAB-Map 和 RViz：

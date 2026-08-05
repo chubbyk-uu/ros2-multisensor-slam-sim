@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+
+"""Exercise the custom 3D front end under fast rotation or wheel slip."""
+
+import argparse
+from dataclasses import dataclass
+import math
+import sys
+import time
+
+from diagnostic_msgs.msg import DiagnosticArray
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from rcl_interfaces.msg import Log
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.utilities import remove_ros_args
+
+
+STATUS_NAME = "custom_slam_3d/scan_to_map_front_end"
+CRITICAL_LOG_FRAGMENTS = (
+    "3D front-end callback failed",
+    "Replacing a 3D scan still waiting for synchronized odometry",
+)
+
+
+@dataclass(frozen=True)
+class Pose2D:
+    x: float
+    y: float
+    yaw: float
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def pose_from_odometry(message):
+    orientation = message.pose.pose.orientation
+    yaw = math.atan2(
+        2.0
+        * (orientation.w * orientation.z + orientation.x * orientation.y),
+        1.0
+        - 2.0
+        * (orientation.y * orientation.y + orientation.z * orientation.z),
+    )
+    position = message.pose.pose.position
+    return Pose2D(position.x, position.y, yaw)
+
+
+def relative_pose(origin, pose):
+    delta_x = pose.x - origin.x
+    delta_y = pose.y - origin.y
+    cosine = math.cos(origin.yaw)
+    sine = math.sin(origin.yaw)
+    return Pose2D(
+        cosine * delta_x + sine * delta_y,
+        -sine * delta_x + cosine * delta_y,
+        normalize_angle(pose.yaw - origin.yaw),
+    )
+
+
+def pose_error(reference, estimate):
+    return (
+        math.hypot(estimate.x - reference.x, estimate.y - reference.y),
+        abs(normalize_angle(estimate.yaw - reference.yaw)),
+    )
+
+
+class FrontEndMotionRegression(Node):
+    def __init__(self):
+        super().__init__(
+            "front_end_motion_regression",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
+        self.poses = {}
+        self.command_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.create_subscription(
+            Odometry,
+            "/ground_truth/odom",
+            lambda message: self._store_pose("truth", message),
+            100,
+        )
+        self.create_subscription(
+            Odometry,
+            "/odom",
+            lambda message: self._store_pose("odom", message),
+            100,
+        )
+        self.create_subscription(
+            Odometry,
+            "/custom_slam_3d/laser_odom",
+            lambda message: self._store_pose("front_end", message),
+            100,
+        )
+        self.create_subscription(
+            DiagnosticArray,
+            "/custom_slam_3d/front_end_diagnostics",
+            self._diagnostics_callback,
+            100,
+        )
+        self.create_subscription(Log, "/rosout", self._log_callback, 100)
+        self.diagnostics = []
+        self.malformed_diagnostics = 0
+        self.critical_logs = []
+
+    def _store_pose(self, name, message):
+        self.poses[name] = pose_from_odometry(message)
+
+    def _diagnostics_callback(self, message):
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        for status in message.status:
+            if status.name != STATUS_NAME or status.message == "initialized":
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            try:
+                sample = {
+                    "stamp": stamp,
+                    "accepted": values["match_accepted"].lower() == "true",
+                    "degenerate": values["degenerate"].lower() == "true",
+                    "handling": (
+                        values["degeneracy_handling_applied"].lower()
+                        == "true"
+                    ),
+                    "processing_ms": float(values["processing_ms"]),
+                    "correction_rotation": float(
+                        values["correction_rotation"]
+                    ),
+                }
+            except (KeyError, ValueError):
+                self.malformed_diagnostics += 1
+                continue
+            if (
+                not math.isfinite(sample["processing_ms"])
+                or sample["processing_ms"] < 0.0
+                or not math.isfinite(sample["correction_rotation"])
+            ):
+                self.malformed_diagnostics += 1
+                continue
+            self.diagnostics.append(sample)
+
+    def _log_callback(self, message):
+        if any(fragment in message.msg for fragment in CRITICAL_LOG_FRAGMENTS):
+            if message.msg not in self.critical_logs:
+                self.critical_logs.append(message.msg)
+
+    def spin_once(self, timeout=0.02):
+        rclpy.spin_once(self, timeout_sec=timeout)
+
+    def simulation_time(self):
+        return self.get_clock().now().nanoseconds * 1.0e-9
+
+    def publish_command(self, linear=0.0, angular=0.0):
+        command = Twist()
+        command.linear.x = linear
+        command.angular.z = angular
+        self.command_publisher.publish(command)
+
+    def wait_for_inputs(self, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.spin_once(0.1)
+            if len(self.poses) == 3 and self.diagnostics:
+                return
+        raise RuntimeError("timed out waiting for 3D front-end inputs")
+
+    def run_command(self, linear, angular, duration):
+        start = self.simulation_time()
+        deadline = time.monotonic() + duration * 4.0 + 15.0
+        while self.simulation_time() - start < duration:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("simulation time stalled during motion")
+            self.publish_command(linear, angular)
+            self.spin_once()
+
+    def settle(self, duration):
+        self.run_command(0.0, 0.0, duration)
+
+    def snapshot(self):
+        return dict(self.poses), len(self.diagnostics), self.malformed_diagnostics
+
+    def evaluate_stage(self, name, starts, diagnostic_start, malformed_start, args):
+        truth = relative_pose(starts["truth"], self.poses["truth"])
+        odom = relative_pose(starts["odom"], self.poses["odom"])
+        front_end = relative_pose(
+            starts["front_end"], self.poses["front_end"]
+        )
+        odom_position_error, odom_yaw_error = pose_error(truth, odom)
+        position_error, yaw_error = pose_error(truth, front_end)
+        samples = self.diagnostics[diagnostic_start:]
+        accepted = sum(sample["accepted"] for sample in samples)
+        degenerate = sum(sample["degenerate"] for sample in samples)
+        handling = sum(sample["handling"] for sample in samples)
+        acceptance_ratio = accepted / len(samples) if samples else 0.0
+        processing = sorted(sample["processing_ms"] for sample in samples)
+        p95_index = max(0, math.ceil(0.95 * len(processing)) - 1)
+        processing_p95 = processing[p95_index] if processing else math.inf
+        stamps = [sample["stamp"] for sample in samples]
+        maximum_gap = max(
+            (current - previous for previous, current in zip(stamps, stamps[1:])),
+            default=math.inf,
+        )
+        maximum_rotation_correction = max(
+            (sample["correction_rotation"] for sample in samples),
+            default=math.inf,
+        )
+        malformed = self.malformed_diagnostics - malformed_start
+        checks = {
+            "enough_matches": len(samples) >= args.minimum_matches_per_stage,
+            "match_acceptance": acceptance_ratio >= args.minimum_acceptance_ratio,
+            "no_false_degeneracy": degenerate == 0,
+            "no_false_handling": handling == 0,
+            "position_error": position_error <= args.maximum_position_error,
+            "yaw_error": yaw_error <= math.radians(args.maximum_yaw_error_degrees),
+            "not_worse_than_odom_position": (
+                position_error <= odom_position_error + args.maximum_excess_over_odom
+            ),
+            "not_worse_than_odom_yaw": (
+                yaw_error
+                <= odom_yaw_error
+                + math.radians(args.maximum_yaw_excess_over_odom_degrees)
+            ),
+            "front_end_gap": maximum_gap <= args.maximum_front_end_gap,
+            "processing_budget": processing_p95 <= args.maximum_processing_p95,
+            "diagnostics_well_formed": malformed == 0,
+            "no_critical_runtime_logs": not self.critical_logs,
+        }
+        print(f"\n{name}")
+        print(
+            f"truth        : x={truth.x:.3f} y={truth.y:.3f} "
+            f"yaw={math.degrees(truth.yaw):.3f} deg"
+        )
+        print(
+            f"odom error   : {odom_position_error:.3f} m / "
+            f"{math.degrees(odom_yaw_error):.3f} deg"
+        )
+        print(
+            f"front-end    : {position_error:.3f} m / "
+            f"{math.degrees(yaw_error):.3f} deg"
+        )
+        print(
+            f"matches      : {accepted}/{len(samples)}, degenerate={degenerate}, "
+            f"handling={handling}"
+        )
+        print(
+            f"runtime      : P95={processing_p95:.3f} ms, "
+            f"max gap={maximum_gap:.3f} s, "
+            f"max rotation correction={maximum_rotation_correction:.3f} rad"
+        )
+        for check, passed in checks.items():
+            print(f"  [{'PASS' if passed else 'FAIL'}] {check}")
+        return {
+            "passed": all(checks.values()),
+            "truth": truth,
+            "odom_position_error": odom_position_error,
+        }
+
+    def run_stage(self, name, linear, angular, duration, args):
+        starts, diagnostic_start, malformed_start = self.snapshot()
+        self.run_command(linear, angular, duration)
+        self.settle(args.settle_time)
+        return self.evaluate_stage(
+            name, starts, diagnostic_start, malformed_start, args
+        )
+
+    def run_rotation_profile(self, args):
+        passed = True
+        for speed in args.angular_speeds:
+            result = self.run_stage(
+                f"rotation {speed:.2f} rad/s",
+                0.0,
+                speed,
+                args.rotation_duration,
+                args,
+            )
+            commanded_rotation = abs(speed) * args.rotation_duration
+            motion_observed = (
+                abs(result["truth"].yaw)
+                >= min(commanded_rotation * 0.70, math.pi * 0.80)
+            )
+            print(
+                f"  [{'PASS' if motion_observed else 'FAIL'}] rotation_observed"
+            )
+            passed = passed and result["passed"] and motion_observed
+        return passed
+
+    def run_slip_profile(self, args):
+        straight_result = self.run_stage(
+            "slip straight",
+            args.slip_linear_speed,
+            0.0,
+            args.slip_straight_duration,
+            args,
+        )
+        distance_observed = math.hypot(
+            straight_result["truth"].x, straight_result["truth"].y
+        ) >= 0.70
+        print(
+            f"  [{'PASS' if distance_observed else 'FAIL'}] translation_observed"
+        )
+        rotation_result = self.run_stage(
+            "slip rotation",
+            0.0,
+            args.slip_angular_speed,
+            args.slip_rotation_duration,
+            args,
+        )
+        rotation_observed = (
+            abs(rotation_result["truth"].yaw) >= math.radians(90.0)
+        )
+        slip_effect_observed = (
+            rotation_result["odom_position_error"]
+            >= args.minimum_slip_odom_position_error
+        )
+        print(
+            f"  [{'PASS' if rotation_observed else 'FAIL'}] rotation_observed"
+        )
+        print(
+            f"  [{'PASS' if slip_effect_observed else 'FAIL'}] "
+            "slip_effect_observed"
+        )
+        return (
+            straight_result["passed"]
+            and distance_observed
+            and rotation_result["passed"]
+            and rotation_observed
+            and slip_effect_observed
+        )
+
+    def run(self, args):
+        self.wait_for_inputs(args.startup_timeout)
+        self.settle(args.initial_settle_time)
+        if args.profile == "rotation":
+            return self.run_rotation_profile(args)
+        return self.run_slip_profile(args)
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--profile", choices=("rotation", "slip"), required=True)
+    parser.add_argument(
+        "--angular-speeds", type=float, nargs="+", default=(0.30, 0.60, 0.90)
+    )
+    parser.add_argument("--rotation-duration", type=float, default=3.0)
+    parser.add_argument("--slip-linear-speed", type=float, default=0.30)
+    parser.add_argument("--slip-straight-duration", type=float, default=6.0)
+    parser.add_argument("--slip-angular-speed", type=float, default=0.60)
+    parser.add_argument("--slip-rotation-duration", type=float, default=4.0)
+    parser.add_argument(
+        "--minimum-slip-odom-position-error", type=float, default=0.015
+    )
+    parser.add_argument("--startup-timeout", type=float, default=60.0)
+    parser.add_argument("--initial-settle-time", type=float, default=4.0)
+    parser.add_argument("--settle-time", type=float, default=1.5)
+    parser.add_argument("--minimum-matches-per-stage", type=int, default=25)
+    parser.add_argument("--minimum-acceptance-ratio", type=float, default=0.95)
+    parser.add_argument("--maximum-position-error", type=float, default=0.20)
+    parser.add_argument("--maximum-yaw-error-degrees", type=float, default=2.0)
+    parser.add_argument("--maximum-excess-over-odom", type=float, default=0.10)
+    parser.add_argument(
+        "--maximum-yaw-excess-over-odom-degrees", type=float, default=1.0
+    )
+    parser.add_argument("--maximum-front-end-gap", type=float, default=0.20)
+    parser.add_argument("--maximum-processing-p95", type=float, default=100.0)
+    arguments = parser.parse_args(argv)
+    positive_values = (
+        *arguments.angular_speeds,
+        arguments.rotation_duration,
+        arguments.slip_linear_speed,
+        arguments.slip_straight_duration,
+        arguments.slip_angular_speed,
+        arguments.slip_rotation_duration,
+    )
+    if any(not math.isfinite(value) or value <= 0.0 for value in positive_values):
+        parser.error("motion speeds and durations must be finite and positive")
+    return arguments
+
+
+def main(argv=None):
+    raw_arguments = sys.argv if argv is None else [sys.argv[0], *argv]
+    arguments = parse_arguments(remove_ros_args(args=raw_arguments)[1:])
+    rclpy.init(args=raw_arguments)
+    node = FrontEndMotionRegression()
+    try:
+        return 0 if node.run(arguments) else 1
+    except Exception as error:  # noqa: B902 - process boundary reports failures.
+        node.get_logger().error(str(error))
+        return 2
+    finally:
+        node.publish_command()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

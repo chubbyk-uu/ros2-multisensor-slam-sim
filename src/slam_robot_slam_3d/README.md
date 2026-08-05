@@ -122,6 +122,20 @@ ros2 launch slam_robot_slam_3d corridor_3d_regression.launch.py
 该回归同时比较真值、前端和 `/odom` 基线，并检查退化段检出率、正常段
 误报、弱方向漂移、接受率、回调间隔和 P95 处理预算。
 
+正常结构中的三档快速旋转和左轮低摩擦专项回归使用同一入口：
+
+```bash
+ros2 launch slam_robot_slam_3d front_end_motion_regression.launch.py \
+  profile:=rotation
+
+ros2 launch slam_robot_slam_3d front_end_motion_regression.launch.py \
+  profile:=slip
+```
+
+`rotation` 依次测试 `0.30/0.60/0.90 rad/s`；`slip` 自动把左轮摩擦系数降到
+`0.15`，并要求里程计基线确实出现可测打滑误差，避免故障注入失效后假通过。
+这两项和长走廊回归共同构成首版前端参数变更的必跑集合。
+
 ### 在线 RTAB-Map
 
 启动 Gazebo 3D 机器人、点云输入检查、RTAB-Map 和专用 RViz：
