@@ -41,6 +41,7 @@ void LocalSubmap::addKeyframe(
     keyframes_.pop_front();
   }
   rebuild();
+  ++version_;
 }
 
 void LocalSubmap::clear()
@@ -48,6 +49,7 @@ void LocalSubmap::clear()
   keyframes_.clear();
   cloud_.clear();
   cloud_.is_dense = true;
+  ++version_;
 }
 
 const pcl::PointCloud<pcl::PointXYZI> & LocalSubmap::cloud() const
@@ -58,6 +60,11 @@ const pcl::PointCloud<pcl::PointXYZI> & LocalSubmap::cloud() const
 std::size_t LocalSubmap::keyframeCount() const
 {
   return keyframes_.size();
+}
+
+std::uint64_t LocalSubmap::version() const
+{
+  return version_;
 }
 
 const LocalSubmapParameters & LocalSubmap::parameters() const

@@ -91,7 +91,7 @@ TEST(ScanToMapMatcher, RecoversStructuredCloudPoseFromMotionInitialGuess)
   parameters.maximum_rmse = 0.05;
   ScanToMapMatcher matcher(parameters);
   const auto initial_pose = makePose(0.13, -0.06, 0.02, 0.05);
-  const auto result = matcher.match(scan, local_map, initial_pose);
+  const auto result = matcher.match(scan, local_map, 1U, initial_pose);
 
   ASSERT_TRUE(result.success()) << toString(result.status);
   EXPECT_LT((result.pose.translation() - expected_pose.translation()).norm(), 0.02);
@@ -109,7 +109,7 @@ TEST(ScanToMapMatcher, DetectsUnobservableCorridorTranslation)
   ScanToMapMatcher matcher(ScanToMapMatcherParameters{});
 
   const auto result = matcher.match(
-    corridor, corridor, Eigen::Isometry3d::Identity());
+    corridor, corridor, 1U, Eigen::Isometry3d::Identity());
 
   ASSERT_TRUE(result.success()) << toString(result.status);
   EXPECT_EQ(result.observability_correspondences, result.correspondence_count);
@@ -121,19 +121,39 @@ TEST(ScanToMapMatcher, DetectsUnobservableCorridorTranslation)
   EXPECT_GT(std::abs(result.weak_translation_direction.x()), 0.90);
 }
 
+TEST(ScanToMapMatcher, ReusesTargetOnlyWhileSubmapVersionIsUnchanged)
+{
+  const auto local_map = makeStructuredCloud();
+  ScanToMapMatcher matcher(ScanToMapMatcherParameters{});
+
+  const auto first = matcher.match(
+    local_map, local_map, 10U, Eigen::Isometry3d::Identity());
+  const auto reused = matcher.match(
+    local_map, local_map, 10U, Eigen::Isometry3d::Identity());
+  const auto invalidated = matcher.match(
+    local_map, local_map, 11U, Eigen::Isometry3d::Identity());
+
+  ASSERT_TRUE(first.success()) << toString(first.status);
+  ASSERT_TRUE(reused.success()) << toString(reused.status);
+  ASSERT_TRUE(invalidated.success()) << toString(invalidated.status);
+  EXPECT_FALSE(first.target_cache_reused);
+  EXPECT_TRUE(reused.target_cache_reused);
+  EXPECT_FALSE(invalidated.target_cache_reused);
+}
+
 TEST(ScanToMapMatcher, RejectsTooFewAndNonFinitePoints)
 {
   ScanToMapMatcher matcher(ScanToMapMatcherParameters{});
   pcl::PointCloud<pcl::PointXYZI> small_cloud;
   small_cloud.resize(10U);
   auto result = matcher.match(
-    small_cloud, small_cloud, Eigen::Isometry3d::Identity());
+    small_cloud, small_cloud, 1U, Eigen::Isometry3d::Identity());
   EXPECT_EQ(result.status, ScanToMapStatus::kTooFewPoints);
 
   auto structured_cloud = makeStructuredCloud();
   structured_cloud.front().x = std::numeric_limits<float>::quiet_NaN();
   result = matcher.match(
-    structured_cloud, structured_cloud, Eigen::Isometry3d::Identity());
+    structured_cloud, structured_cloud, 1U, Eigen::Isometry3d::Identity());
   EXPECT_EQ(result.status, ScanToMapStatus::kInvalidInput);
 }
 
@@ -150,7 +170,7 @@ TEST(ScanToMapMatcher, RejectsCorrectionOutsideMotionPriorGate)
   parameters.maximum_correction_rotation = 0.01;
   ScanToMapMatcher matcher(parameters);
   const auto result = matcher.match(
-    scan, local_map, makePose(0.13, -0.06, 0.02, 0.05));
+    scan, local_map, 1U, makePose(0.13, -0.06, 0.02, 0.05));
 
   EXPECT_EQ(result.status, ScanToMapStatus::kCorrectionTooLarge);
 }

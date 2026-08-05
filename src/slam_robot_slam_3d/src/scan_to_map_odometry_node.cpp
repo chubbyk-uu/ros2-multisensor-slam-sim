@@ -363,7 +363,7 @@ private:
       const Eigen::Isometry3d predicted_lidar_pose =
         predicted_base_pose * base_to_lidar;
       const auto match_result = matcher_.match(
-        scan, local_submap_.cloud(), predicted_lidar_pose);
+        scan, local_submap_.cloud(), local_submap_.version(), predicted_lidar_pose);
 
       Eigen::Isometry3d lidar_pose = predicted_lidar_pose;
       bool keyframe_added = false;

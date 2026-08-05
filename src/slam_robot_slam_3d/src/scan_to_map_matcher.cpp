@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -42,6 +43,25 @@ public:
 
 }  // namespace
 
+class ScanToMapMatcher::Impl
+{
+public:
+  explicit Impl(const ScanToMapMatcherParameters & parameters)
+  {
+    matcher.setMaximumIterations(parameters.maximum_iterations);
+    matcher.setMaximumOptimizerIterations(parameters.maximum_optimizer_iterations);
+    matcher.setCorrespondenceRandomness(parameters.correspondence_randomness);
+    matcher.setMaxCorrespondenceDistance(parameters.maximum_correspondence_distance);
+    matcher.setTransformationEpsilon(parameters.transformation_epsilon);
+    matcher.setRotationEpsilon(parameters.rotation_epsilon);
+    matcher.setEuclideanFitnessEpsilon(parameters.euclidean_fitness_epsilon);
+  }
+
+  ObservableGicp matcher;
+  pcl::PointCloud<pcl::PointXYZI>::ConstPtr target_cloud;
+  std::uint64_t target_version{0U};
+};
+
 bool ScanToMapResult::success() const
 {
   return status == ScanToMapStatus::kSuccess;
@@ -51,12 +71,16 @@ ScanToMapMatcher::ScanToMapMatcher(ScanToMapMatcherParameters parameters)
 : parameters_(std::move(parameters))
 {
   validateParameters();
+  implementation_ = std::make_unique<Impl>(parameters_);
 }
+
+ScanToMapMatcher::~ScanToMapMatcher() = default;
 
 ScanToMapResult ScanToMapMatcher::match(
   const pcl::PointCloud<pcl::PointXYZI> & scan,
   const pcl::PointCloud<pcl::PointXYZI> & local_map,
-  const Eigen::Isometry3d & initial_pose) const
+  std::uint64_t local_map_version,
+  const Eigen::Isometry3d & initial_pose)
 {
   ScanToMapResult result;
   result.pose = initial_pose;
@@ -74,20 +98,17 @@ ScanToMapResult ScanToMapMatcher::match(
   }
 
   const auto scan_pointer = scan.makeShared();
-  const auto map_pointer = local_map.makeShared();
-  ObservableGicp matcher;
+  auto & matcher = implementation_->matcher;
   matcher.setInputSource(scan_pointer);
-  matcher.setInputTarget(map_pointer);
-  matcher.setMaximumIterations(parameters_.maximum_iterations);
-  matcher.setMaximumOptimizerIterations(
-    parameters_.maximum_optimizer_iterations);
-  matcher.setCorrespondenceRandomness(parameters_.correspondence_randomness);
-  matcher.setMaxCorrespondenceDistance(
-    parameters_.maximum_correspondence_distance);
-  matcher.setTransformationEpsilon(parameters_.transformation_epsilon);
-  matcher.setRotationEpsilon(parameters_.rotation_epsilon);
-  matcher.setEuclideanFitnessEpsilon(
-    parameters_.euclidean_fitness_epsilon);
+  if (!implementation_->target_cloud ||
+    implementation_->target_version != local_map_version)
+  {
+    implementation_->target_cloud = local_map.makeShared();
+    implementation_->target_version = local_map_version;
+    matcher.setInputTarget(implementation_->target_cloud);
+  } else {
+    result.target_cache_reused = true;
+  }
 
   pcl::PointCloud<pcl::PointXYZI> aligned_scan;
   matcher.align(aligned_scan, initial_pose.matrix().cast<float>());
@@ -116,7 +137,7 @@ ScanToMapResult ScanToMapMatcher::match(
   }
 
   pcl::search::KdTree<pcl::PointXYZI> search;
-  search.setInputCloud(map_pointer);
+  search.setInputCloud(implementation_->target_cloud);
   const double maximum_distance_squared =
     parameters_.maximum_correspondence_distance *
     parameters_.maximum_correspondence_distance;

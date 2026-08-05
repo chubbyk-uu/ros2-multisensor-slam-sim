@@ -2,6 +2,8 @@
 #define SLAM_ROBOT_SLAM_3D__SCAN_TO_MAP_MATCHER_HPP_
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 
 #include <Eigen/Geometry>
 #include <pcl/point_cloud.h>
@@ -63,6 +65,7 @@ struct ScanToMapResult
   bool degenerate{true};
   bool degeneracy_handling_applied{false};
   double weak_translation_correction_scale{1.0};
+  bool target_cache_reused{false};
 
   bool success() const;
 };
@@ -71,18 +74,26 @@ class ScanToMapMatcher
 {
 public:
   explicit ScanToMapMatcher(ScanToMapMatcherParameters parameters);
+  ~ScanToMapMatcher();
+
+  ScanToMapMatcher(const ScanToMapMatcher &) = delete;
+  ScanToMapMatcher & operator=(const ScanToMapMatcher &) = delete;
 
   ScanToMapResult match(
     const pcl::PointCloud<pcl::PointXYZI> & scan,
     const pcl::PointCloud<pcl::PointXYZI> & local_map,
-    const Eigen::Isometry3d & initial_pose) const;
+    std::uint64_t local_map_version,
+    const Eigen::Isometry3d & initial_pose);
 
   const ScanToMapMatcherParameters & parameters() const;
 
 private:
+  class Impl;
+
   void validateParameters() const;
 
   ScanToMapMatcherParameters parameters_;
+  std::unique_ptr<Impl> implementation_;
 };
 
 const char * toString(ScanToMapStatus status);

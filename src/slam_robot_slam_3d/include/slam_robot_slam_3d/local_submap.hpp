@@ -2,6 +2,7 @@
 #define SLAM_ROBOT_SLAM_3D__LOCAL_SUBMAP_HPP_
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 
 #include <Eigen/Geometry>
@@ -29,6 +30,7 @@ public:
 
   const pcl::PointCloud<pcl::PointXYZI> & cloud() const;
   std::size_t keyframeCount() const;
+  std::uint64_t version() const;
   const LocalSubmapParameters & parameters() const;
 
 private:
@@ -38,6 +40,7 @@ private:
   LocalSubmapParameters parameters_;
   std::deque<pcl::PointCloud<pcl::PointXYZI>> keyframes_;
   pcl::PointCloud<pcl::PointXYZI> cloud_;
+  std::uint64_t version_{0U};
 };
 
 }  // namespace slam_robot_slam_3d

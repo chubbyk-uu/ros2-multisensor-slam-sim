@@ -33,16 +33,19 @@ TEST(LocalSubmap, TransformsAndBoundsKeyframes)
   parameters.maximum_keyframes = 2U;
   parameters.voxel_leaf_size = 0.05;
   LocalSubmap submap(parameters);
+  EXPECT_EQ(submap.version(), 0U);
 
   Eigen::Isometry3d first_pose = Eigen::Isometry3d::Identity();
   first_pose.translation().x() = 1.0;
   submap.addKeyframe(makeCloud(0.0), first_pose);
+  EXPECT_EQ(submap.version(), 1U);
   EXPECT_EQ(submap.keyframeCount(), 1U);
   ASSERT_FALSE(submap.cloud().empty());
   EXPECT_GE(submap.cloud().front().x, 1.0F);
 
   submap.addKeyframe(makeCloud(5.0), Eigen::Isometry3d::Identity());
   submap.addKeyframe(makeCloud(10.0), Eigen::Isometry3d::Identity());
+  EXPECT_EQ(submap.version(), 3U);
   EXPECT_EQ(submap.keyframeCount(), 2U);
   EXPECT_TRUE(std::all_of(
     submap.cloud().begin(), submap.cloud().end(),
@@ -53,7 +56,9 @@ TEST(LocalSubmap, ClearRemovesCloudAndKeyframes)
 {
   LocalSubmap submap(LocalSubmapParameters{});
   submap.addKeyframe(makeCloud(0.0), Eigen::Isometry3d::Identity());
+  const auto populated_version = submap.version();
   submap.clear();
+  EXPECT_EQ(submap.version(), populated_version + 1U);
   EXPECT_EQ(submap.keyframeCount(), 0U);
   EXPECT_TRUE(submap.cloud().empty());
   EXPECT_TRUE(submap.cloud().is_dense);
