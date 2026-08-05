@@ -59,6 +59,7 @@
       keyframe_rotation: 0.15
       maximum_odom_buffer_size: 200
       maximum_pending_clouds: 5
+      maximum_consecutive_match_failures: 5
       local_submap:
         maximum_keyframes: 12
         voxel_leaf_size: 0.15

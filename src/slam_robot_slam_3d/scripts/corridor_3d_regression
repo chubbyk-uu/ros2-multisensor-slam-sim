@@ -77,6 +77,9 @@ class Corridor3DRegression(Node):
         self.full_suppression_samples = 0
         self.degenerate_covariance_samples = 0
         self.degenerate_component_samples = 0
+        self.maximum_consecutive_failures = 0
+        self.maximum_submap_reinitializations = 0
+        self.submap_reinitialization_events = 0
         self.entry_samples = 0
         self.entry_false_detections = 0
         self.recovery_samples = 0
@@ -186,6 +189,15 @@ class Corridor3DRegression(Node):
                 applied_correction = float(
                     values["applied_correction_translation"]
                 )
+                consecutive_failures = int(
+                    values["consecutive_match_failures"]
+                )
+                submap_reinitializations = int(
+                    values["submap_reinitializations"]
+                )
+                submap_reinitialized = (
+                    values["submap_reinitialized"].lower() == "true"
+                )
             except (KeyError, ValueError):
                 self.malformed_diagnostics += 1
                 continue
@@ -205,6 +217,8 @@ class Corridor3DRegression(Node):
                 or translation_rank not in (0, 1, 2)
                 or not math.isfinite(maximum_covariance)
                 or not math.isfinite(applied_correction)
+                or consecutive_failures < 0
+                or submap_reinitializations < 0
             ):
                 self.malformed_diagnostics += 1
                 continue
@@ -217,6 +231,14 @@ class Corridor3DRegression(Node):
             self.accepted_matches += int(accepted)
             self.translation_ratios.append(translation_ratio)
             self.processing_times.append(processing_ms)
+            self.maximum_consecutive_failures = max(
+                self.maximum_consecutive_failures, consecutive_failures
+            )
+            self.maximum_submap_reinitializations = max(
+                self.maximum_submap_reinitializations,
+                submap_reinitializations,
+            )
+            self.submap_reinitialization_events += int(submap_reinitialized)
             if self.arguments.degenerate_start <= progress <= self.arguments.degenerate_end:
                 self.degenerate_samples += 1
                 self.degenerate_detections += int(degenerate)
@@ -399,6 +421,11 @@ class Corridor3DRegression(Node):
             ),
             "processing_budget": (
                 processing_p95 <= self.arguments.maximum_processing_p95
+            ),
+            "no_match_failure_recovery": (
+                self.maximum_consecutive_failures == 0
+                and self.maximum_submap_reinitializations == 0
+                and self.submap_reinitialization_events == 0
             ),
             "diagnostics_well_formed": self.malformed_diagnostics == 0,
             "no_critical_runtime_logs": not self.critical_logs,

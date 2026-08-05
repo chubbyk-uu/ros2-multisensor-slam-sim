@@ -26,6 +26,7 @@
 #include <tf2_ros/transform_listener.h>
 
 #include "slam_robot_slam_3d/local_submap.hpp"
+#include "slam_robot_slam_3d/match_failure_recovery.hpp"
 #include "slam_robot_slam_3d/odometry_interpolator.hpp"
 #include "slam_robot_slam_3d/scan_to_map_matcher.hpp"
 
@@ -144,17 +145,21 @@ public:
       "front_end.maximum_odom_buffer_size", 200);
     const auto pending_cloud_limit = declare_parameter<int>(
       "front_end.maximum_pending_clouds", 5);
+    const auto failure_limit = declare_parameter<int>(
+      "front_end.maximum_consecutive_match_failures", 5);
     if (input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
       local_frame_.empty() || !std::isfinite(maximum_odom_age_) ||
       maximum_odom_age_ <= 0.0 || !std::isfinite(keyframe_translation_) ||
       keyframe_translation_ <= 0.0 || !std::isfinite(keyframe_rotation_) ||
       keyframe_rotation_ <= 0.0 || buffer_size <= 1 ||
-      pending_cloud_limit <= 0)
+      pending_cloud_limit <= 0 || failure_limit <= 0)
     {
       throw std::invalid_argument("front-end parameters are invalid");
     }
     maximum_odom_buffer_size_ = static_cast<std::size_t>(buffer_size);
     maximum_pending_clouds_ = static_cast<std::size_t>(pending_cloud_limit);
+    match_failure_recovery_ = std::make_unique<MatchFailureRecovery>(
+      static_cast<std::size_t>(failure_limit));
 
     odometry_publisher_ = create_publisher<nav_msgs::msg::Odometry>(
       "/custom_slam_3d/laser_odom", 10);
@@ -352,7 +357,7 @@ private:
         local_submap_.addKeyframe(scan, lidar_pose);
         initialized_ = true;
         publishOutputs(
-          *message, odometry, scan, lidar_pose, nullptr, true, started);
+          *message, odometry, scan, lidar_pose, nullptr, true, false, started);
         return;
       }
 
@@ -370,7 +375,9 @@ private:
 
       Eigen::Isometry3d lidar_pose = predicted_lidar_pose;
       bool keyframe_added = false;
+      bool submap_reinitialized = false;
       if (match_result.success()) {
+        (void)match_failure_recovery_->observe(ScanToMapStatus::kSuccess);
         estimated_base_pose_ = match_result.pose * base_to_lidar.inverse();
         if (force_planar_motion_) {
           estimated_base_pose_ = planarPose(estimated_base_pose_);
@@ -387,11 +394,21 @@ private:
         }
       } else {
         estimated_base_pose_ = predicted_base_pose;
+        if (match_failure_recovery_->observe(match_result.status)) {
+          local_submap_.clear();
+          local_submap_.addKeyframe(scan, lidar_pose);
+          last_keyframe_base_pose_ = estimated_base_pose_;
+          keyframe_added = true;
+          submap_reinitialized = true;
+          RCLCPP_WARN(
+            get_logger(),
+            "Reinitialized the 3D local submap after consecutive match failures");
+        }
       }
       last_odom_pose_ = odom_pose;
       publishOutputs(
         *message, odometry, scan, lidar_pose, &match_result,
-        keyframe_added, started);
+        keyframe_added, submap_reinitialized, started);
     } catch (const tf2::TransformException & error) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 5000,
@@ -410,6 +427,7 @@ private:
     const Eigen::Isometry3d & lidar_pose,
     const ScanToMapResult * match_result,
     bool keyframe_added,
+    bool submap_reinitialized,
     const std::chrono::steady_clock::time_point & started)
   {
     nav_msgs::msg::Odometry odometry;
@@ -460,13 +478,14 @@ private:
     }
     publishDiagnostics(
       input_message.header, match_result, keyframe_added,
-      translation_covariance, yaw_variance, started);
+      submap_reinitialized, translation_covariance, yaw_variance, started);
   }
 
   void publishDiagnostics(
     const std_msgs::msg::Header & header,
     const ScanToMapResult * result,
     bool keyframe_added,
+    bool submap_reinitialized,
     const Eigen::Matrix2d & translation_covariance,
     double yaw_variance,
     const std::chrono::steady_clock::time_point & started)
@@ -577,6 +596,14 @@ private:
     status.values.push_back(makeValue(
       "keyframe_added", keyframe_added ? "true" : "false"));
     status.values.push_back(makeValue(
+      "consecutive_match_failures",
+      std::to_string(match_failure_recovery_->consecutiveFailures())));
+    status.values.push_back(makeValue(
+      "submap_reinitializations",
+      std::to_string(match_failure_recovery_->reinitializationCount())));
+    status.values.push_back(makeValue(
+      "submap_reinitialized", submap_reinitialized ? "true" : "false"));
+    status.values.push_back(makeValue(
       "local_keyframes", std::to_string(local_submap_.keyframeCount())));
     status.values.push_back(makeValue(
       "local_map_points", std::to_string(local_submap_.cloud().size())));
@@ -601,6 +628,7 @@ private:
   double keyframe_rotation_{0.15};
   std::size_t maximum_odom_buffer_size_{200U};
   std::size_t maximum_pending_clouds_{5U};
+  std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};
   Eigen::Isometry3d last_odom_pose_{Eigen::Isometry3d::Identity()};

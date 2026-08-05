@@ -151,6 +151,15 @@ class FrontEndMotionRegression(Node):
                     "covariance_yy": float(
                         values["translation_covariance_yy"]
                     ),
+                    "consecutive_failures": int(
+                        values["consecutive_match_failures"]
+                    ),
+                    "submap_reinitializations": int(
+                        values["submap_reinitializations"]
+                    ),
+                    "submap_reinitialized": (
+                        values["submap_reinitialized"].lower() == "true"
+                    ),
                 }
             except (KeyError, ValueError):
                 self.malformed_diagnostics += 1
@@ -164,6 +173,8 @@ class FrontEndMotionRegression(Node):
                 or not math.isfinite(sample["covariance_xy"])
                 or not math.isfinite(sample["covariance_yy"])
                 or sample["translation_rank"] not in (0, 1, 2)
+                or sample["consecutive_failures"] < 0
+                or sample["submap_reinitializations"] < 0
             ):
                 self.malformed_diagnostics += 1
                 continue
@@ -256,6 +267,12 @@ class FrontEndMotionRegression(Node):
             "normal_covariance_bounded": all(
                 max(sample["covariance_xx"], sample["covariance_yy"])
                 <= 0.05
+                for sample in samples
+            ),
+            "no_match_failure_recovery": all(
+                sample["consecutive_failures"] == 0
+                and sample["submap_reinitializations"] == 0
+                and not sample["submap_reinitialized"]
                 for sample in samples
             ),
             "position_error": position_error <= args.maximum_position_error,

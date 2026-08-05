@@ -63,6 +63,17 @@ target_include_directories(
 )
 ament_target_dependencies(odometry_interpolator nav_msgs rclcpp)
 
+add_library(match_failure_recovery src/match_failure_recovery.cpp)
+target_compile_features(match_failure_recovery PUBLIC cxx_std_17)
+target_compile_options(match_failure_recovery PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  match_failure_recovery
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    ${PCL_INCLUDE_DIRS}
+)
+target_link_libraries(match_failure_recovery PUBLIC ${PCL_LIBRARIES})
+
 add_executable(
   point_cloud_preprocessor_node
   src/point_cloud_preprocessor_node.cpp
@@ -88,6 +99,7 @@ target_compile_options(
 target_link_libraries(
   scan_to_map_odometry_node
   local_submap
+  match_failure_recovery
   odometry_interpolator
   scan_to_map_matcher
   ${PCL_LIBRARIES}
@@ -179,6 +191,14 @@ if(BUILD_TESTING)
   target_link_libraries(
     test_odometry_interpolator
     odometry_interpolator
+  )
+  ament_add_gtest(
+    test_match_failure_recovery
+    test/test_match_failure_recovery.cpp
+  )
+  target_link_libraries(
+    test_match_failure_recovery
+    match_failure_recovery
   )
   ament_add_pytest_test(
     test_grid_contract
