@@ -8,6 +8,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     RegisterEventHandler,
 )
+from launch.conditions import UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -24,6 +25,7 @@ def running_in_wsl():
 
 
 def generate_launch_description():
+    smoke = LaunchConfiguration("smoke")
     simulation_launch = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "launch", "simulation.launch.py"]
     )
@@ -46,12 +48,18 @@ def generate_launch_description():
         executable="corridor_3d_regression",
         name="corridor_3d_regression",
         output="screen",
+        condition=UnlessCondition(smoke),
     )
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("gui", default_value="false"),
             DeclareLaunchArgument("rviz", default_value="false"),
+            DeclareLaunchArgument(
+                "smoke",
+                default_value="false",
+                description="Start dependencies without running the driving regression.",
+            ),
             DeclareLaunchArgument(
                 "use_wsl_gpu",
                 default_value="true" if running_in_wsl() else "false",

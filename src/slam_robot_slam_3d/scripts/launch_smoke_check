@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+
+"""Keep each composite 3D launch alive long enough to verify its node graph."""
+
+import argparse
+from dataclasses import dataclass
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+
+@dataclass(frozen=True)
+class LaunchProfile:
+    """One composite launch and the nodes that prove its delayed startup worked."""
+
+    name: str
+    launch_file: str
+    required_nodes: tuple[str, ...]
+    extra_arguments: tuple[str, ...] = ()
+
+
+PROFILES = (
+    LaunchProfile(
+        "corridor",
+        "corridor_3d_regression.launch.py",
+        (
+            "/ekf_filter_node",
+            "/point_cloud_preprocessor_3d",
+            "/scan_to_map_odometry_3d",
+        ),
+    ),
+    LaunchProfile(
+        "motion",
+        "front_end_motion_regression.launch.py",
+        (
+            "/ekf_filter_node",
+            "/point_cloud_preprocessor_3d",
+            "/scan_to_map_odometry_3d",
+        ),
+        ("profile:=rotation",),
+    ),
+    LaunchProfile(
+        "structured_loop",
+        "structured_loop_regression.launch.py",
+        ("/ekf_filter_node", "/rtabmap/rtabmap"),
+    ),
+    LaunchProfile(
+        "structured_navigation",
+        "structured_navigation_regression.launch.py",
+        ("/bt_navigator", "/ekf_filter_node", "/rtabmap/rtabmap"),
+    ),
+    LaunchProfile(
+        "structured_dataset",
+        "structured_dataset_recording.launch.py",
+        ("/ekf_filter_node", "/rtabmap/rtabmap"),
+    ),
+)
+
+FATAL_LOG_FRAGMENTS = (
+    "launch configuration",
+    "process has died",
+    "traceback (most recent call last)",
+)
+
+
+def profile_by_name(name):
+    """Return the named profile or raise an argparse-friendly error."""
+    for profile in PROFILES:
+        if profile.name == name:
+            return profile
+    raise ValueError(f"unknown profile: {name}")
+
+
+def launch_command(profile, dataset_output):
+    """Build the headless command and preserve normal regression defaults."""
+    command = [
+        "ros2",
+        "launch",
+        "slam_robot_slam_3d",
+        profile.launch_file,
+        "gui:=false",
+        "rviz:=false",
+        "smoke:=true",
+        *profile.extra_arguments,
+    ]
+    if profile.name == "structured_dataset":
+        command.append(f"output:={dataset_output}")
+    return command
+
+
+def ros_node_names():
+    """Read the running ROS graph through the same CLI available to users."""
+    result = subprocess.run(
+        ["ros2", "node", "list"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+    )
+    if result.returncode != 0:
+        return set()
+    return set(result.stdout.splitlines())
+
+
+def log_contains_fatal(log_path):
+    """Return the first startup-fatal fragment observed in the launch log."""
+    content = log_path.read_text(errors="replace").lower()
+    return next(
+        (fragment for fragment in FATAL_LOG_FRAGMENTS if fragment in content),
+        None,
+    )
+
+
+def stop_process_group(process):
+    """Stop a launch and every child it started without leaving a simulator behind."""
+    if process.poll() is not None:
+        return
+    os.killpg(process.pid, signal.SIGINT)
+    try:
+        process.wait(timeout=15.0)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=5.0)
+
+
+def run_profile(profile, startup_timeout, hold_time):
+    """Require a profile's key nodes to remain alive for the requested duration."""
+    with tempfile.TemporaryDirectory(prefix="slam_robot_3d_smoke_") as temp_dir:
+        temporary_path = Path(temp_dir)
+        log_path = temporary_path / "launch.log"
+        dataset_output = temporary_path / "dataset"
+        command = launch_command(profile, dataset_output)
+        with log_path.open("w") as log_file:
+            process = subprocess.Popen(
+                command,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            try:
+                startup_deadline = time.monotonic() + startup_timeout
+                hold_deadline = None
+                while True:
+                    fatal = log_contains_fatal(log_path)
+                    if fatal is not None:
+                        raise RuntimeError(f"launch log contains '{fatal}'")
+                    if process.poll() is not None:
+                        raise RuntimeError(
+                            f"launch exited before readiness with code {process.returncode}"
+                        )
+                    missing = set(profile.required_nodes) - ros_node_names()
+                    if missing:
+                        hold_deadline = None
+                    elif hold_deadline is None:
+                        hold_deadline = time.monotonic() + hold_time
+                    elif time.monotonic() >= hold_deadline:
+                        return
+                    if hold_deadline is None and time.monotonic() >= startup_deadline:
+                        break
+                    time.sleep(1.0)
+                missing = set(profile.required_nodes) - ros_node_names()
+                raise RuntimeError(
+                    "startup timed out; missing nodes: "
+                    + ", ".join(sorted(missing))
+                )
+            finally:
+                stop_process_group(process)
+
+
+def parse_arguments(argv):
+    """Parse a profile selection and bounded startup/hold durations."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--profile",
+        choices=("all", *(profile.name for profile in PROFILES)),
+        default="all",
+    )
+    parser.add_argument("--startup-timeout", type=float, default=60.0)
+    parser.add_argument("--hold-time", type=float, default=60.0)
+    arguments = parser.parse_args(argv)
+    if arguments.startup_timeout <= 0.0 or arguments.hold_time <= 0.0:
+        parser.error("startup and hold durations must be positive")
+    return arguments
+
+
+def main(argv=None):
+    """Run the requested smoke profiles serially to avoid ROS graph conflicts."""
+    arguments = parse_arguments(sys.argv[1:] if argv is None else argv)
+    profiles = PROFILES if arguments.profile == "all" else (
+        profile_by_name(arguments.profile),
+    )
+    for profile in profiles:
+        print(f"[smoke] starting {profile.name}", flush=True)
+        try:
+            run_profile(profile, arguments.startup_timeout, arguments.hold_time)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+            print(f"[smoke] FAIL {profile.name}: {error}", flush=True)
+            return 1
+        print(f"[smoke] PASS {profile.name}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

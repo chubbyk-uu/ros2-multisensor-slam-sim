@@ -45,6 +45,11 @@ def generate_launch_description():
             DeclareLaunchArgument("gui", default_value="false"),
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument(
+                "smoke",
+                default_value="false",
+                description="Start dependencies without running the driving regression.",
+            ),
+            DeclareLaunchArgument(
                 "database_path",
                 default_value="/tmp/slam_robot_structured_dataset_recording.db",
             ),
@@ -62,6 +67,7 @@ def generate_launch_description():
                             "laps": LaunchConfiguration("laps"),
                             "gui": LaunchConfiguration("gui"),
                             "rviz": LaunchConfiguration("rviz"),
+                            "smoke": LaunchConfiguration("smoke"),
                             "database_path": LaunchConfiguration(
                                 "database_path"
                             ),

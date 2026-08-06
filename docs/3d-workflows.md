@@ -105,6 +105,21 @@ ros2 launch slam_robot_slam_3d front_end_motion_regression.launch.py \
 两种 profile 都检查匹配接受率、真值误差、相对 `/odom` 劣化、退化误报、
 意外子图重初始化、回调间隔和 P95。打滑 profile 还要求低摩擦实际造成可测
 的里程计误差。
+
+### 复合启动冒烟回归
+
+任何修改复合 launch、作用域、延迟事件处理器或启动参数后，先运行：
+
+```bash
+ros2 run slam_robot_slam_3d launch_smoke_check
+```
+
+它以无界面模式串行启动走廊前端、运动前端、结构化 RTAB-Map、RTAB-Map +
+Nav2、结构化数据录制五个入口。每个入口必须在关键节点连续在线 `60 s` 后
+才通过；脚本检查启动日志中的作用域和子进程错误，并以独立进程组回收全部
+子进程。数据录制的短暂 bag 输出位于临时目录，结束后自动清理。单独复测某个
+入口时可用 `--profile structured_navigation`；默认超时和保持时长都可通过
+`--startup-timeout`、`--hold-time` 调整。
 首版 GICP、关键帧和局部子图参数由固定包、长走廊、快速旋转和打滑四类测试
 共同约束；进入回环后端阶段后，修改这些参数必须复跑该集合。
 

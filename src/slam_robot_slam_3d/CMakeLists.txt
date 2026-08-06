@@ -142,6 +142,7 @@ install(
     scripts/front_end_motion_regression
     scripts/front_end_regression
     scripts/grid_contract_check
+    scripts/launch_smoke_check
     scripts/pointcloud_contract_check
     scripts/preprocessing_regression
     scripts/structured_loop_regression
@@ -235,6 +236,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_height_aware_navigation
     test/test_height_aware_navigation.py
+  )
+  ament_add_pytest_test(
+    test_launch_smoke_check
+    test/test_launch_smoke_check.py
   )
 endif()
 

@@ -8,6 +8,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     RegisterEventHandler,
 )
+from launch.conditions import UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -24,6 +25,7 @@ def running_in_wsl():
 
 
 def generate_launch_description():
+    smoke = LaunchConfiguration("smoke")
     simulation_launch = PathJoinSubstitution(
         [
             FindPackageShare("slam_robot_slam_3d"),
@@ -48,6 +50,7 @@ def generate_launch_description():
             LaunchConfiguration("laps"),
             "--navigation-acceptance",
         ],
+        condition=UnlessCondition(smoke),
     )
 
     return LaunchDescription(
@@ -55,6 +58,11 @@ def generate_launch_description():
             DeclareLaunchArgument("laps", default_value="2"),
             DeclareLaunchArgument("gui", default_value="false"),
             DeclareLaunchArgument("rviz", default_value="false"),
+            DeclareLaunchArgument(
+                "smoke",
+                default_value="false",
+                description="Start dependencies without running the driving regression.",
+            ),
             DeclareLaunchArgument(
                 "database_path",
                 default_value="/tmp/slam_robot_structured_navigation.db",
