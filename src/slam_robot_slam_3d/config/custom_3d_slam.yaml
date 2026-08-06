@@ -25,7 +25,10 @@
     # integration keeps these under the same parameter namespace as the
     # preprocessor, but the preprocessing-only launch ignores this section.
     matcher:
-      maximum_iterations: 30
+      # The 55 m weak-geometry and three-rate rotation regressions converge
+      # within ten outer GICP iterations; a higher cap only consumes the 10 Hz
+      # front-end budget without improving their acceptance or error bounds.
+      maximum_iterations: 10
       maximum_optimizer_iterations: 20
       correspondence_randomness: 20
       maximum_correspondence_distance: 0.50
@@ -71,6 +74,7 @@
         angular_bins: 60
         minimum_keyframe_separation: 80
         minimum_travel_distance: 8.0
+        maximum_candidate_position_distance: 3.0
         ring_key_candidate_count: 20
         maximum_candidates: 5
 

@@ -26,6 +26,7 @@ def running_in_wsl():
 
 def generate_launch_description():
     smoke = LaunchConfiguration("smoke")
+    params_file = LaunchConfiguration("params_file")
     simulation_launch = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "launch", "simulation.launch.py"]
     )
@@ -43,6 +44,13 @@ def generate_launch_description():
             "degenerate_corridor_3d.sdf",
         ]
     )
+    default_parameters = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_slam_3d"),
+            "config",
+            "custom_3d_slam.yaml",
+        ]
+    )
     regression = Node(
         package="slam_robot_slam_3d",
         executable="corridor_3d_regression",
@@ -55,6 +63,11 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("gui", default_value="false"),
             DeclareLaunchArgument("rviz", default_value="false"),
+            DeclareLaunchArgument(
+                "params_file",
+                default_value=default_parameters,
+                description="Custom 3D front-end parameter file.",
+            ),
             DeclareLaunchArgument(
                 "smoke",
                 default_value="false",
@@ -88,7 +101,8 @@ def generate_launch_description():
                 scoped=True,
                 actions=[
                     IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(front_end_launch)
+                        PythonLaunchDescriptionSource(front_end_launch),
+                        launch_arguments={"params_file": params_file}.items(),
                     )
                 ],
             ),

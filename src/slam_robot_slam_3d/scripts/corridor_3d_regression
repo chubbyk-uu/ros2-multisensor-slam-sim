@@ -86,6 +86,9 @@ class Corridor3DRegression(Node):
         self.recovery_false_detections = 0
         self.translation_ratios = []
         self.processing_times = []
+        self.alignment_times = []
+        self.observability_times = []
+        self.feature_cache_times = []
         self.maximum_position_error = 0.0
         self.maximum_lateral_error = 0.0
         self.maximum_yaw_error = 0.0
@@ -96,6 +99,7 @@ class Corridor3DRegression(Node):
         self.maximum_front_end_gap = 0.0
         self.malformed_diagnostics = 0
         self.critical_logs = []
+        self.maximum_pose_graph_commits = 0
 
         self.command_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_subscription(
@@ -198,6 +202,10 @@ class Corridor3DRegression(Node):
                 submap_reinitialized = (
                     values["submap_reinitialized"].lower() == "true"
                 )
+                pose_graph_commits = int(values["pose_graph_commits"])
+                alignment_ms = float(values["gicp_alignment_ms"])
+                observability_ms = float(values["observability_ms"])
+                feature_cache_ms = float(values["target_feature_cache_ms"])
             except (KeyError, ValueError):
                 self.malformed_diagnostics += 1
                 continue
@@ -219,6 +227,10 @@ class Corridor3DRegression(Node):
                 or not math.isfinite(applied_correction)
                 or consecutive_failures < 0
                 or submap_reinitializations < 0
+                or pose_graph_commits < 0
+                or not all(math.isfinite(value) and value >= 0.0 for value in (
+                    alignment_ms, observability_ms, feature_cache_ms
+                ))
             ):
                 self.malformed_diagnostics += 1
                 continue
@@ -231,6 +243,9 @@ class Corridor3DRegression(Node):
             self.accepted_matches += int(accepted)
             self.translation_ratios.append(translation_ratio)
             self.processing_times.append(processing_ms)
+            self.alignment_times.append(alignment_ms)
+            self.observability_times.append(observability_ms)
+            self.feature_cache_times.append(feature_cache_ms)
             self.maximum_consecutive_failures = max(
                 self.maximum_consecutive_failures, consecutive_failures
             )
@@ -239,6 +254,9 @@ class Corridor3DRegression(Node):
                 submap_reinitializations,
             )
             self.submap_reinitialization_events += int(submap_reinitialized)
+            self.maximum_pose_graph_commits = max(
+                self.maximum_pose_graph_commits, pose_graph_commits
+            )
             if self.arguments.degenerate_start <= progress <= self.arguments.degenerate_end:
                 self.degenerate_samples += 1
                 self.degenerate_detections += int(degenerate)
@@ -362,6 +380,9 @@ class Corridor3DRegression(Node):
         sorted_times = sorted(self.processing_times)
         p95_index = max(0, math.ceil(0.95 * len(sorted_times)) - 1)
         processing_p95 = sorted_times[p95_index] if sorted_times else math.inf
+        alignment_p95 = sorted(self.alignment_times)[p95_index]
+        observability_p95 = sorted(self.observability_times)[p95_index]
+        feature_cache_max = max(self.feature_cache_times, default=math.inf)
         minimum_ratio = min(self.translation_ratios, default=math.inf)
 
         checks = {
@@ -427,6 +448,9 @@ class Corridor3DRegression(Node):
                 and self.maximum_submap_reinitializations == 0
                 and self.submap_reinitialization_events == 0
             ),
+            "no_degenerate_corridor_loop_commit": (
+                self.maximum_pose_graph_commits == 0
+            ),
             "diagnostics_well_formed": self.malformed_diagnostics == 0,
             "no_critical_runtime_logs": not self.critical_logs,
         }
@@ -466,6 +490,12 @@ class Corridor3DRegression(Node):
             f"runtime      : P95={processing_p95:.3f} ms, "
             f"max gap={self.maximum_front_end_gap:.3f} s"
         )
+        print(
+            f"breakdown    : align P95={alignment_p95:.3f} ms, "
+            f"observability P95={observability_p95:.3f} ms, "
+            f"feature-cache max={feature_cache_max:.3f} ms"
+        )
+        print(f"loop graph   : commits={self.maximum_pose_graph_commits}")
         for name, passed in checks.items():
             print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
         if self.critical_logs:

@@ -72,6 +72,9 @@ struct ScanToMapResult
   bool degeneracy_handling_applied{false};
   double weak_translation_correction_scale{1.0};
   bool target_cache_reused{false};
+  double gicp_alignment_ms{0.0};
+  double target_feature_cache_ms{0.0};
+  double observability_ms{0.0};
 
   bool success() const;
   Eigen::Matrix2d translationCovariance(

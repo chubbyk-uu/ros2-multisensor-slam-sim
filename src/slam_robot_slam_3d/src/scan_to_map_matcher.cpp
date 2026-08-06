@@ -1,6 +1,7 @@
 #include "slam_robot_slam_3d/scan_to_map_matcher.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -62,6 +63,8 @@ public:
   ObservableGicp matcher;
   pcl::PointCloud<pcl::PointXYZI>::ConstPtr target_cloud;
   std::uint64_t target_version{0U};
+  std::vector<Eigen::Vector3d> target_normals;
+  std::uint64_t target_normals_version{0U};
 };
 
 bool ScanToMapResult::success() const
@@ -133,10 +136,30 @@ ScanToMapResult ScanToMapMatcher::match(
   }
 
   pcl::PointCloud<pcl::PointXYZI> aligned_scan;
+  const auto alignment_started = std::chrono::steady_clock::now();
   matcher.align(aligned_scan, initial_pose.matrix().cast<float>());
+  result.gicp_alignment_ms = std::chrono::duration<double, std::milli>(
+    std::chrono::steady_clock::now() - alignment_started).count();
   if (!matcher.hasConverged()) {
     result.status = ScanToMapStatus::kNotConverged;
     return result;
+  }
+
+  if (implementation_->target_normals_version != local_map_version) {
+    const auto feature_cache_started = std::chrono::steady_clock::now();
+    const auto & covariances = matcher.targetCovariances();
+    implementation_->target_normals.assign(
+      covariances.size(), Eigen::Vector3d::Zero());
+    for (std::size_t index = 0U; index < covariances.size(); ++index) {
+      const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(
+        covariances[index]);
+      if (solver.info() == Eigen::Success) {
+        implementation_->target_normals[index] = solver.eigenvectors().col(0);
+      }
+    }
+    implementation_->target_normals_version = local_map_version;
+    result.target_feature_cache_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - feature_cache_started).count();
   }
 
   const Eigen::Matrix4d final_matrix =
@@ -180,6 +203,7 @@ ScanToMapResult ScanToMapMatcher::match(
   Eigen::Matrix3d planar_information = Eigen::Matrix3d::Zero();
   std::vector<int> indices(1);
   std::vector<float> squared_distances(1);
+  const auto observability_started = std::chrono::steady_clock::now();
   for (const auto & point : aligned_scan) {
     if (search.nearestKSearch(point, 1, indices, squared_distances) == 1 &&
       squared_distances.front() <= maximum_distance_squared)
@@ -187,13 +211,8 @@ ScanToMapResult ScanToMapMatcher::match(
       ++result.correspondence_count;
       squared_error_sum += squared_distances.front();
 
-      const Eigen::Matrix3d & covariance =
-        matcher.targetCovariances()[indices.front()];
-      const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> solver(covariance);
-      if (solver.info() != Eigen::Success) {
-        continue;
-      }
-      const Eigen::Vector3d normal = solver.eigenvectors().col(0);
+      const Eigen::Vector3d & normal = implementation_->target_normals[
+        static_cast<std::size_t>(indices.front())];
       if (!normal.allFinite()) {
         continue;
       }
@@ -217,6 +236,8 @@ ScanToMapResult ScanToMapMatcher::match(
       ++result.observability_correspondences;
     }
   }
+  result.observability_ms = std::chrono::duration<double, std::milli>(
+    std::chrono::steady_clock::now() - observability_started).count();
   if (result.correspondence_count < parameters_.minimum_correspondences) {
     result.status = ScanToMapStatus::kInsufficientCorrespondences;
     return result;

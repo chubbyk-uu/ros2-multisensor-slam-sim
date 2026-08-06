@@ -334,6 +334,9 @@ private:
     parameters.minimum_travel_distance = declare_parameter<double>(
       "loop_closure.scan_context.minimum_travel_distance",
       parameters.minimum_travel_distance);
+    parameters.maximum_candidate_position_distance = declare_parameter<double>(
+      "loop_closure.scan_context.maximum_candidate_position_distance",
+      parameters.maximum_candidate_position_distance);
     parameters.ring_key_candidate_count =
       static_cast<std::size_t>(ring_key_candidate_count);
     parameters.maximum_candidates = static_cast<std::size_t>(maximum_candidates);
@@ -348,7 +351,10 @@ private:
       "loop_closure.verification.maximum_correction_translation", 3.0);
     parameters.matcher.maximum_correction_rotation = declare_parameter<double>(
       "loop_closure.verification.maximum_correction_rotation", 1.0);
-    parameters.matcher.degeneracy_handling_enabled = false;
+    // A loop edge must be geometrically observable. Unlike the local front
+    // end, it cannot safely fall back to wheel+IMU prediction for a weak
+    // direction, because that prediction would become a global graph fact.
+    parameters.matcher.degeneracy_handling_enabled = true;
     const auto submap_neighbors = declare_parameter<int>(
       "loop_closure.verification.submap_neighbor_keyframes",
       static_cast<int>(parameters.submap_neighbor_keyframes));
@@ -923,6 +929,15 @@ private:
     status.values.push_back(makeValue(
       "target_cache_reused",
       result != nullptr && result->target_cache_reused ? "true" : "false"));
+    status.values.push_back(makeValue(
+      "gicp_alignment_ms",
+      std::to_string(result == nullptr ? 0.0 : result->gicp_alignment_ms)));
+    status.values.push_back(makeValue(
+      "target_feature_cache_ms",
+      std::to_string(result == nullptr ? 0.0 : result->target_feature_cache_ms)));
+    status.values.push_back(makeValue(
+      "observability_ms",
+      std::to_string(result == nullptr ? 0.0 : result->observability_ms)));
     status.values.push_back(makeValue(
       "keyframe_added", keyframe_added ? "true" : "false"));
     status.values.push_back(makeValue(

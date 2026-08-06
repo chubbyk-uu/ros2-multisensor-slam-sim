@@ -47,7 +47,7 @@ TEST(ScanContextIndex, RetrievesDistantHistoricalPlaceAndEstimatesYaw)
   EXPECT_TRUE(index.addAndQuery(makeKeyframe(0U, 0.0, 0.0, 0.0)).empty());
   EXPECT_TRUE(index.addAndQuery(makeKeyframe(1U, 5.0, 5.0, 0.0)).empty());
   const auto candidates = index.addAndQuery(
-    makeKeyframe(2U, 10.0, 5.0, 0.35));
+    makeKeyframe(2U, 10.0, 0.5, 0.35));
 
   ASSERT_EQ(candidates.size(), 1U);
   EXPECT_EQ(candidates.front().keyframe_id, 0U);

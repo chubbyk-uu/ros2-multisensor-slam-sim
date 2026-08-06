@@ -125,7 +125,9 @@ std::vector<ScanContextCandidate> ScanContextIndex::query(
       current.keyframe_id - historical.keyframe_id <
       parameters_.minimum_keyframe_separation ||
       current.accumulated_distance - historical.accumulated_distance <
-      parameters_.minimum_travel_distance)
+      parameters_.minimum_travel_distance ||
+      (current.position - historical.position).norm() >
+      parameters_.maximum_candidate_position_distance)
     {
       continue;
     }
@@ -173,6 +175,8 @@ void ScanContextIndex::validateParameters() const
     parameters_.minimum_keyframe_separation == 0U ||
     !std::isfinite(parameters_.minimum_travel_distance) ||
     parameters_.minimum_travel_distance < 0.0 ||
+    !std::isfinite(parameters_.maximum_candidate_position_distance) ||
+    parameters_.maximum_candidate_position_distance <= 0.0 ||
     parameters_.ring_key_candidate_count == 0U ||
     parameters_.maximum_candidates == 0U)
   {
