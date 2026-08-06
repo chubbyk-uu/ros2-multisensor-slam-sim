@@ -47,6 +47,7 @@
   <exec_depend>rtabmap_rviz_plugins</exec_depend>
   <exec_depend>rtabmap_slam</exec_depend>
   <depend>sensor_msgs</depend>
+  <depend>slam_robot_slam</depend>
   <exec_depend>slam_robot_gazebo</exec_depend>
   <exec_depend>slam_robot_navigation</exec_depend>
   <depend>std_msgs</depend>

@@ -56,6 +56,10 @@ class FrontEndRegression(Node):
         self.declare_parameter("maximum_yaw_error", 0.20)
         self.declare_parameter("maximum_pair_age", 0.03)
         self.declare_parameter("maximum_degenerate_ratio", 0.0)
+        self.declare_parameter("minimum_global_keyframes", 2)
+        self.declare_parameter("minimum_global_keyframe_points", 100)
+        self.declare_parameter("minimum_sim_time", 0.0)
+        self.declare_parameter("minimum_pose_graph_commits", 0)
 
         self.minimum_samples = self.get_parameter("minimum_samples").value
         self.minimum_truth_distance = self.get_parameter(
@@ -78,6 +82,16 @@ class FrontEndRegression(Node):
         self.maximum_degenerate_ratio = self.get_parameter(
             "maximum_degenerate_ratio"
         ).value
+        self.minimum_global_keyframes = self.get_parameter(
+            "minimum_global_keyframes"
+        ).value
+        self.minimum_global_keyframe_points = self.get_parameter(
+            "minimum_global_keyframe_points"
+        ).value
+        self.minimum_sim_time = self.get_parameter("minimum_sim_time").value
+        self.minimum_pose_graph_commits = self.get_parameter(
+            "minimum_pose_graph_commits"
+        ).value
 
         self.truth_buffer = deque(maxlen=200)
         self.custom_origin = None
@@ -95,6 +109,10 @@ class FrontEndRegression(Node):
         self.planar_information_minima = []
         self.yaw_information_values = []
         self.degenerate_matches = 0
+        self.global_keyframes = []
+        self.global_keyframe_points = []
+        self.latest_sim_time = 0.0
+        self.pose_graph_commits = 0
         self.result = None
 
         self.create_subscription(
@@ -167,8 +185,15 @@ class FrontEndRegression(Node):
                 )
                 yaw_information = float(values["yaw_information"])
                 degenerate = values["degenerate"].lower() == "true"
+                global_keyframes = int(values["global_keyframes"])
+                global_keyframe_points = int(values["global_keyframe_points"])
+                pose_graph_commits = int(values["pose_graph_commits"])
             except (KeyError, ValueError) as error:
                 self.get_logger().error(f"Invalid diagnostics sample: {error}")
+                self.result = 2
+                return
+            if global_keyframes < 1 or global_keyframe_points < 1:
+                self.get_logger().error("Invalid global keyframe diagnostics")
                 self.result = 2
                 return
             if not math.isfinite(processing_ms) or processing_ms < 0.0:
@@ -182,6 +207,13 @@ class FrontEndRegression(Node):
             self.planar_information_minima.append(planar_information_minimum)
             self.yaw_information_values.append(yaw_information)
             self.degenerate_matches += int(degenerate)
+            self.global_keyframes.append(global_keyframes)
+            self.global_keyframe_points.append(global_keyframe_points)
+            self.pose_graph_commits = pose_graph_commits
+            self.latest_sim_time = (
+                message.header.stamp.sec
+                + 1.0e-9 * message.header.stamp.nanosec
+            )
         self._finish_if_ready()
 
     def _finish_if_ready(self):
@@ -190,6 +222,7 @@ class FrontEndRegression(Node):
             or self.diagnostic_samples < self.minimum_samples
             or self.trajectory_samples < self.minimum_samples
             or self.truth_distance < self.minimum_truth_distance
+            or self.latest_sim_time < self.minimum_sim_time
         ):
             return
         acceptance_ratio = self.accepted_matches / self.diagnostic_samples
@@ -209,6 +242,8 @@ class FrontEndRegression(Node):
         minimum_planar_information = min(self.planar_information_minima)
         minimum_yaw_information = min(self.yaw_information_values)
         degenerate_ratio = self.degenerate_matches / self.diagnostic_samples
+        global_keyframe_count = self.global_keyframes[-1]
+        global_keyframe_point_count = self.global_keyframe_points[-1]
         self.get_logger().info(
             "RESULT "
             f"samples={self.diagnostic_samples} "
@@ -220,6 +255,9 @@ class FrontEndRegression(Node):
             f"planar_information_min={minimum_planar_information:.4f} "
             f"yaw_information_min={minimum_yaw_information:.4f} "
             f"degenerate={degenerate_ratio:.4f} "
+            f"global_keyframes={global_keyframe_count} "
+            f"global_keyframe_points={global_keyframe_point_count} "
+            f"pose_graph_commits={self.pose_graph_commits} "
             f"position_error={self.latest_position_error:.3f}m "
             f"position_error_max={self.maximum_observed_position_error:.3f}m "
             f"yaw_error={math.degrees(self.latest_yaw_error):.3f}deg"
@@ -244,6 +282,18 @@ class FrontEndRegression(Node):
             (
                 degenerate_ratio <= self.maximum_degenerate_ratio,
                 "degenerate match ratio",
+            ),
+            (
+                global_keyframe_count >= self.minimum_global_keyframes,
+                "global keyframe count",
+            ),
+            (
+                global_keyframe_point_count >= self.minimum_global_keyframe_points,
+                "global keyframe point count",
+            ),
+            (
+                self.pose_graph_commits >= self.minimum_pose_graph_commits,
+                "pose graph commit count",
             ),
         ]
         failures = [name for passed, name in checks if not passed]

@@ -18,6 +18,7 @@ find_package(PCL REQUIRED COMPONENTS common filters kdtree registration)
 find_package(pcl_conversions REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(slam_robot_slam REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 add_library(point_cloud_preprocessor src/point_cloud_preprocessor.cpp)
@@ -55,6 +56,59 @@ target_include_directories(
     ${PCL_INCLUDE_DIRS}
 )
 target_link_libraries(local_submap PUBLIC Eigen3::Eigen ${PCL_LIBRARIES})
+
+add_library(global_keyframe_map src/global_keyframe_map.cpp)
+target_compile_features(global_keyframe_map PUBLIC cxx_std_17)
+target_compile_options(global_keyframe_map PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  global_keyframe_map
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    ${PCL_INCLUDE_DIRS}
+)
+ament_target_dependencies(global_keyframe_map rclcpp)
+target_link_libraries(global_keyframe_map Eigen3::Eigen ${PCL_LIBRARIES})
+
+add_library(scan_context_index src/scan_context_index.cpp)
+target_compile_features(scan_context_index PUBLIC cxx_std_17)
+target_compile_options(scan_context_index PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  scan_context_index
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    ${PCL_INCLUDE_DIRS}
+)
+target_link_libraries(
+  scan_context_index
+  PUBLIC global_keyframe_map Eigen3::Eigen ${PCL_LIBRARIES}
+)
+
+add_library(loop_closure_verifier src/loop_closure_verifier.cpp)
+target_compile_features(loop_closure_verifier PUBLIC cxx_std_17)
+target_compile_options(loop_closure_verifier PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  loop_closure_verifier
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    ${PCL_INCLUDE_DIRS}
+)
+
+add_library(se2_pose_graph_backend src/se2_pose_graph_backend.cpp)
+target_compile_features(se2_pose_graph_backend PUBLIC cxx_std_17)
+target_compile_options(se2_pose_graph_backend PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  se2_pose_graph_backend
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(
+  se2_pose_graph_backend
+  PUBLIC global_keyframe_map slam_robot_slam::pose_graph_2d Eigen3::Eigen
+)
+target_link_libraries(
+  loop_closure_verifier
+  PUBLIC global_keyframe_map scan_context_index scan_to_map_matcher
+  Eigen3::Eigen ${PCL_LIBRARIES}
+)
 
 add_library(odometry_interpolator src/odometry_interpolator.cpp)
 target_compile_features(odometry_interpolator PUBLIC cxx_std_17)
@@ -103,6 +157,10 @@ target_compile_options(
 target_link_libraries(
   scan_to_map_odometry_node
   local_submap
+  global_keyframe_map
+  loop_closure_verifier
+  se2_pose_graph_backend
+  scan_context_index
   match_failure_recovery
   odometry_interpolator
   scan_to_map_matcher
@@ -188,6 +246,38 @@ if(BUILD_TESTING)
   target_link_libraries(
     test_local_submap
     local_submap
+  )
+  ament_add_gtest(
+    test_global_keyframe_map
+    test/test_global_keyframe_map.cpp
+  )
+  target_link_libraries(
+    test_global_keyframe_map
+    global_keyframe_map
+  )
+  ament_add_gtest(
+    test_scan_context_index
+    test/test_scan_context_index.cpp
+  )
+  target_link_libraries(
+    test_scan_context_index
+    scan_context_index
+  )
+  ament_add_gtest(
+    test_loop_closure_verifier
+    test/test_loop_closure_verifier.cpp
+  )
+  target_link_libraries(
+    test_loop_closure_verifier
+    loop_closure_verifier
+  )
+  ament_add_gtest(
+    test_se2_pose_graph_backend
+    test/test_se2_pose_graph_backend.cpp
+  )
+  target_link_libraries(
+    test_se2_pose_graph_backend
+    se2_pose_graph_backend
   )
   ament_add_gtest(
     test_odometry_interpolator

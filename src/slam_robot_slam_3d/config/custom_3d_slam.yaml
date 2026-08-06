@@ -63,3 +63,33 @@
       local_submap:
         maximum_keyframes: 12
         voxel_leaf_size: 0.15
+
+    loop_closure:
+      scan_context:
+        maximum_radius: 20.0
+        radial_bins: 20
+        angular_bins: 60
+        minimum_keyframe_separation: 80
+        minimum_travel_distance: 8.0
+        ring_key_candidate_count: 20
+        maximum_candidates: 5
+
+      verification:
+        submap_neighbor_keyframes: 2
+        submap_voxel_leaf_size: 0.15
+        minimum_overlap_ratio: 0.30
+        maximum_correction_translation: 3.0
+        maximum_correction_rotation: 1.0
+        maximum_candidates: 3
+
+    pose_graph:
+      map_frame: map
+      maximum_iterations: 50
+      loop_closure_huber_scale: 1.0
+      sequential_translation_weight: 20.0
+      sequential_rotation_weight: 20.0
+      loop_translation_weight: 40.0
+      loop_rotation_weight: 40.0
+      # Batch accepted loop edges so repeated revisits cannot optimize the
+      # whole graph once per keyframe.
+      minimum_keyframe_interval: 30

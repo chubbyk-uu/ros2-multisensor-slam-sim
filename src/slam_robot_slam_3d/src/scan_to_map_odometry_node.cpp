@@ -5,7 +5,9 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <future>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -14,6 +16,7 @@
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
@@ -24,11 +27,16 @@
 #include <tf2/time.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/transform_broadcaster.h>
 
 #include "slam_robot_slam_3d/local_submap.hpp"
+#include "slam_robot_slam_3d/global_keyframe_map.hpp"
+#include "slam_robot_slam_3d/loop_closure_verifier.hpp"
 #include "slam_robot_slam_3d/match_failure_recovery.hpp"
 #include "slam_robot_slam_3d/odometry_interpolator.hpp"
+#include "slam_robot_slam_3d/scan_context_index.hpp"
 #include "slam_robot_slam_3d/scan_to_map_matcher.hpp"
+#include "slam_robot_slam_3d/se2_pose_graph_backend.hpp"
 
 namespace slam_robot_slam_3d
 {
@@ -130,6 +138,9 @@ public:
   : Node("scan_to_map_odometry_3d"),
     matcher_(declareMatcherParameters()),
     local_submap_(declareSubmapParameters()),
+    scan_context_index_(declareScanContextParameters()),
+    loop_closure_verifier_(declareLoopClosureVerifierParameters()),
+    pose_graph_backend_(declarePoseGraphBackendParameters()),
     tf_buffer_(get_clock()),
     tf_listener_(tf_buffer_)
   {
@@ -141,6 +152,7 @@ public:
       "front_end.base_frame", "base_footprint");
     local_frame_ = declare_parameter<std::string>(
       "front_end.local_frame", "custom_slam_3d_odom");
+    map_frame_ = declare_parameter<std::string>("pose_graph.map_frame", "map");
     maximum_odom_age_ = declare_parameter<double>(
       "front_end.maximum_odom_age", 0.05);
     force_planar_motion_ = declare_parameter<bool>(
@@ -156,7 +168,7 @@ public:
     const auto failure_limit = declare_parameter<int>(
       "front_end.maximum_consecutive_match_failures", 5);
     if (input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
-      local_frame_.empty() || !std::isfinite(maximum_odom_age_) ||
+      local_frame_.empty() || map_frame_.empty() || !std::isfinite(maximum_odom_age_) ||
       maximum_odom_age_ <= 0.0 || !std::isfinite(keyframe_translation_) ||
       keyframe_translation_ <= 0.0 || !std::isfinite(keyframe_rotation_) ||
       keyframe_rotation_ <= 0.0 || buffer_size <= 1 ||
@@ -179,6 +191,7 @@ public:
     diagnostics_publisher_ =
       create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/custom_slam_3d/front_end_diagnostics", 10);
+    transform_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(this);
     odom_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
       odom_topic_, rclcpp::QoS(200).reliable(),
       std::bind(
@@ -192,8 +205,8 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "3D GICP front end %s + %s -> /custom_slam_3d/laser_odom; TF disabled",
-      input_topic_.c_str(), odom_topic_.c_str());
+      "3D GICP front end %s + %s -> /custom_slam_3d/laser_odom; publishing %s -> %s",
+      input_topic_.c_str(), odom_topic_.c_str(), map_frame_.c_str(), local_frame_.c_str());
   }
 
 private:
@@ -288,6 +301,100 @@ private:
     return parameters;
   }
 
+  ScanContextParameters declareScanContextParameters()
+  {
+    ScanContextParameters parameters;
+    parameters.maximum_radius = declare_parameter<double>(
+      "loop_closure.scan_context.maximum_radius", parameters.maximum_radius);
+    const auto radial_bins = declare_parameter<int>(
+      "loop_closure.scan_context.radial_bins",
+      static_cast<int>(parameters.radial_bins));
+    const auto angular_bins = declare_parameter<int>(
+      "loop_closure.scan_context.angular_bins",
+      static_cast<int>(parameters.angular_bins));
+    const auto minimum_keyframe_separation = declare_parameter<int>(
+      "loop_closure.scan_context.minimum_keyframe_separation",
+      static_cast<int>(parameters.minimum_keyframe_separation));
+    const auto ring_key_candidate_count = declare_parameter<int>(
+      "loop_closure.scan_context.ring_key_candidate_count",
+      static_cast<int>(parameters.ring_key_candidate_count));
+    const auto maximum_candidates = declare_parameter<int>(
+      "loop_closure.scan_context.maximum_candidates",
+      static_cast<int>(parameters.maximum_candidates));
+    if (radial_bins <= 0 || angular_bins <= 0 ||
+      minimum_keyframe_separation <= 0 || ring_key_candidate_count <= 0 ||
+      maximum_candidates <= 0)
+    {
+      throw std::invalid_argument("scan context count parameters must be positive");
+    }
+    parameters.radial_bins = static_cast<std::size_t>(radial_bins);
+    parameters.angular_bins = static_cast<std::size_t>(angular_bins);
+    parameters.minimum_keyframe_separation =
+      static_cast<std::size_t>(minimum_keyframe_separation);
+    parameters.minimum_travel_distance = declare_parameter<double>(
+      "loop_closure.scan_context.minimum_travel_distance",
+      parameters.minimum_travel_distance);
+    parameters.ring_key_candidate_count =
+      static_cast<std::size_t>(ring_key_candidate_count);
+    parameters.maximum_candidates = static_cast<std::size_t>(maximum_candidates);
+    return parameters;
+  }
+
+  LoopClosureVerifierParameters declareLoopClosureVerifierParameters()
+  {
+    LoopClosureVerifierParameters parameters;
+    parameters.matcher = matcher_.parameters();
+    parameters.matcher.maximum_correction_translation = declare_parameter<double>(
+      "loop_closure.verification.maximum_correction_translation", 3.0);
+    parameters.matcher.maximum_correction_rotation = declare_parameter<double>(
+      "loop_closure.verification.maximum_correction_rotation", 1.0);
+    parameters.matcher.degeneracy_handling_enabled = false;
+    const auto submap_neighbors = declare_parameter<int>(
+      "loop_closure.verification.submap_neighbor_keyframes",
+      static_cast<int>(parameters.submap_neighbor_keyframes));
+    const auto verification_candidates = declare_parameter<int>(
+      "loop_closure.verification.maximum_candidates", 3);
+    if (submap_neighbors <= 0 || verification_candidates <= 0) {
+      throw std::invalid_argument("loop closure verification counts must be positive");
+    }
+    parameters.submap_neighbor_keyframes =
+      static_cast<std::size_t>(submap_neighbors);
+    maximum_loop_verification_candidates_ =
+      static_cast<std::size_t>(verification_candidates);
+    parameters.submap_voxel_leaf_size = declare_parameter<double>(
+      "loop_closure.verification.submap_voxel_leaf_size",
+      parameters.submap_voxel_leaf_size);
+    parameters.minimum_overlap_ratio = declare_parameter<double>(
+      "loop_closure.verification.minimum_overlap_ratio",
+      parameters.minimum_overlap_ratio);
+    return parameters;
+  }
+
+  Se2PoseGraphBackendParameters declarePoseGraphBackendParameters()
+  {
+    Se2PoseGraphBackendParameters parameters;
+    parameters.maximum_iterations = declare_parameter<int>(
+      "pose_graph.maximum_iterations", parameters.maximum_iterations);
+    parameters.loop_closure_huber_scale = declare_parameter<double>(
+      "pose_graph.loop_closure_huber_scale", parameters.loop_closure_huber_scale);
+    parameters.sequential_translation_weight = declare_parameter<double>(
+      "pose_graph.sequential_translation_weight", parameters.sequential_translation_weight);
+    parameters.sequential_rotation_weight = declare_parameter<double>(
+      "pose_graph.sequential_rotation_weight", parameters.sequential_rotation_weight);
+    parameters.loop_translation_weight = declare_parameter<double>(
+      "pose_graph.loop_translation_weight", parameters.loop_translation_weight);
+    parameters.loop_rotation_weight = declare_parameter<double>(
+      "pose_graph.loop_rotation_weight", parameters.loop_rotation_weight);
+    const auto minimum_interval = declare_parameter<int>(
+      "pose_graph.minimum_keyframe_interval", 30);
+    if (minimum_interval <= 0) {
+      throw std::invalid_argument("pose graph minimum keyframe interval must be positive");
+    }
+    minimum_pose_graph_keyframe_interval_ =
+      static_cast<std::size_t>(minimum_interval);
+    return parameters;
+  }
+
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr message)
   {
     try {
@@ -354,6 +461,8 @@ private:
     const sensor_msgs::msg::PointCloud2::SharedPtr & message,
     const nav_msgs::msg::Odometry & odometry)
   {
+    applyLoopClosureResult();
+    applyPoseGraphResult();
     const auto started = std::chrono::steady_clock::now();
     try {
       const auto base_to_lidar_message = tf_buffer_.lookupTransform(
@@ -371,6 +480,9 @@ private:
         const Eigen::Isometry3d lidar_pose =
           estimated_base_pose_ * base_to_lidar;
         local_submap_.addKeyframe(scan, lidar_pose);
+        addGlobalKeyframe(
+          message->header, scan, estimated_base_pose_, odom_pose,
+          base_to_lidar, nullptr);
         initialized_ = true;
         publishOutputs(
           *message, odometry, scan, lidar_pose, nullptr, true, false, started);
@@ -421,6 +533,11 @@ private:
             "Reinitialized the 3D local submap after consecutive match failures");
         }
       }
+      if (keyframe_added) {
+        addGlobalKeyframe(
+          message->header, scan, estimated_base_pose_, odom_pose,
+          base_to_lidar, &match_result);
+      }
       last_odom_pose_ = odom_pose;
       publishOutputs(
         *message, odometry, scan, lidar_pose, &match_result,
@@ -452,28 +569,32 @@ private:
     odometry.child_frame_id = base_frame_;
     odometry.pose.pose = eigenToPose(estimated_base_pose_);
     odometry.twist = input_odometry.twist;
-    const double position_variance = match_result != nullptr &&
-      match_result->success() ?
-      std::max(1.0e-4, match_result->rmse * match_result->rmse) :
-      kUnobservableVariance;
-    Eigen::Matrix2d translation_covariance =
-      position_variance * Eigen::Matrix2d::Identity();
-    if (match_result != nullptr && match_result->success()) {
-      translation_covariance = match_result->translationCovariance(
-        position_variance, kUnobservableVariance);
+    const Eigen::Matrix<double, 6, 6> pose_covariance =
+      makePoseCovariance(match_result);
+    const Eigen::Matrix2d translation_covariance =
+      pose_covariance.block<2, 2>(0, 0);
+    for (std::size_t row = 0U; row < 6U; ++row) {
+      for (std::size_t column = 0U; column < 6U; ++column) {
+        odometry.pose.covariance[row * 6U + column] =
+          pose_covariance(static_cast<Eigen::Index>(row),
+          static_cast<Eigen::Index>(column));
+      }
     }
-    odometry.pose.covariance[0] = translation_covariance(0, 0);
-    odometry.pose.covariance[1] = translation_covariance(0, 1);
-    odometry.pose.covariance[6] = translation_covariance(1, 0);
-    odometry.pose.covariance[7] = translation_covariance(1, 1);
-    odometry.pose.covariance[14] = force_planar_motion_ ? 1.0e-4 : position_variance;
-    odometry.pose.covariance[21] = force_planar_motion_ ? 1.0e-4 : 0.05;
-    odometry.pose.covariance[28] = force_planar_motion_ ? 1.0e-4 : 0.05;
-    const double yaw_variance = match_result != nullptr &&
-      match_result->success() && !match_result->yaw_degenerate ? 0.01 :
-      kUnobservableVariance;
-    odometry.pose.covariance[35] = yaw_variance;
+    const double yaw_variance = pose_covariance(5, 5);
     odometry_publisher_->publish(odometry);
+    geometry_msgs::msg::TransformStamped map_to_local;
+    map_to_local.header = input_message.header;
+    map_to_local.header.frame_id = map_frame_;
+    map_to_local.child_frame_id = local_frame_;
+    map_to_local.transform.translation.x = map_from_local_.translation().x();
+    map_to_local.transform.translation.y = map_from_local_.translation().y();
+    map_to_local.transform.translation.z = 0.0;
+    const Eigen::Quaterniond map_rotation(map_from_local_.rotation());
+    map_to_local.transform.rotation.x = map_rotation.x();
+    map_to_local.transform.rotation.y = map_rotation.y();
+    map_to_local.transform.rotation.z = map_rotation.z();
+    map_to_local.transform.rotation.w = map_rotation.w();
+    transform_broadcaster_->sendTransform(map_to_local);
 
     pcl::PointCloud<pcl::PointXYZI> registered_scan;
     pcl::transformPointCloud(
@@ -494,6 +615,200 @@ private:
     publishDiagnostics(
       input_message.header, match_result, keyframe_added,
       submap_reinitialized, translation_covariance, yaw_variance, started);
+  }
+
+  Eigen::Matrix<double, 6, 6> makePoseCovariance(
+    const ScanToMapResult * match_result) const
+  {
+    const double position_variance = match_result != nullptr &&
+      match_result->success() ?
+      std::max(1.0e-4, match_result->rmse * match_result->rmse) :
+      kUnobservableVariance;
+    Eigen::Matrix2d translation_covariance =
+      position_variance * Eigen::Matrix2d::Identity();
+    if (match_result != nullptr && match_result->success()) {
+      translation_covariance = match_result->translationCovariance(
+        position_variance, kUnobservableVariance);
+    }
+    Eigen::Matrix<double, 6, 6> result =
+      Eigen::Matrix<double, 6, 6>::Zero();
+    result(0, 0) = translation_covariance(0, 0);
+    result(0, 1) = translation_covariance(0, 1);
+    result(1, 0) = translation_covariance(1, 0);
+    result(1, 1) = translation_covariance(1, 1);
+    result(2, 2) = force_planar_motion_ ? 1.0e-4 : position_variance;
+    result(3, 3) = force_planar_motion_ ? 1.0e-4 : 0.05;
+    result(4, 4) = force_planar_motion_ ? 1.0e-4 : 0.05;
+    result(5, 5) = match_result != nullptr && match_result->success() &&
+      !match_result->yaw_degenerate ? 0.01 : kUnobservableVariance;
+    return result;
+  }
+
+  void addGlobalKeyframe(
+    const std_msgs::msg::Header & header,
+    const pcl::PointCloud<pcl::PointXYZI> & scan,
+    const Eigen::Isometry3d & front_end_base_pose,
+    const Eigen::Isometry3d & odom_base_pose,
+    const Eigen::Isometry3d & base_to_sensor,
+    const ScanToMapResult * match_result)
+  {
+    if (has_last_global_keyframe_) {
+      const Eigen::Vector2d displacement =
+        front_end_base_pose.translation().head<2>() -
+        last_global_keyframe_base_pose_.translation().head<2>();
+      global_accumulated_distance_ += displacement.norm();
+    }
+    GlobalKeyframe keyframe;
+    keyframe.stamp = rclcpp::Time(header.stamp);
+    keyframe.filtered_scan =
+      std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(scan);
+    keyframe.front_end_base_pose = front_end_base_pose;
+    keyframe.odom_base_pose = odom_base_pose;
+    keyframe.base_to_sensor = base_to_sensor;
+    keyframe.pose_covariance = makePoseCovariance(match_result);
+    keyframe.accumulated_distance = global_accumulated_distance_;
+    keyframe.match_accepted = match_result == nullptr || match_result->success();
+    keyframe.translation_degenerate =
+      match_result != nullptr && match_result->translation_degenerate;
+    keyframe.planar_degenerate =
+      match_result != nullptr && match_result->planar_degenerate;
+    keyframe.yaw_degenerate =
+      match_result != nullptr && match_result->yaw_degenerate;
+    keyframe.correspondence_count =
+      match_result == nullptr ? 0U : match_result->correspondence_count;
+    keyframe.rmse = match_result == nullptr ? 0.0 : match_result->rmse;
+    keyframe.id = global_keyframes_.add(keyframe);
+    pending_loop_keyframes_.push_back(std::move(keyframe));
+    startLoopClosureTask();
+    last_global_keyframe_base_pose_ = front_end_base_pose;
+    has_last_global_keyframe_ = true;
+  }
+
+  struct PoseGraphResult
+  {
+    Se2PoseGraphBackendResult optimization;
+    std::vector<Se2LoopConstraint> constraints;
+  };
+
+  struct LoopClosureTaskResult
+  {
+    std::size_t scan_context_index_size{0U};
+    std::vector<ScanContextCandidate> candidates;
+    std::vector<LoopClosureVerificationResult> verifications;
+    std::vector<Se2LoopConstraint> accepted_constraints;
+  };
+
+  void startLoopClosureTask()
+  {
+    if (loop_closure_future_.has_value() || pending_loop_keyframes_.empty()) {
+      return;
+    }
+    const GlobalKeyframe current = std::move(pending_loop_keyframes_.front());
+    pending_loop_keyframes_.pop_front();
+    const auto keyframes = global_keyframes_.snapshot();
+    loop_closure_future_.emplace(std::async(std::launch::async,
+      [this, current, keyframes]() {
+        LoopClosureTaskResult result;
+        result.candidates = scan_context_index_.addAndQuery(current);
+        result.scan_context_index_size = scan_context_index_.size();
+        const std::size_t candidate_count = std::min(
+          maximum_loop_verification_candidates_, result.candidates.size());
+        result.verifications.reserve(candidate_count);
+        for (std::size_t index = 0U; index < candidate_count; ++index) {
+          result.verifications.push_back(loop_closure_verifier_.verify(
+            keyframes, current.id, result.candidates[index]));
+        }
+        for (const auto & verification : result.verifications) {
+          if (!verification.accepted()) {
+            continue;
+          }
+          const auto & historical = keyframes[verification.candidate_keyframe_id];
+          const auto & latest = keyframes[current.id];
+          const Eigen::Isometry3d current_base_pose =
+          verification.current_sensor_pose * latest.base_to_sensor.inverse();
+          result.accepted_constraints.push_back({
+            verification.candidate_keyframe_id, current.id,
+            historical.front_end_base_pose.inverse() * current_base_pose});
+        }
+        return result;
+      }));
+  }
+
+  void applyLoopClosureResult()
+  {
+    if (!loop_closure_future_.has_value() ||
+      loop_closure_future_->wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    {
+      return;
+    }
+    try {
+      const auto result = loop_closure_future_->get();
+      loop_closure_future_.reset();
+      last_scan_context_candidates_ = result.candidates;
+      last_loop_verification_results_ = result.verifications;
+      scan_context_index_size_ = result.scan_context_index_size;
+      pending_loop_constraints_.insert(
+        pending_loop_constraints_.end(), result.accepted_constraints.begin(),
+        result.accepted_constraints.end());
+    } catch (const std::exception & error) {
+      loop_closure_future_.reset();
+      ++loop_closure_failure_count_;
+      RCLCPP_ERROR(get_logger(), "Discarded loop-closure worker result: %s", error.what());
+    }
+    startPoseGraphOptimization(global_keyframes_.snapshot());
+    startLoopClosureTask();
+  }
+
+  void startPoseGraphOptimization(const std::vector<GlobalKeyframe> & keyframes)
+  {
+    if (pose_graph_future_.has_value() || pending_loop_constraints_.empty()) {
+      return;
+    }
+    const std::size_t latest_keyframe_id = keyframes.back().id;
+    if (has_pose_graph_submission_ &&
+      latest_keyframe_id - last_pose_graph_submission_keyframe_id_ <
+      minimum_pose_graph_keyframe_interval_)
+    {
+      return;
+    }
+    auto constraints = committed_loop_constraints_;
+    constraints.insert(constraints.end(), pending_loop_constraints_.begin(),
+      pending_loop_constraints_.end());
+    pending_loop_constraints_.clear();
+    last_pose_graph_submission_keyframe_id_ = latest_keyframe_id;
+    has_pose_graph_submission_ = true;
+    pose_graph_future_.emplace(std::async(std::launch::async,
+      [this, keyframes, constraints = std::move(constraints)]() mutable {
+        return PoseGraphResult{pose_graph_backend_.optimize(keyframes, constraints),
+        std::move(constraints)};
+      }));
+  }
+
+  void applyPoseGraphResult()
+  {
+    if (!pose_graph_future_.has_value() ||
+      pose_graph_future_->wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+    {
+      return;
+    }
+    try {
+      const auto result = pose_graph_future_->get();
+      pose_graph_future_.reset();
+      if (result.optimization.success &&
+        result.optimization.snapshot_keyframe_count <= global_keyframes_.size())
+      {
+        committed_loop_constraints_ = result.constraints;
+        map_from_local_ = result.optimization.map_from_local;
+        ++pose_graph_commit_count_;
+      } else {
+        ++pose_graph_discard_count_;
+      }
+    } catch (const std::exception & error) {
+      pose_graph_future_.reset();
+      ++pose_graph_failure_count_;
+      RCLCPP_ERROR(get_logger(), "Discarded pose graph worker result: %s", error.what());
+    }
+    startPoseGraphOptimization(global_keyframes_.snapshot());
   }
 
   void publishDiagnostics(
@@ -622,6 +937,73 @@ private:
       "local_keyframes", std::to_string(local_submap_.keyframeCount())));
     status.values.push_back(makeValue(
       "local_map_points", std::to_string(local_submap_.cloud().size())));
+    status.values.push_back(makeValue(
+      "global_keyframes", std::to_string(global_keyframes_.size())));
+    status.values.push_back(makeValue(
+      "global_keyframe_points", std::to_string(global_keyframes_.pointCount())));
+    status.values.push_back(makeValue(
+      "scan_context_index_size", std::to_string(scan_context_index_size_)));
+    status.values.push_back(makeValue(
+      "loop_closure_worker_active",
+      loop_closure_future_.has_value() ? "true" : "false"));
+    status.values.push_back(makeValue(
+      "loop_closure_pending_keyframes",
+      std::to_string(pending_loop_keyframes_.size())));
+    status.values.push_back(makeValue(
+      "loop_closure_failures", std::to_string(loop_closure_failure_count_)));
+    status.values.push_back(makeValue(
+      "loop_candidate_count",
+      std::to_string(last_scan_context_candidates_.size())));
+    const ScanContextCandidate * best_candidate =
+      last_scan_context_candidates_.empty() ? nullptr :
+      &last_scan_context_candidates_.front();
+    status.values.push_back(makeValue(
+      "loop_best_candidate_id",
+      std::to_string(best_candidate == nullptr ? -1 :
+      static_cast<long long>(best_candidate->keyframe_id))));
+    status.values.push_back(makeValue(
+      "loop_best_descriptor_distance",
+      std::to_string(best_candidate == nullptr ? -1.0 :
+      best_candidate->descriptor_distance)));
+    status.values.push_back(makeValue(
+      "loop_best_ring_key_distance",
+      std::to_string(best_candidate == nullptr ? -1.0 :
+      best_candidate->ring_key_distance)));
+    status.values.push_back(makeValue(
+      "loop_best_predicted_yaw",
+      std::to_string(best_candidate == nullptr ? 0.0 :
+      best_candidate->predicted_yaw)));
+    const auto accepted_loop_count = static_cast<std::size_t>(std::count_if(
+      last_loop_verification_results_.begin(),
+      last_loop_verification_results_.end(),
+        [](const auto & result) {return result.accepted();}));
+    status.values.push_back(makeValue(
+      "loop_verified_candidate_count",
+      std::to_string(last_loop_verification_results_.size())));
+    status.values.push_back(makeValue(
+      "loop_accepted_candidate_count", std::to_string(accepted_loop_count)));
+    const LoopClosureVerificationResult * best_verification =
+      last_loop_verification_results_.empty() ? nullptr :
+      &last_loop_verification_results_.front();
+    status.values.push_back(makeValue(
+      "loop_best_verification_status",
+      best_verification == nullptr ? "none" :
+      toString(best_verification->status)));
+    status.values.push_back(makeValue(
+      "loop_best_overlap_ratio",
+      std::to_string(best_verification == nullptr ? 0.0 :
+      best_verification->overlap_ratio)));
+    status.values.push_back(makeValue(
+      "pose_graph_worker_active", pose_graph_future_.has_value() ? "true" : "false"));
+    status.values.push_back(makeValue(
+      "pose_graph_commits", std::to_string(pose_graph_commit_count_)));
+    status.values.push_back(makeValue(
+      "pose_graph_discards", std::to_string(pose_graph_discard_count_)));
+    status.values.push_back(makeValue(
+      "pose_graph_failures", std::to_string(pose_graph_failure_count_)));
+    status.values.push_back(makeValue(
+      "pose_graph_pending_constraints",
+      std::to_string(pending_loop_constraints_.size())));
     const double elapsed = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - started).count();
     status.values.push_back(makeValue("processing_ms", std::to_string(elapsed)));
@@ -631,23 +1013,49 @@ private:
 
   ScanToMapMatcher matcher_;
   LocalSubmap local_submap_;
+  GlobalKeyframeMap global_keyframes_;
+  ScanContextIndex scan_context_index_;
+  LoopClosureVerifier loop_closure_verifier_;
+  Se2PoseGraphBackend pose_graph_backend_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
   std::string input_topic_;
   std::string odom_topic_;
   std::string base_frame_;
   std::string local_frame_;
+  std::string map_frame_;
   double maximum_odom_age_{0.05};
   bool force_planar_motion_{true};
   double keyframe_translation_{0.25};
   double keyframe_rotation_{0.15};
   std::size_t maximum_odom_buffer_size_{200U};
   std::size_t maximum_pending_clouds_{5U};
+  std::size_t maximum_loop_verification_candidates_{3U};
+  std::size_t minimum_pose_graph_keyframe_interval_{30U};
   std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};
   Eigen::Isometry3d last_odom_pose_{Eigen::Isometry3d::Identity()};
   Eigen::Isometry3d last_keyframe_base_pose_{Eigen::Isometry3d::Identity()};
+  Eigen::Isometry3d last_global_keyframe_base_pose_{
+    Eigen::Isometry3d::Identity()};
+  bool has_last_global_keyframe_{false};
+  double global_accumulated_distance_{0.0};
+  std::vector<ScanContextCandidate> last_scan_context_candidates_;
+  std::vector<LoopClosureVerificationResult> last_loop_verification_results_;
+  std::size_t scan_context_index_size_{0U};
+  std::deque<GlobalKeyframe> pending_loop_keyframes_;
+  std::vector<Se2LoopConstraint> committed_loop_constraints_;
+  std::vector<Se2LoopConstraint> pending_loop_constraints_;
+  std::optional<std::future<LoopClosureTaskResult>> loop_closure_future_;
+  std::optional<std::future<PoseGraphResult>> pose_graph_future_;
+  Eigen::Isometry3d map_from_local_{Eigen::Isometry3d::Identity()};
+  std::size_t pose_graph_commit_count_{0U};
+  std::size_t pose_graph_discard_count_{0U};
+  std::size_t pose_graph_failure_count_{0U};
+  std::size_t last_pose_graph_submission_keyframe_id_{0U};
+  bool has_pose_graph_submission_{false};
+  std::size_t loop_closure_failure_count_{0U};
   std::deque<nav_msgs::msg::Odometry> odom_buffer_;
   std::deque<sensor_msgs::msg::PointCloud2::SharedPtr> pending_clouds_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
@@ -658,6 +1066,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_map_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
     diagnostics_publisher_;
+  std::unique_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
 };
 
 }  // namespace slam_robot_slam_3d
