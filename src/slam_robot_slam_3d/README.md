@@ -102,9 +102,11 @@ ros2 run slam_robot_slam_3d front_end_regression
 
 前端发布 `/custom_slam_3d/laser_odom`、已配准当前帧
 `/custom_slam_3d/registered_scan`、有界 `/custom_slam_3d/local_map` 和逐帧
-`/custom_slam_3d/front_end_diagnostics`。当前局部坐标系是
-`custom_slam_3d_odom`，不发布 TF，也没有回环、位姿图或全局地图，因此此时
-仍是 3D 激光里程计前端，不能称为完整自研 3D SLAM。
+`/custom_slam_3d/front_end_diagnostics`。局部输出仍使用
+`custom_slam_3d_odom`，但回环后端成功优化后会发布唯一且可配置的标准
+`map -> odom`（默认开启）；EKF 继续唯一发布 `odom -> base_footprint`。
+该链路已有 Scan Context 检索、GICP 几何复核和后台 SE(2) 位姿图，但尚未
+重放为全局 3D 地图或二维导航栅格，因此还不能直接替换 RTAB-Map 的 Nav2 入口。
 
 差速机器人默认启用平面运动约束：GICP 用完整三维几何求解，输出基座位姿再
 投影到 `x/y/yaw`，避免不可观测的微小横滚、俯仰和高度误差污染后续二维导航
@@ -140,6 +142,18 @@ ros2 launch slam_robot_slam_3d front_end_motion_regression.launch.py \
 `rotation` 依次测试 `0.30/0.60/0.90 rad/s`；`slip` 自动把左轮摩擦系数降到
 `0.15`，并要求里程计基线确实出现可测打滑误差，避免故障注入失效后假通过。
 这两项和长走廊回归共同构成首版前端参数变更的必跑集合。
+
+回环后端的正向固定包验收使用单一入口，明确要求至少一次成功位姿图提交，且
+不允许后台提交丢弃或异常：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_loop_regression.launch.py \
+  bag:="${SLAM_WS}/bags/structured_3d_reference" rate:=1.0
+```
+
+反向保护使用长走廊回归：候选检索不按前端当前位置截断；GICP 后才以
+`maximum_front_end_translation_disagreement` 检查图一致性，防止重复走廊把数十米
+的错误匹配写入位姿图。
 
 ### 在线 RTAB-Map
 

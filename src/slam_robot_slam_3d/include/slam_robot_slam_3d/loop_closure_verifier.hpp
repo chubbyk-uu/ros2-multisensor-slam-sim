@@ -17,6 +17,7 @@ struct LoopClosureVerifierParameters
   std::size_t submap_neighbor_keyframes{2U};
   double submap_voxel_leaf_size{0.15};
   double minimum_overlap_ratio{0.30};
+  double maximum_front_end_translation_disagreement{10.0};
   ScanToMapMatcherParameters matcher;
 };
 
@@ -26,6 +27,7 @@ enum class LoopClosureVerificationStatus
   kMissingKeyframe,
   kInsufficientOverlap,
   kDegenerateGeometry,
+  kFrontEndInconsistent,
   kRegistrationRejected,
 };
 
@@ -41,6 +43,8 @@ struct LoopClosureVerificationResult
   double rmse{0.0};
   double correction_translation{0.0};
   double correction_rotation{0.0};
+  double front_end_translation_disagreement{0.0};
+  double front_end_rotation_disagreement{0.0};
   bool degenerate{true};
 
   bool accepted() const;

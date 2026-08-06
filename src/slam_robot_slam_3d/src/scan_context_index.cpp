@@ -60,6 +60,7 @@ std::vector<ScanContextCandidate> ScanContextIndex::addAndQuery(
 {
   if (!keyframe.filtered_scan || keyframe.filtered_scan->empty() ||
     !keyframe.front_end_base_pose.matrix().allFinite() ||
+    !keyframe.base_to_sensor.matrix().allFinite() ||
     !std::isfinite(keyframe.accumulated_distance))
   {
     throw std::invalid_argument("scan context keyframe is invalid");
@@ -67,7 +68,6 @@ std::vector<ScanContextCandidate> ScanContextIndex::addAndQuery(
   Entry current;
   current.keyframe_id = keyframe.id;
   current.accumulated_distance = keyframe.accumulated_distance;
-  current.position = keyframe.front_end_base_pose.translation().head<2>();
   current.descriptor = makeDescriptor(keyframe);
 
   const auto candidates = query(current);
@@ -104,8 +104,14 @@ ScanContextIndex::Descriptor ScanContextIndex::makeDescriptor(
       radial_bin, result.cells.rows() - 1);
     const Eigen::Index clamped_angular_bin = std::min(
       angular_bin, result.cells.cols() - 1);
+    const Eigen::Vector3d point_in_base = keyframe.base_to_sensor *
+      Eigen::Vector3d(point.x, point.y, point.z);
+    // Scan Context stores height above the robot ground reference. This keeps
+    // sensor-frame floor returns near zero while preserving lower walls and
+    // obstacles that would otherwise be lost as negative sensor-frame z.
     result.cells(clamped_radial_bin, clamped_angular_bin) = std::max(
-      result.cells(clamped_radial_bin, clamped_angular_bin), point.z);
+      result.cells(clamped_radial_bin, clamped_angular_bin),
+      static_cast<float>(point_in_base.z()));
   }
   result.ring_key = result.cells.rowwise().mean();
   return result;
@@ -125,9 +131,7 @@ std::vector<ScanContextCandidate> ScanContextIndex::query(
       current.keyframe_id - historical.keyframe_id <
       parameters_.minimum_keyframe_separation ||
       current.accumulated_distance - historical.accumulated_distance <
-      parameters_.minimum_travel_distance ||
-      (current.position - historical.position).norm() >
-      parameters_.maximum_candidate_position_distance)
+      parameters_.minimum_travel_distance)
     {
       continue;
     }
@@ -175,8 +179,6 @@ void ScanContextIndex::validateParameters() const
     parameters_.minimum_keyframe_separation == 0U ||
     !std::isfinite(parameters_.minimum_travel_distance) ||
     parameters_.minimum_travel_distance < 0.0 ||
-    !std::isfinite(parameters_.maximum_candidate_position_distance) ||
-    parameters_.maximum_candidate_position_distance <= 0.0 ||
     parameters_.ring_key_candidate_count == 0U ||
     parameters_.maximum_candidates == 0U)
   {

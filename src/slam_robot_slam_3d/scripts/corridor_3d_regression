@@ -100,6 +100,7 @@ class Corridor3DRegression(Node):
         self.malformed_diagnostics = 0
         self.critical_logs = []
         self.maximum_pose_graph_commits = 0
+        self.accepted_loop_disagreements = []
 
         self.command_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_subscription(
@@ -206,6 +207,12 @@ class Corridor3DRegression(Node):
                 alignment_ms = float(values["gicp_alignment_ms"])
                 observability_ms = float(values["observability_ms"])
                 feature_cache_ms = float(values["target_feature_cache_ms"])
+                accepted_loop_candidates = int(
+                    values["loop_accepted_candidate_count"]
+                )
+                loop_translation_disagreement = float(
+                    values["loop_best_front_end_translation_disagreement"]
+                )
             except (KeyError, ValueError):
                 self.malformed_diagnostics += 1
                 continue
@@ -228,8 +235,12 @@ class Corridor3DRegression(Node):
                 or consecutive_failures < 0
                 or submap_reinitializations < 0
                 or pose_graph_commits < 0
+                or accepted_loop_candidates < 0
                 or not all(math.isfinite(value) and value >= 0.0 for value in (
-                    alignment_ms, observability_ms, feature_cache_ms
+                    alignment_ms,
+                    observability_ms,
+                    feature_cache_ms,
+                    loop_translation_disagreement,
                 ))
             ):
                 self.malformed_diagnostics += 1
@@ -257,6 +268,10 @@ class Corridor3DRegression(Node):
             self.maximum_pose_graph_commits = max(
                 self.maximum_pose_graph_commits, pose_graph_commits
             )
+            if accepted_loop_candidates > 0:
+                self.accepted_loop_disagreements.append(
+                    loop_translation_disagreement
+                )
             if self.arguments.degenerate_start <= progress <= self.arguments.degenerate_end:
                 self.degenerate_samples += 1
                 self.degenerate_detections += int(degenerate)
@@ -380,8 +395,16 @@ class Corridor3DRegression(Node):
         sorted_times = sorted(self.processing_times)
         p95_index = max(0, math.ceil(0.95 * len(sorted_times)) - 1)
         processing_p95 = sorted_times[p95_index] if sorted_times else math.inf
-        alignment_p95 = sorted(self.alignment_times)[p95_index]
-        observability_p95 = sorted(self.observability_times)[p95_index]
+        alignment_p95 = (
+            sorted(self.alignment_times)[p95_index]
+            if self.alignment_times
+            else math.inf
+        )
+        observability_p95 = (
+            sorted(self.observability_times)[p95_index]
+            if self.observability_times
+            else math.inf
+        )
         feature_cache_max = max(self.feature_cache_times, default=math.inf)
         minimum_ratio = min(self.translation_ratios, default=math.inf)
 
@@ -496,6 +519,11 @@ class Corridor3DRegression(Node):
             f"feature-cache max={feature_cache_max:.3f} ms"
         )
         print(f"loop graph   : commits={self.maximum_pose_graph_commits}")
+        if self.accepted_loop_disagreements:
+            print(
+                "loop mismatch: accepted front-end translation disagreement="
+                f"{max(self.accepted_loop_disagreements):.3f} m"
+            )
         for name, passed in checks.items():
             print(f"  [{'PASS' if passed else 'FAIL'}] {name}")
         if self.critical_logs:

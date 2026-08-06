@@ -33,5 +33,29 @@ TEST(Se2PoseGraphBackend, UsesLoopConstraintToCorrectLatestLocalPose)
   EXPECT_EQ(result.snapshot_keyframe_count, keyframes.size());
 }
 
+TEST(Se2PoseGraphBackend, ProjectsMapToOdomCorrectionToSe2)
+{
+  std::vector<GlobalKeyframe> keyframes{
+    makeKeyframe(0U, 0.0), makeKeyframe(1U, 1.0)};
+  keyframes.back().odom_base_pose.translation() = Eigen::Vector3d(1.0, 0.0, 0.4);
+  keyframes.back().odom_base_pose.linear() =
+    (Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitX()) *
+    Eigen::AngleAxisd(0.2, Eigen::Vector3d::UnitY()) *
+    Eigen::AngleAxisd(0.1, Eigen::Vector3d::UnitZ())).toRotationMatrix();
+  Se2LoopConstraint loop;
+  loop.source_id = 0U;
+  loop.target_id = 1U;
+  const Se2PoseGraphBackend backend(Se2PoseGraphBackendParameters{});
+
+  const auto result = backend.optimize(keyframes, {loop});
+
+  ASSERT_TRUE(result.success);
+  EXPECT_DOUBLE_EQ(result.map_from_odom.translation().z(), 0.0);
+  EXPECT_NEAR(result.map_from_odom.rotation()(2, 0), 0.0, 1e-12);
+  EXPECT_NEAR(result.map_from_odom.rotation()(2, 1), 0.0, 1e-12);
+  EXPECT_NEAR(result.map_from_odom.rotation()(0, 2), 0.0, 1e-12);
+  EXPECT_NEAR(result.map_from_odom.rotation()(1, 2), 0.0, 1e-12);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam_3d

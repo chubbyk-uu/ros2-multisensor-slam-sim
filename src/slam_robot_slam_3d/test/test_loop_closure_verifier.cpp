@@ -115,5 +115,23 @@ TEST(LoopClosureVerifier, RejectsFalseCandidateOutsideCorrectionGate)
   EXPECT_FALSE(result.accepted());
 }
 
+TEST(LoopClosureVerifier, RejectsGeometricallyMatchedButGloballyInconsistentLoop)
+{
+  const auto scan = makeStructuredCloud();
+  auto historical = makeKeyframe(0U, scan);
+  auto current = makeKeyframe(5U, scan);
+  current.front_end_base_pose.translation().x() = 20.0;
+  const std::vector<GlobalKeyframe> keyframes{historical, current};
+  const ScanContextCandidate candidate{0U, 0.0, 0.0, 0.0};
+
+  auto parameters = makeVerifierParameters();
+  parameters.maximum_front_end_translation_disagreement = 10.0;
+  LoopClosureVerifier verifier(parameters);
+  const auto result = verifier.verify(keyframes, 5U, candidate);
+
+  EXPECT_EQ(result.status, LoopClosureVerificationStatus::kFrontEndInconsistent);
+  EXPECT_GT(result.front_end_translation_disagreement, 10.0);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam_3d

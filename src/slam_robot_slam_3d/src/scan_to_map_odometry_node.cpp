@@ -34,6 +34,7 @@
 #include "slam_robot_slam_3d/loop_closure_verifier.hpp"
 #include "slam_robot_slam_3d/match_failure_recovery.hpp"
 #include "slam_robot_slam_3d/odometry_interpolator.hpp"
+#include "slam_robot_slam_3d/pose_graph_submission_state.hpp"
 #include "slam_robot_slam_3d/scan_context_index.hpp"
 #include "slam_robot_slam_3d/scan_to_map_matcher.hpp"
 #include "slam_robot_slam_3d/se2_pose_graph_backend.hpp"
@@ -134,13 +135,29 @@ Eigen::Isometry3d planarPose(const Eigen::Isometry3d & pose)
 class ScanToMapOdometryNode : public rclcpp::Node
 {
 public:
+  struct LoopClosureRuntimeConfiguration
+  {
+    LoopClosureVerifierParameters verifier;
+    std::size_t maximum_verification_candidates{3U};
+  };
+
+  struct PoseGraphRuntimeConfiguration
+  {
+    Se2PoseGraphBackendParameters backend;
+    std::size_t minimum_keyframe_interval{30U};
+  };
+
   ScanToMapOdometryNode()
   : Node("scan_to_map_odometry_3d"),
     matcher_(declareMatcherParameters()),
     local_submap_(declareSubmapParameters()),
     scan_context_index_(declareScanContextParameters()),
-    loop_closure_verifier_(declareLoopClosureVerifierParameters()),
-    pose_graph_backend_(declarePoseGraphBackendParameters()),
+    loop_closure_configuration_(declareLoopClosureVerifierParameters()),
+    loop_closure_verifier_(loop_closure_configuration_.verifier),
+    pose_graph_configuration_(declarePoseGraphBackendParameters()),
+    pose_graph_submission_state_(
+      pose_graph_configuration_.minimum_keyframe_interval),
+    pose_graph_backend_(pose_graph_configuration_.backend),
     tf_buffer_(get_clock()),
     tf_listener_(tf_buffer_)
   {
@@ -152,7 +169,10 @@ public:
       "front_end.base_frame", "base_footprint");
     local_frame_ = declare_parameter<std::string>(
       "front_end.local_frame", "custom_slam_3d_odom");
+    odom_frame_ = declare_parameter<std::string>("front_end.odom_frame", "odom");
     map_frame_ = declare_parameter<std::string>("pose_graph.map_frame", "map");
+    publish_map_to_odom_tf_ = declare_parameter<bool>(
+      "pose_graph.publish_map_to_odom_tf", true);
     maximum_odom_age_ = declare_parameter<double>(
       "front_end.maximum_odom_age", 0.05);
     force_planar_motion_ = declare_parameter<bool>(
@@ -167,17 +187,23 @@ public:
       "front_end.maximum_pending_clouds", 5);
     const auto failure_limit = declare_parameter<int>(
       "front_end.maximum_consecutive_match_failures", 5);
+    const auto pending_loop_keyframe_limit = declare_parameter<int>(
+      "loop_closure.maximum_pending_keyframes", 100);
     if (input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
-      local_frame_.empty() || map_frame_.empty() || !std::isfinite(maximum_odom_age_) ||
+      local_frame_.empty() || odom_frame_.empty() || map_frame_.empty() ||
+      !std::isfinite(maximum_odom_age_) ||
       maximum_odom_age_ <= 0.0 || !std::isfinite(keyframe_translation_) ||
       keyframe_translation_ <= 0.0 || !std::isfinite(keyframe_rotation_) ||
       keyframe_rotation_ <= 0.0 || buffer_size <= 1 ||
-      pending_cloud_limit <= 0 || failure_limit <= 0)
+      pending_cloud_limit <= 0 || failure_limit <= 0 ||
+      pending_loop_keyframe_limit <= 0)
     {
       throw std::invalid_argument("front-end parameters are invalid");
     }
     maximum_odom_buffer_size_ = static_cast<std::size_t>(buffer_size);
     maximum_pending_clouds_ = static_cast<std::size_t>(pending_cloud_limit);
+    maximum_pending_loop_keyframes_ =
+      static_cast<std::size_t>(pending_loop_keyframe_limit);
     match_failure_recovery_ = std::make_unique<MatchFailureRecovery>(
       static_cast<std::size_t>(failure_limit));
 
@@ -202,11 +228,26 @@ public:
       std::bind(
         &ScanToMapOdometryNode::cloudCallback, this,
         std::placeholders::_1));
+    // Worker completion is a wall-clock event. Harvest it even while the
+    // simulated sensor is paused, so node shutdown never waits on an already
+    // completed task and map correction is not gated on the next scan.
+    background_result_timer_ = create_wall_timer(
+      std::chrono::milliseconds(20), [this]() {
+        try {
+          applyLoopClosureResult();
+          applyPoseGraphResult();
+        } catch (const std::exception & error) {
+          RCLCPP_ERROR(
+            get_logger(), "3D background result callback failed: %s", error.what());
+        }
+      });
 
     RCLCPP_INFO(
       get_logger(),
-      "3D GICP front end %s + %s -> /custom_slam_3d/laser_odom; publishing %s -> %s",
-      input_topic_.c_str(), odom_topic_.c_str(), map_frame_.c_str(), local_frame_.c_str());
+      "3D GICP front end %s + %s -> /custom_slam_3d/laser_odom; %s TF publishing %s -> %s",
+      input_topic_.c_str(), odom_topic_.c_str(),
+      publish_map_to_odom_tf_ ? "standard" : "disabled", map_frame_.c_str(),
+      odom_frame_.c_str());
   }
 
 private:
@@ -334,27 +375,25 @@ private:
     parameters.minimum_travel_distance = declare_parameter<double>(
       "loop_closure.scan_context.minimum_travel_distance",
       parameters.minimum_travel_distance);
-    parameters.maximum_candidate_position_distance = declare_parameter<double>(
-      "loop_closure.scan_context.maximum_candidate_position_distance",
-      parameters.maximum_candidate_position_distance);
     parameters.ring_key_candidate_count =
       static_cast<std::size_t>(ring_key_candidate_count);
     parameters.maximum_candidates = static_cast<std::size_t>(maximum_candidates);
     return parameters;
   }
 
-  LoopClosureVerifierParameters declareLoopClosureVerifierParameters()
+  LoopClosureRuntimeConfiguration declareLoopClosureVerifierParameters()
   {
-    LoopClosureVerifierParameters parameters;
+    LoopClosureRuntimeConfiguration configuration;
+    auto & parameters = configuration.verifier;
     parameters.matcher = matcher_.parameters();
     parameters.matcher.maximum_correction_translation = declare_parameter<double>(
       "loop_closure.verification.maximum_correction_translation", 3.0);
     parameters.matcher.maximum_correction_rotation = declare_parameter<double>(
       "loop_closure.verification.maximum_correction_rotation", 1.0);
-    // A loop edge must be geometrically observable. Unlike the local front
-    // end, it cannot safely fall back to wheel+IMU prediction for a weak
-    // direction, because that prediction would become a global graph fact.
-    parameters.matcher.degeneracy_handling_enabled = true;
+    // A loop edge must be geometrically observable. It must not be modified
+    // toward the wheel+IMU prediction before the verifier rejects weak
+    // geometry, because that prediction must never become a graph fact.
+    parameters.matcher.degeneracy_handling_enabled = false;
     const auto submap_neighbors = declare_parameter<int>(
       "loop_closure.verification.submap_neighbor_keyframes",
       static_cast<int>(parameters.submap_neighbor_keyframes));
@@ -365,7 +404,7 @@ private:
     }
     parameters.submap_neighbor_keyframes =
       static_cast<std::size_t>(submap_neighbors);
-    maximum_loop_verification_candidates_ =
+    configuration.maximum_verification_candidates =
       static_cast<std::size_t>(verification_candidates);
     parameters.submap_voxel_leaf_size = declare_parameter<double>(
       "loop_closure.verification.submap_voxel_leaf_size",
@@ -373,12 +412,17 @@ private:
     parameters.minimum_overlap_ratio = declare_parameter<double>(
       "loop_closure.verification.minimum_overlap_ratio",
       parameters.minimum_overlap_ratio);
-    return parameters;
+    parameters.maximum_front_end_translation_disagreement =
+      declare_parameter<double>(
+      "loop_closure.verification.maximum_front_end_translation_disagreement",
+      parameters.maximum_front_end_translation_disagreement);
+    return configuration;
   }
 
-  Se2PoseGraphBackendParameters declarePoseGraphBackendParameters()
+  PoseGraphRuntimeConfiguration declarePoseGraphBackendParameters()
   {
-    Se2PoseGraphBackendParameters parameters;
+    PoseGraphRuntimeConfiguration configuration;
+    auto & parameters = configuration.backend;
     parameters.maximum_iterations = declare_parameter<int>(
       "pose_graph.maximum_iterations", parameters.maximum_iterations);
     parameters.loop_closure_huber_scale = declare_parameter<double>(
@@ -396,9 +440,9 @@ private:
     if (minimum_interval <= 0) {
       throw std::invalid_argument("pose graph minimum keyframe interval must be positive");
     }
-    minimum_pose_graph_keyframe_interval_ =
+    configuration.minimum_keyframe_interval =
       static_cast<std::size_t>(minimum_interval);
-    return parameters;
+    return configuration;
   }
 
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr message)
@@ -588,19 +632,21 @@ private:
     }
     const double yaw_variance = pose_covariance(5, 5);
     odometry_publisher_->publish(odometry);
-    geometry_msgs::msg::TransformStamped map_to_local;
-    map_to_local.header = input_message.header;
-    map_to_local.header.frame_id = map_frame_;
-    map_to_local.child_frame_id = local_frame_;
-    map_to_local.transform.translation.x = map_from_local_.translation().x();
-    map_to_local.transform.translation.y = map_from_local_.translation().y();
-    map_to_local.transform.translation.z = 0.0;
-    const Eigen::Quaterniond map_rotation(map_from_local_.rotation());
-    map_to_local.transform.rotation.x = map_rotation.x();
-    map_to_local.transform.rotation.y = map_rotation.y();
-    map_to_local.transform.rotation.z = map_rotation.z();
-    map_to_local.transform.rotation.w = map_rotation.w();
-    transform_broadcaster_->sendTransform(map_to_local);
+    if (publish_map_to_odom_tf_) {
+      geometry_msgs::msg::TransformStamped map_to_odom;
+      map_to_odom.header = input_message.header;
+      map_to_odom.header.frame_id = map_frame_;
+      map_to_odom.child_frame_id = odom_frame_;
+      map_to_odom.transform.translation.x = map_from_odom_.translation().x();
+      map_to_odom.transform.translation.y = map_from_odom_.translation().y();
+      map_to_odom.transform.translation.z = 0.0;
+      const Eigen::Quaterniond map_rotation(map_from_odom_.rotation());
+      map_to_odom.transform.rotation.x = map_rotation.x();
+      map_to_odom.transform.rotation.y = map_rotation.y();
+      map_to_odom.transform.rotation.z = map_rotation.z();
+      map_to_odom.transform.rotation.w = map_rotation.w();
+      transform_broadcaster_->sendTransform(map_to_odom);
+    }
 
     pcl::PointCloud<pcl::PointXYZI> registered_scan;
     pcl::transformPointCloud(
@@ -685,16 +731,17 @@ private:
     keyframe.rmse = match_result == nullptr ? 0.0 : match_result->rmse;
     keyframe.id = global_keyframes_.add(keyframe);
     pending_loop_keyframes_.push_back(std::move(keyframe));
+    if (pending_loop_keyframes_.size() > maximum_pending_loop_keyframes_) {
+      pending_loop_keyframes_.pop_front();
+      ++dropped_loop_keyframe_count_;
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "Dropping an unverified 3D loop keyframe because the worker queue is full");
+    }
     startLoopClosureTask();
     last_global_keyframe_base_pose_ = front_end_base_pose;
     has_last_global_keyframe_ = true;
   }
-
-  struct PoseGraphResult
-  {
-    Se2PoseGraphBackendResult optimization;
-    std::vector<Se2LoopConstraint> constraints;
-  };
 
   struct LoopClosureTaskResult
   {
@@ -718,7 +765,8 @@ private:
         result.candidates = scan_context_index_.addAndQuery(current);
         result.scan_context_index_size = scan_context_index_.size();
         const std::size_t candidate_count = std::min(
-          maximum_loop_verification_candidates_, result.candidates.size());
+          loop_closure_configuration_.maximum_verification_candidates,
+          result.candidates.size());
         result.verifications.reserve(candidate_count);
         for (std::size_t index = 0U; index < candidate_count; ++index) {
           result.verifications.push_back(loop_closure_verifier_.verify(
@@ -753,9 +801,7 @@ private:
       last_scan_context_candidates_ = result.candidates;
       last_loop_verification_results_ = result.verifications;
       scan_context_index_size_ = result.scan_context_index_size;
-      pending_loop_constraints_.insert(
-        pending_loop_constraints_.end(), result.accepted_constraints.begin(),
-        result.accepted_constraints.end());
+      pose_graph_submission_state_.enqueue(result.accepted_constraints);
     } catch (const std::exception & error) {
       loop_closure_future_.reset();
       ++loop_closure_failure_count_;
@@ -767,26 +813,19 @@ private:
 
   void startPoseGraphOptimization(const std::vector<GlobalKeyframe> & keyframes)
   {
-    if (pose_graph_future_.has_value() || pending_loop_constraints_.empty()) {
+    if (pose_graph_future_.has_value() || keyframes.empty()) {
       return;
     }
     const std::size_t latest_keyframe_id = keyframes.back().id;
-    if (has_pose_graph_submission_ &&
-      latest_keyframe_id - last_pose_graph_submission_keyframe_id_ <
-      minimum_pose_graph_keyframe_interval_)
-    {
+    const auto submission = pose_graph_submission_state_.begin(
+      latest_keyframe_id, keyframes.size());
+    if (!submission.has_value()) {
       return;
     }
-    auto constraints = committed_loop_constraints_;
-    constraints.insert(constraints.end(), pending_loop_constraints_.begin(),
-      pending_loop_constraints_.end());
-    pending_loop_constraints_.clear();
-    last_pose_graph_submission_keyframe_id_ = latest_keyframe_id;
-    has_pose_graph_submission_ = true;
+    active_pose_graph_task_id_ = submission->task_id;
     pose_graph_future_.emplace(std::async(std::launch::async,
-      [this, keyframes, constraints = std::move(constraints)]() mutable {
-        return PoseGraphResult{pose_graph_backend_.optimize(keyframes, constraints),
-        std::move(constraints)};
+      [this, keyframes, constraints = submission->constraints]() {
+        return pose_graph_backend_.optimize(keyframes, constraints);
       }));
   }
 
@@ -798,19 +837,24 @@ private:
       return;
     }
     try {
-      const auto result = pose_graph_future_->get();
+      const auto optimization = pose_graph_future_->get();
       pose_graph_future_.reset();
-      if (result.optimization.success &&
-        result.optimization.snapshot_keyframe_count <= global_keyframes_.size())
-      {
-        committed_loop_constraints_ = result.constraints;
-        map_from_local_ = result.optimization.map_from_local;
+      const std::uint64_t task_id = active_pose_graph_task_id_.value_or(0U);
+      active_pose_graph_task_id_.reset();
+      if (optimization.success && pose_graph_submission_state_.completeSuccess(task_id)) {
+        map_from_odom_ = optimization.map_from_odom;
         ++pose_graph_commit_count_;
       } else {
+        (void)pose_graph_submission_state_.completeFailure(task_id);
         ++pose_graph_discard_count_;
       }
     } catch (const std::exception & error) {
       pose_graph_future_.reset();
+      if (active_pose_graph_task_id_.has_value()) {
+        (void)pose_graph_submission_state_.completeFailure(
+          *active_pose_graph_task_id_);
+        active_pose_graph_task_id_.reset();
+      }
       ++pose_graph_failure_count_;
       RCLCPP_ERROR(get_logger(), "Discarded pose graph worker result: %s", error.what());
     }
@@ -965,6 +1009,16 @@ private:
       "loop_closure_pending_keyframes",
       std::to_string(pending_loop_keyframes_.size())));
     status.values.push_back(makeValue(
+      "loop_closure_pending_keyframe_limit",
+      std::to_string(maximum_pending_loop_keyframes_)));
+    status.values.push_back(makeValue(
+      "loop_closure_dropped_keyframes",
+      std::to_string(dropped_loop_keyframe_count_)));
+    status.values.push_back(makeValue(
+      "loop_verification_candidate_limit",
+      std::to_string(
+        loop_closure_configuration_.maximum_verification_candidates)));
+    status.values.push_back(makeValue(
       "loop_closure_failures", std::to_string(loop_closure_failure_count_)));
     status.values.push_back(makeValue(
       "loop_candidate_count",
@@ -1009,6 +1063,14 @@ private:
       std::to_string(best_verification == nullptr ? 0.0 :
       best_verification->overlap_ratio)));
     status.values.push_back(makeValue(
+      "loop_best_front_end_translation_disagreement",
+      std::to_string(best_verification == nullptr ? 0.0 :
+      best_verification->front_end_translation_disagreement)));
+    status.values.push_back(makeValue(
+      "loop_best_front_end_rotation_disagreement",
+      std::to_string(best_verification == nullptr ? 0.0 :
+      best_verification->front_end_rotation_disagreement)));
+    status.values.push_back(makeValue(
       "pose_graph_worker_active", pose_graph_future_.has_value() ? "true" : "false"));
     status.values.push_back(makeValue(
       "pose_graph_commits", std::to_string(pose_graph_commit_count_)));
@@ -1018,7 +1080,10 @@ private:
       "pose_graph_failures", std::to_string(pose_graph_failure_count_)));
     status.values.push_back(makeValue(
       "pose_graph_pending_constraints",
-      std::to_string(pending_loop_constraints_.size())));
+      std::to_string(pose_graph_submission_state_.pendingConstraintCount())));
+    status.values.push_back(makeValue(
+      "pose_graph_minimum_keyframe_interval",
+      std::to_string(pose_graph_configuration_.minimum_keyframe_interval)));
     const double elapsed = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - started).count();
     status.values.push_back(makeValue("processing_ms", std::to_string(elapsed)));
@@ -1030,7 +1095,10 @@ private:
   LocalSubmap local_submap_;
   GlobalKeyframeMap global_keyframes_;
   ScanContextIndex scan_context_index_;
+  LoopClosureRuntimeConfiguration loop_closure_configuration_;
   LoopClosureVerifier loop_closure_verifier_;
+  PoseGraphRuntimeConfiguration pose_graph_configuration_;
+  PoseGraphSubmissionState pose_graph_submission_state_;
   Se2PoseGraphBackend pose_graph_backend_;
   tf2_ros::Buffer tf_buffer_;
   tf2_ros::TransformListener tf_listener_;
@@ -1038,15 +1106,16 @@ private:
   std::string odom_topic_;
   std::string base_frame_;
   std::string local_frame_;
+  std::string odom_frame_;
   std::string map_frame_;
+  bool publish_map_to_odom_tf_{true};
   double maximum_odom_age_{0.05};
   bool force_planar_motion_{true};
   double keyframe_translation_{0.25};
   double keyframe_rotation_{0.15};
   std::size_t maximum_odom_buffer_size_{200U};
   std::size_t maximum_pending_clouds_{5U};
-  std::size_t maximum_loop_verification_candidates_{3U};
-  std::size_t minimum_pose_graph_keyframe_interval_{30U};
+  std::size_t maximum_pending_loop_keyframes_{100U};
   std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};
@@ -1060,16 +1129,16 @@ private:
   std::vector<LoopClosureVerificationResult> last_loop_verification_results_;
   std::size_t scan_context_index_size_{0U};
   std::deque<GlobalKeyframe> pending_loop_keyframes_;
-  std::vector<Se2LoopConstraint> committed_loop_constraints_;
-  std::vector<Se2LoopConstraint> pending_loop_constraints_;
+  std::size_t dropped_loop_keyframe_count_{0U};
+  // Futures are declared after their backends, so they are joined before the
+  // objects captured by their workers are destroyed.
   std::optional<std::future<LoopClosureTaskResult>> loop_closure_future_;
-  std::optional<std::future<PoseGraphResult>> pose_graph_future_;
-  Eigen::Isometry3d map_from_local_{Eigen::Isometry3d::Identity()};
+  std::optional<std::future<Se2PoseGraphBackendResult>> pose_graph_future_;
+  std::optional<std::uint64_t> active_pose_graph_task_id_;
+  Eigen::Isometry3d map_from_odom_{Eigen::Isometry3d::Identity()};
   std::size_t pose_graph_commit_count_{0U};
   std::size_t pose_graph_discard_count_{0U};
   std::size_t pose_graph_failure_count_{0U};
-  std::size_t last_pose_graph_submission_keyframe_id_{0U};
-  bool has_pose_graph_submission_{false};
   std::size_t loop_closure_failure_count_{0U};
   std::deque<nav_msgs::msg::Odometry> odom_buffer_;
   std::deque<sensor_msgs::msg::PointCloud2::SharedPtr> pending_clouds_;
@@ -1082,6 +1151,7 @@ private:
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
     diagnostics_publisher_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
+  rclcpp::TimerBase::SharedPtr background_result_timer_;
 };
 
 }  // namespace slam_robot_slam_3d

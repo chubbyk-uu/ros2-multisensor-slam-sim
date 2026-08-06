@@ -36,6 +36,7 @@ struct Se2PoseGraphBackendResult
   double initial_cost{0.0};
   double final_cost{0.0};
   Eigen::Isometry3d map_from_local{Eigen::Isometry3d::Identity()};
+  Eigen::Isometry3d map_from_odom{Eigen::Isometry3d::Identity()};
 };
 
 class Se2PoseGraphBackend

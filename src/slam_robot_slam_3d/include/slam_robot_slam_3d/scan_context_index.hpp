@@ -18,7 +18,6 @@ struct ScanContextParameters
   std::size_t angular_bins{60U};
   std::size_t minimum_keyframe_separation{80U};
   double minimum_travel_distance{8.0};
-  double maximum_candidate_position_distance{3.0};
   std::size_t ring_key_candidate_count{20U};
   std::size_t maximum_candidates{5U};
 };
@@ -54,7 +53,6 @@ private:
   {
     std::size_t keyframe_id{0U};
     double accumulated_distance{0.0};
-    Eigen::Vector2d position{Eigen::Vector2d::Zero()};
     Descriptor descriptor;
   };
 

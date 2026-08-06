@@ -3,6 +3,8 @@ import importlib.util
 from pathlib import Path
 import sys
 
+from launch.actions import DeclareLaunchArgument
+
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "launch_smoke_check"
 LOADER = SourceFileLoader("launch_smoke_check", str(SCRIPT))
@@ -18,6 +20,7 @@ def test_all_composite_launches_have_a_distinct_smoke_profile():
     assert set(profiles) == {
         "corridor",
         "motion",
+        "custom_loop",
         "structured_loop",
         "structured_navigation",
         "structured_dataset",
@@ -48,3 +51,30 @@ def test_default_smoke_duration_matches_the_launch_lifetime_requirement():
 
     assert arguments.startup_timeout == 60.0
     assert arguments.hold_time == 60.0
+
+
+def test_composite_launches_declare_a_real_smoke_argument():
+    launch_directory = Path(__file__).parents[1] / "launch"
+    launch_files = [
+        "corridor_3d_regression.launch.py",
+        "front_end_motion_regression.launch.py",
+        "structured_loop_regression.launch.py",
+        "structured_navigation_regression.launch.py",
+        "structured_dataset_recording.launch.py",
+        "custom_3d_loop_regression.launch.py",
+    ]
+    for index, filename in enumerate(launch_files):
+        loader = SourceFileLoader(
+            f"smoke_launch_{index}", str(launch_directory / filename)
+        )
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        description = module.generate_launch_description()
+        smoke_arguments = [
+            entity
+            for entity in description.entities
+            if isinstance(entity, DeclareLaunchArgument)
+            and entity.name == "smoke"
+        ]
+        assert len(smoke_arguments) == 1, filename

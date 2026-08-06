@@ -44,6 +44,14 @@ PROFILES = (
         ("profile:=rotation",),
     ),
     LaunchProfile(
+        "custom_loop",
+        "custom_3d_loop_regression.launch.py",
+        (
+            "/point_cloud_preprocessor_3d",
+            "/scan_to_map_odometry_3d",
+        ),
+    ),
+    LaunchProfile(
         "structured_loop",
         "structured_loop_regression.launch.py",
         ("/ekf_filter_node", "/rtabmap/rtabmap"),

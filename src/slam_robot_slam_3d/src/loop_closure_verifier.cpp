@@ -97,6 +97,16 @@ LoopClosureVerificationResult LoopClosureVerifier::verify(
   result.correction_translation = registration.correction_translation;
   result.correction_rotation = registration.correction_rotation;
   result.degenerate = registration.degenerate;
+  const Eigen::Isometry3d front_end_relative =
+    historical->front_end_base_pose.inverse() * current->front_end_base_pose;
+  const Eigen::Isometry3d verified_base_pose =
+    registration.pose * current->base_to_sensor.inverse();
+  const Eigen::Isometry3d verified_relative =
+    historical->front_end_base_pose.inverse() * verified_base_pose;
+  result.front_end_translation_disagreement = (
+    front_end_relative.translation() - verified_relative.translation()).norm();
+  result.front_end_rotation_disagreement = Eigen::AngleAxisd(
+    front_end_relative.rotation().transpose() * verified_relative.rotation()).angle();
   if (!registration.success()) {
     result.status = LoopClosureVerificationStatus::kRegistrationRejected;
     return result;
@@ -107,6 +117,10 @@ LoopClosureVerificationResult LoopClosureVerifier::verify(
     result.status = LoopClosureVerificationStatus::kInsufficientOverlap;
   } else if (registration.degenerate) {
     result.status = LoopClosureVerificationStatus::kDegenerateGeometry;
+  } else if (result.front_end_translation_disagreement >
+    parameters_.maximum_front_end_translation_disagreement)
+  {
+    result.status = LoopClosureVerificationStatus::kFrontEndInconsistent;
   } else {
     result.status = LoopClosureVerificationStatus::kAccepted;
   }
@@ -120,7 +134,9 @@ void LoopClosureVerifier::validateParameters() const
     parameters_.submap_voxel_leaf_size <= 0.0 ||
     !std::isfinite(parameters_.minimum_overlap_ratio) ||
     parameters_.minimum_overlap_ratio <= 0.0 ||
-    parameters_.minimum_overlap_ratio > 1.0)
+    parameters_.minimum_overlap_ratio > 1.0 ||
+    !std::isfinite(parameters_.maximum_front_end_translation_disagreement) ||
+    parameters_.maximum_front_end_translation_disagreement <= 0.0)
   {
     throw std::invalid_argument("loop closure verifier parameters are invalid");
   }
@@ -137,6 +153,8 @@ const char * toString(LoopClosureVerificationStatus status)
       return "insufficient_overlap";
     case LoopClosureVerificationStatus::kDegenerateGeometry:
       return "degenerate_geometry";
+    case LoopClosureVerificationStatus::kFrontEndInconsistent:
+      return "front_end_inconsistent";
     case LoopClosureVerificationStatus::kRegistrationRejected:
       return "registration_rejected";
   }

@@ -78,8 +78,11 @@ ros2 run slam_robot_slam_3d front_end_regression
 暂存，而不是立即使用滞后的最近邻。过期或队列溢出会明确告警。连续 5 次
 真实配准失败时，节点按当前轮速 + IMU 预测位姿清空并重播种局部子图，避免
 旧子图让失败自我延续；正常回归要求该恢复计数严格为零。`rate:=2.0` 只作
-计算压力测试，不能替代在线时间契约。当前节点不发布 TF、全局地图或回环
-结果，不能接 Nav2。
+计算压力测试，不能替代在线时间契约。回环后端成功提交后，节点默认发布唯一的
+标准 `map -> odom`；EKF 保持唯一的 `odom -> base_footprint` 发布者。自研链路
+尚未输出全局重放点云或二维 `OccupancyGrid`，所以当前仍不能替换 RTAB-Map 的
+Nav2 建图入口；`pose_graph.publish_map_to_odom_tf:=false` 可在只评估局部输出时
+显式关闭该 TF。
 
 前端每次插入关键帧时还会写入独立的长期全局关键帧库：其中保存过滤后的
 传感器坐标系点云、时间戳、`x/y/yaw` 前端位姿、插值 `/odom` 预测、传感器
@@ -98,8 +101,9 @@ ros2 run slam_robot_slam_3d front_end_regression
 GICP 复核。复核必须满足 GICP 的收敛、对应点、RMSE 与最大修正量门限，同时
 满足最小扫描重叠率且不处于平移、平面或偏航弱几何状态；诊断保留验证数量、
 接受数量、最佳验证状态与重叠率。检索与复核在单一后台任务中顺序执行；通过
-复核的约束会排队给另一后台位姿图任务，成功提交后才更新
-`map -> custom_slam_3d_odom`。
+复核的约束会排队给另一后台位姿图任务，成功提交后才以严格 SE(2) 修正更新
+`map -> odom`。检索没有按当前前端位置的硬距离门限；复核后才检查与前端相对
+运动的一致性，从而既允许数米漂移后的真实回环，也拒绝重复走廊中的巨大假修正。
 
 专用 70 m 平行墙世界把端墙和少量锚点移出雷达量程，用下面的自动回归验证
 严格弱几何段及进入/离开退化区的状态切换：
@@ -126,6 +130,19 @@ ros2 launch slam_robot_slam_3d front_end_motion_regression.launch.py \
 意外子图重初始化、回调间隔和 P95。打滑 profile 还要求低摩擦实际造成可测
 的里程计误差。
 
+### 自研回环正反验收
+
+正向验收回放结构化两圈固定包，并要求至少一次成功的后台图优化且零丢弃、零
+后台异常：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_loop_regression.launch.py \
+  bag:="${SLAM_WS}/bags/structured_3d_reference" rate:=1.0
+```
+
+负向验收仍运行 `corridor_3d_regression.launch.py`，要求弱几何段没有任何位姿图
+提交。两者分别验证“真实闭环能进入后端”和“重复结构不会污染后端”。
+
 ### 复合启动冒烟回归
 
 任何修改复合 launch、作用域、延迟事件处理器或启动参数后，先运行：
@@ -134,8 +151,8 @@ ros2 launch slam_robot_slam_3d front_end_motion_regression.launch.py \
 ros2 run slam_robot_slam_3d launch_smoke_check
 ```
 
-它以无界面模式串行启动走廊前端、运动前端、结构化 RTAB-Map、RTAB-Map +
-Nav2、结构化数据录制五个入口。每个入口必须在关键节点连续在线 `60 s` 后
+它以无界面模式串行启动走廊前端、运动前端、自研固定包闭环、结构化 RTAB-Map、RTAB-Map +
+Nav2、结构化数据录制六个入口。每个入口必须在关键节点连续在线 `60 s` 后
 才通过；脚本检查启动日志中的作用域和子进程错误，并以独立进程组回收全部
 子进程。数据录制的短暂 bag 输出位于临时目录，结束后自动清理。单独复测某个
 入口时可用 `--profile structured_navigation`；默认超时和保持时长都可通过

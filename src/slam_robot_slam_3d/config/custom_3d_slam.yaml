@@ -56,6 +56,7 @@
       odom_topic: /odom
       base_frame: base_footprint
       local_frame: custom_slam_3d_odom
+      odom_frame: odom
       maximum_odom_age: 0.05
       force_planar_motion: true
       keyframe_translation: 0.25
@@ -68,13 +69,15 @@
         voxel_leaf_size: 0.15
 
     loop_closure:
+      # The asynchronous verifier can skip stale intermediate keyframes under
+      # overload, but it must never grow without a diagnostic bound.
+      maximum_pending_keyframes: 100
       scan_context:
         maximum_radius: 20.0
         radial_bins: 20
         angular_bins: 60
         minimum_keyframe_separation: 80
         minimum_travel_distance: 8.0
-        maximum_candidate_position_distance: 3.0
         ring_key_candidate_count: 20
         maximum_candidates: 5
 
@@ -82,12 +85,16 @@
         submap_neighbor_keyframes: 2
         submap_voxel_leaf_size: 0.15
         minimum_overlap_ratio: 0.30
+        # This is a post-GICP graph-consistency bound, not a retrieval gate:
+        # it permits material drift while rejecting implausible corridor jumps.
+        maximum_front_end_translation_disagreement: 10.0
         maximum_correction_translation: 3.0
         maximum_correction_rotation: 1.0
         maximum_candidates: 3
 
     pose_graph:
       map_frame: map
+      publish_map_to_odom_tf: true
       maximum_iterations: 50
       loop_closure_huber_scale: 1.0
       sequential_translation_weight: 20.0

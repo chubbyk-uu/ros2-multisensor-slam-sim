@@ -96,8 +96,13 @@ Se2PoseGraphBackendResult Se2PoseGraphBackend::optimize(
   result.final_cost = summary.final_cost;
   if (result.success) {
     const Eigen::Isometry3d optimized_latest = toPose3d(graph.nodes().back().pose);
-    result.map_from_local = optimized_latest *
-      keyframes.back().front_end_base_pose.inverse();
+    // The graph is deliberately SE(2).  Project both corrections back to
+    // SE(2), rather than allowing roll/pitch from an input odometry sample to
+    // leak into the map frame through an Isometry inverse.
+    result.map_from_local = toPose3d(toPose2d(
+        optimized_latest * keyframes.back().front_end_base_pose.inverse()));
+    result.map_from_odom = toPose3d(toPose2d(
+        optimized_latest * keyframes.back().odom_base_pose.inverse()));
   }
   return result;
 }

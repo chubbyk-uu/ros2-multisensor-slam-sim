@@ -175,6 +175,24 @@ TEST(ScanToMapMatcher, ReusesTargetOnlyWhileSubmapVersionIsUnchanged)
   EXPECT_FALSE(invalidated.target_cache_reused);
 }
 
+TEST(ScanToMapMatcher, BuildsTargetNormalsForInitialVersionZero)
+{
+  const auto local_map = makeStructuredCloud();
+  ScanToMapMatcher matcher(ScanToMapMatcherParameters{});
+
+  const auto first = matcher.match(
+    local_map, local_map, 0U, Eigen::Isometry3d::Identity());
+  const auto reused = matcher.match(
+    local_map, local_map, 0U, Eigen::Isometry3d::Identity());
+
+  ASSERT_TRUE(first.success()) << toString(first.status);
+  ASSERT_TRUE(reused.success()) << toString(reused.status);
+  EXPECT_GT(first.observability_correspondences, 0U);
+  EXPECT_EQ(first.translation_observable_rank, 2);
+  EXPECT_FALSE(first.target_cache_reused);
+  EXPECT_TRUE(reused.target_cache_reused);
+}
+
 TEST(ScanToMapMatcher, TreatsGroundOnlyGeometryAsFullyUnobservableInTranslation)
 {
   const auto ground = makeGroundPlane();

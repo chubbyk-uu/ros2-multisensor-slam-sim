@@ -60,6 +60,8 @@ class FrontEndRegression(Node):
         self.declare_parameter("minimum_global_keyframe_points", 100)
         self.declare_parameter("minimum_sim_time", 0.0)
         self.declare_parameter("minimum_pose_graph_commits", 0)
+        self.declare_parameter("maximum_pose_graph_discards", 0)
+        self.declare_parameter("maximum_pose_graph_failures", 0)
 
         self.minimum_samples = self.get_parameter("minimum_samples").value
         self.minimum_truth_distance = self.get_parameter(
@@ -92,6 +94,12 @@ class FrontEndRegression(Node):
         self.minimum_pose_graph_commits = self.get_parameter(
             "minimum_pose_graph_commits"
         ).value
+        self.maximum_pose_graph_discards = self.get_parameter(
+            "maximum_pose_graph_discards"
+        ).value
+        self.maximum_pose_graph_failures = self.get_parameter(
+            "maximum_pose_graph_failures"
+        ).value
 
         self.truth_buffer = deque(maxlen=200)
         self.custom_origin = None
@@ -113,6 +121,8 @@ class FrontEndRegression(Node):
         self.global_keyframe_points = []
         self.latest_sim_time = 0.0
         self.pose_graph_commits = 0
+        self.pose_graph_discards = 0
+        self.pose_graph_failures = 0
         self.result = None
 
         self.create_subscription(
@@ -188,6 +198,8 @@ class FrontEndRegression(Node):
                 global_keyframes = int(values["global_keyframes"])
                 global_keyframe_points = int(values["global_keyframe_points"])
                 pose_graph_commits = int(values["pose_graph_commits"])
+                pose_graph_discards = int(values["pose_graph_discards"])
+                pose_graph_failures = int(values["pose_graph_failures"])
             except (KeyError, ValueError) as error:
                 self.get_logger().error(f"Invalid diagnostics sample: {error}")
                 self.result = 2
@@ -210,6 +222,8 @@ class FrontEndRegression(Node):
             self.global_keyframes.append(global_keyframes)
             self.global_keyframe_points.append(global_keyframe_points)
             self.pose_graph_commits = pose_graph_commits
+            self.pose_graph_discards = pose_graph_discards
+            self.pose_graph_failures = pose_graph_failures
             self.latest_sim_time = (
                 message.header.stamp.sec
                 + 1.0e-9 * message.header.stamp.nanosec
@@ -258,6 +272,8 @@ class FrontEndRegression(Node):
             f"global_keyframes={global_keyframe_count} "
             f"global_keyframe_points={global_keyframe_point_count} "
             f"pose_graph_commits={self.pose_graph_commits} "
+            f"pose_graph_discards={self.pose_graph_discards} "
+            f"pose_graph_failures={self.pose_graph_failures} "
             f"position_error={self.latest_position_error:.3f}m "
             f"position_error_max={self.maximum_observed_position_error:.3f}m "
             f"yaw_error={math.degrees(self.latest_yaw_error):.3f}deg"
@@ -294,6 +310,14 @@ class FrontEndRegression(Node):
             (
                 self.pose_graph_commits >= self.minimum_pose_graph_commits,
                 "pose graph commit count",
+            ),
+            (
+                self.pose_graph_discards <= self.maximum_pose_graph_discards,
+                "pose graph discard count",
+            ),
+            (
+                self.pose_graph_failures <= self.maximum_pose_graph_failures,
+                "pose graph failure count",
             ),
         ]
         failures = [name for passed, name in checks if not passed]

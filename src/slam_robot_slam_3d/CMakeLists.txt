@@ -104,6 +104,20 @@ target_link_libraries(
   se2_pose_graph_backend
   PUBLIC global_keyframe_map slam_robot_slam::pose_graph_2d Eigen3::Eigen
 )
+
+add_library(
+  pose_graph_submission_state
+  src/pose_graph_submission_state.cpp
+)
+target_compile_features(pose_graph_submission_state PUBLIC cxx_std_17)
+target_compile_options(
+  pose_graph_submission_state PRIVATE -Wall -Wextra -Wpedantic
+)
+target_include_directories(
+  pose_graph_submission_state
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(pose_graph_submission_state PUBLIC se2_pose_graph_backend)
 target_link_libraries(
   loop_closure_verifier
   PUBLIC global_keyframe_map scan_context_index scan_to_map_matcher
@@ -160,6 +174,7 @@ target_link_libraries(
   global_keyframe_map
   loop_closure_verifier
   se2_pose_graph_backend
+  pose_graph_submission_state
   scan_context_index
   match_failure_recovery
   odometry_interpolator
@@ -278,6 +293,14 @@ if(BUILD_TESTING)
   target_link_libraries(
     test_se2_pose_graph_backend
     se2_pose_graph_backend
+  )
+  ament_add_gtest(
+    test_pose_graph_submission_state
+    test/test_pose_graph_submission_state.cpp
+  )
+  target_link_libraries(
+    test_pose_graph_submission_state
+    pose_graph_submission_state
   )
   ament_add_gtest(
     test_odometry_interpolator

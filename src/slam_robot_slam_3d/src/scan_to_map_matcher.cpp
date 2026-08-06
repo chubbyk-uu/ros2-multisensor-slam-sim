@@ -65,6 +65,7 @@ public:
   std::uint64_t target_version{0U};
   std::vector<Eigen::Vector3d> target_normals;
   std::uint64_t target_normals_version{0U};
+  bool target_normals_valid{false};
 };
 
 bool ScanToMapResult::success() const
@@ -145,7 +146,9 @@ ScanToMapResult ScanToMapMatcher::match(
     return result;
   }
 
-  if (implementation_->target_normals_version != local_map_version) {
+  if (!implementation_->target_normals_valid ||
+    implementation_->target_normals_version != local_map_version)
+  {
     const auto feature_cache_started = std::chrono::steady_clock::now();
     const auto & covariances = matcher.targetCovariances();
     implementation_->target_normals.assign(
@@ -158,6 +161,7 @@ ScanToMapResult ScanToMapMatcher::match(
       }
     }
     implementation_->target_normals_version = local_map_version;
+    implementation_->target_normals_valid = true;
     result.target_feature_cache_ms = std::chrono::duration<double, std::milli>(
       std::chrono::steady_clock::now() - feature_cache_started).count();
   }
