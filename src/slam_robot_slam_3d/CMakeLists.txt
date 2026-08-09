@@ -69,6 +69,20 @@ target_include_directories(
 ament_target_dependencies(global_keyframe_map rclcpp)
 target_link_libraries(global_keyframe_map Eigen3::Eigen ${PCL_LIBRARIES})
 
+add_library(global_point_cloud_map src/global_point_cloud_map.cpp)
+target_compile_features(global_point_cloud_map PUBLIC cxx_std_17)
+target_compile_options(global_point_cloud_map PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  global_point_cloud_map
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    ${PCL_INCLUDE_DIRS}
+)
+target_link_libraries(
+  global_point_cloud_map
+  PUBLIC global_keyframe_map Eigen3::Eigen ${PCL_LIBRARIES}
+)
+
 add_library(scan_context_index src/scan_context_index.cpp)
 target_compile_features(scan_context_index PUBLIC cxx_std_17)
 target_compile_options(scan_context_index PRIVATE -Wall -Wextra -Wpedantic)
@@ -172,6 +186,7 @@ target_link_libraries(
   scan_to_map_odometry_node
   local_submap
   global_keyframe_map
+  global_point_cloud_map
   loop_closure_verifier
   se2_pose_graph_backend
   pose_graph_submission_state
@@ -269,6 +284,14 @@ if(BUILD_TESTING)
   target_link_libraries(
     test_global_keyframe_map
     global_keyframe_map
+  )
+  ament_add_gtest(
+    test_global_point_cloud_map
+    test/test_global_point_cloud_map.cpp
+  )
+  target_link_libraries(
+    test_global_point_cloud_map
+    global_point_cloud_map
   )
   ament_add_gtest(
     test_scan_context_index

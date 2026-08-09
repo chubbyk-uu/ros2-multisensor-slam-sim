@@ -101,8 +101,11 @@ ros2 run slam_robot_slam_3d front_end_regression
 ```
 
 前端发布 `/custom_slam_3d/laser_odom`、已配准当前帧
-`/custom_slam_3d/registered_scan`、有界 `/custom_slam_3d/local_map` 和逐帧
-`/custom_slam_3d/front_end_diagnostics`。局部输出仍使用
+`/custom_slam_3d/registered_scan`、有界 `/custom_slam_3d/local_map`、全局
+`/custom_slam_3d/map_cloud` 和逐帧 `/custom_slam_3d/front_end_diagnostics`。
+`map_cloud` 由不可变全局关键帧按最近一次成功的位姿图优化结果后台分批重放，
+使用 `global_map.voxel_leaf_size` 增量体素化；新请求只保留最新快照，因此不会
+阻塞 10 Hz 前端或形成无界重建队列。局部输出仍使用
 `custom_slam_3d_odom`，但回环后端成功优化后会发布唯一且可配置的标准
 `map -> odom`（默认开启）；EKF 继续唯一发布 `odom -> base_footprint`。
 该链路已有 Scan Context 检索、GICP 几何复核和后台 SE(2) 位姿图，但尚未

@@ -31,6 +31,7 @@
 
 #include "slam_robot_slam_3d/local_submap.hpp"
 #include "slam_robot_slam_3d/global_keyframe_map.hpp"
+#include "slam_robot_slam_3d/global_point_cloud_map.hpp"
 #include "slam_robot_slam_3d/loop_closure_verifier.hpp"
 #include "slam_robot_slam_3d/match_failure_recovery.hpp"
 #include "slam_robot_slam_3d/odometry_interpolator.hpp"
@@ -189,6 +190,12 @@ public:
       "front_end.maximum_consecutive_match_failures", 5);
     const auto pending_loop_keyframe_limit = declare_parameter<int>(
       "loop_closure.maximum_pending_keyframes", 100);
+    const auto global_map_keyframe_interval = declare_parameter<int>(
+      "global_map.rebuild_keyframe_interval", 10);
+    const auto global_map_keyframes_per_batch = declare_parameter<int>(
+      "global_map.rebuild_keyframes_per_batch", 4);
+    const auto global_map_voxel_leaf_size = declare_parameter<double>(
+      "global_map.voxel_leaf_size", 0.15);
     if (input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
       local_frame_.empty() || odom_frame_.empty() || map_frame_.empty() ||
       !std::isfinite(maximum_odom_age_) ||
@@ -196,7 +203,9 @@ public:
       keyframe_translation_ <= 0.0 || !std::isfinite(keyframe_rotation_) ||
       keyframe_rotation_ <= 0.0 || buffer_size <= 1 ||
       pending_cloud_limit <= 0 || failure_limit <= 0 ||
-      pending_loop_keyframe_limit <= 0)
+      pending_loop_keyframe_limit <= 0 || global_map_keyframe_interval <= 0 ||
+      global_map_keyframes_per_batch <= 0 ||
+      !std::isfinite(global_map_voxel_leaf_size) || global_map_voxel_leaf_size <= 0.0)
     {
       throw std::invalid_argument("front-end parameters are invalid");
     }
@@ -204,6 +213,11 @@ public:
     maximum_pending_clouds_ = static_cast<std::size_t>(pending_cloud_limit);
     maximum_pending_loop_keyframes_ =
       static_cast<std::size_t>(pending_loop_keyframe_limit);
+    global_map_rebuild_keyframe_interval_ =
+      static_cast<std::size_t>(global_map_keyframe_interval);
+    global_point_cloud_map_ = std::make_unique<GlobalPointCloudMap>(
+      GlobalPointCloudMapParameters{global_map_voxel_leaf_size,
+        static_cast<std::size_t>(global_map_keyframes_per_batch)});
     match_failure_recovery_ = std::make_unique<MatchFailureRecovery>(
       static_cast<std::size_t>(failure_limit));
 
@@ -214,6 +228,8 @@ public:
       "/custom_slam_3d/registered_scan", rclcpp::SensorDataQoS());
     local_map_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
       "/custom_slam_3d/local_map", rclcpp::QoS(1).transient_local());
+    global_map_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+      "/custom_slam_3d/map_cloud", rclcpp::QoS(1).transient_local());
     diagnostics_publisher_ =
       create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/custom_slam_3d/front_end_diagnostics", 10);
@@ -239,6 +255,20 @@ public:
         } catch (const std::exception & error) {
           RCLCPP_ERROR(
             get_logger(), "3D background result callback failed: %s", error.what());
+        }
+      });
+    // This is intentionally wall-clock scheduled: a finite rosbag stops
+    // advancing /clock before the last background batches finish.  It only
+    // drives bounded reconstruction work and never stamps sensor data.
+    global_map_rebuild_timer_ = create_wall_timer(
+      std::chrono::milliseconds(20), [this]() {
+        try {
+          processGlobalMapRebuildBatch();
+        } catch (const std::exception & error) {
+          ++global_map_rebuild_failure_count_;
+          RCLCPP_ERROR(
+            get_logger(), "3D global map rebuild callback failed: %s", error.what());
+          queued_global_map_rebuild_.reset();
         }
       });
 
@@ -739,6 +769,11 @@ private:
         "Dropping an unverified 3D loop keyframe because the worker queue is full");
     }
     startLoopClosureTask();
+    if (keyframe.id == 0U ||
+      (keyframe.id + 1U) % global_map_rebuild_keyframe_interval_ == 0U)
+    {
+      requestGlobalMapRebuild();
+    }
     last_global_keyframe_base_pose_ = front_end_base_pose;
     has_last_global_keyframe_ = true;
   }
@@ -843,6 +878,8 @@ private:
       active_pose_graph_task_id_.reset();
       if (optimization.success && pose_graph_submission_state_.completeSuccess(task_id)) {
         map_from_odom_ = optimization.map_from_odom;
+        optimized_global_base_poses_ = optimization.optimized_base_poses;
+        requestGlobalMapRebuild();
         ++pose_graph_commit_count_;
       } else {
         (void)pose_graph_submission_state_.completeFailure(task_id);
@@ -859,6 +896,79 @@ private:
       RCLCPP_ERROR(get_logger(), "Discarded pose graph worker result: %s", error.what());
     }
     startPoseGraphOptimization(global_keyframes_.snapshot());
+  }
+
+  struct GlobalMapRebuildRequest
+  {
+    std::vector<GlobalKeyframe> keyframes;
+    std::vector<Eigen::Isometry3d> base_poses;
+    rclcpp::Time stamp{0, 0, RCL_ROS_TIME};
+  };
+
+  std::vector<Eigen::Isometry3d> globalMapBasePoses(
+    const std::vector<GlobalKeyframe> & keyframes) const
+  {
+    std::vector<Eigen::Isometry3d> poses;
+    poses.reserve(keyframes.size());
+    for (std::size_t index = 0U; index < keyframes.size(); ++index) {
+      // A successful graph task owns a prefix snapshot.  Newer keyframes use
+      // the latest committed map->odom correction until the next optimization.
+      poses.push_back(index < optimized_global_base_poses_.size() ?
+        optimized_global_base_poses_[index] :
+        map_from_odom_ * keyframes[index].odom_base_pose);
+    }
+    return poses;
+  }
+
+  void requestGlobalMapRebuild()
+  {
+    const auto keyframes = global_keyframes_.snapshot();
+    if (keyframes.empty()) {
+      return;
+    }
+    GlobalMapRebuildRequest request;
+    request.stamp = keyframes.back().stamp;
+    request.base_poses = globalMapBasePoses(keyframes);
+    request.keyframes = keyframes;
+    if (global_point_cloud_map_->active()) {
+      queued_global_map_rebuild_ = std::move(request);
+      return;
+    }
+    global_point_cloud_map_->begin(
+      std::move(request.keyframes), std::move(request.base_poses));
+    global_map_rebuild_stamp_ = request.stamp;
+    ++global_map_rebuild_request_count_;
+  }
+
+  void processGlobalMapRebuildBatch()
+  {
+    if (!global_point_cloud_map_) {
+      return;
+    }
+    if (!global_point_cloud_map_->active() && queued_global_map_rebuild_.has_value()) {
+      auto request = std::move(*queued_global_map_rebuild_);
+      queued_global_map_rebuild_.reset();
+      global_point_cloud_map_->begin(
+        std::move(request.keyframes), std::move(request.base_poses));
+      global_map_rebuild_stamp_ = request.stamp;
+      ++global_map_rebuild_request_count_;
+    }
+    if (!global_point_cloud_map_->active()) {
+      return;
+    }
+    if (!global_point_cloud_map_->processBatch()) {
+      return;
+    }
+    sensor_msgs::msg::PointCloud2 message;
+    pcl::toROSMsg(global_point_cloud_map_->cloud(), message);
+    message.header.stamp = global_map_rebuild_stamp_;
+    message.header.frame_id = map_frame_;
+    global_map_publisher_->publish(message);
+    ++global_map_rebuild_publish_count_;
+    RCLCPP_INFO(
+      get_logger(), "Published global 3D map from %zu optimized keyframes (%zu voxels)",
+      global_point_cloud_map_->totalKeyframes(),
+      global_point_cloud_map_->cloud().size());
   }
 
   void publishDiagnostics(
@@ -1001,6 +1111,27 @@ private:
     status.values.push_back(makeValue(
       "global_keyframe_points", std::to_string(global_keyframes_.pointCount())));
     status.values.push_back(makeValue(
+      "global_map_rebuild_active",
+      global_point_cloud_map_ != nullptr && global_point_cloud_map_->active() ?
+      "true" : "false"));
+    status.values.push_back(makeValue(
+      "global_map_rebuild_processed_keyframes",
+      global_point_cloud_map_ == nullptr ? "0" :
+      std::to_string(global_point_cloud_map_->processedKeyframes())));
+    status.values.push_back(makeValue(
+      "global_map_rebuild_total_keyframes",
+      global_point_cloud_map_ == nullptr ? "0" :
+      std::to_string(global_point_cloud_map_->totalKeyframes())));
+    status.values.push_back(makeValue(
+      "global_map_points", global_point_cloud_map_ == nullptr ? "0" :
+      std::to_string(global_point_cloud_map_->cloud().size())));
+    status.values.push_back(makeValue(
+      "global_map_rebuild_requests", std::to_string(global_map_rebuild_request_count_)));
+    status.values.push_back(makeValue(
+      "global_map_rebuild_publishes", std::to_string(global_map_rebuild_publish_count_)));
+    status.values.push_back(makeValue(
+      "global_map_rebuild_failures", std::to_string(global_map_rebuild_failure_count_)));
+    status.values.push_back(makeValue(
       "scan_context_index_size", std::to_string(scan_context_index_size_)));
     status.values.push_back(makeValue(
       "loop_closure_worker_active",
@@ -1116,6 +1247,7 @@ private:
   std::size_t maximum_odom_buffer_size_{200U};
   std::size_t maximum_pending_clouds_{5U};
   std::size_t maximum_pending_loop_keyframes_{100U};
+  std::size_t global_map_rebuild_keyframe_interval_{10U};
   std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};
@@ -1136,6 +1268,13 @@ private:
   std::optional<std::future<Se2PoseGraphBackendResult>> pose_graph_future_;
   std::optional<std::uint64_t> active_pose_graph_task_id_;
   Eigen::Isometry3d map_from_odom_{Eigen::Isometry3d::Identity()};
+  std::vector<Eigen::Isometry3d> optimized_global_base_poses_;
+  std::unique_ptr<GlobalPointCloudMap> global_point_cloud_map_;
+  std::optional<GlobalMapRebuildRequest> queued_global_map_rebuild_;
+  rclcpp::Time global_map_rebuild_stamp_{0, 0, RCL_ROS_TIME};
+  std::size_t global_map_rebuild_request_count_{0U};
+  std::size_t global_map_rebuild_publish_count_{0U};
+  std::size_t global_map_rebuild_failure_count_{0U};
   std::size_t pose_graph_commit_count_{0U};
   std::size_t pose_graph_discard_count_{0U};
   std::size_t pose_graph_failure_count_{0U};
@@ -1148,10 +1287,12 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr
     registered_scan_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_map_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr global_map_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
     diagnostics_publisher_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
   rclcpp::TimerBase::SharedPtr background_result_timer_;
+  rclcpp::TimerBase::SharedPtr global_map_rebuild_timer_;
 };
 
 }  // namespace slam_robot_slam_3d

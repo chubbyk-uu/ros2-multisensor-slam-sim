@@ -35,6 +35,10 @@ struct Se2PoseGraphBackendResult
   int iterations{0};
   double initial_cost{0.0};
   double final_cost{0.0};
+  // Indexed like the immutable keyframe snapshot passed to optimize().  The
+  // global map replayer consumes these poses after a successful commit; it
+  // must never reconstruct historical scans from the live front-end state.
+  std::vector<Eigen::Isometry3d> optimized_base_poses;
   Eigen::Isometry3d map_from_local{Eigen::Isometry3d::Identity()};
   Eigen::Isometry3d map_from_odom{Eigen::Isometry3d::Identity()};
 };

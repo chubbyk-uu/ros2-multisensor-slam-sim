@@ -31,6 +31,8 @@ TEST(Se2PoseGraphBackend, UsesLoopConstraintToCorrectLatestLocalPose)
   EXPECT_GT(result.initial_cost, result.final_cost);
   EXPECT_LT(result.map_from_local.translation().x(), -0.2);
   EXPECT_EQ(result.snapshot_keyframe_count, keyframes.size());
+  ASSERT_EQ(result.optimized_base_poses.size(), keyframes.size());
+  EXPECT_LT(result.optimized_base_poses.back().translation().x(), 2.8);
 }
 
 TEST(Se2PoseGraphBackend, ProjectsMapToOdomCorrectionToSe2)

@@ -95,6 +95,10 @@ Se2PoseGraphBackendResult Se2PoseGraphBackend::optimize(
   result.initial_cost = summary.initial_cost;
   result.final_cost = summary.final_cost;
   if (result.success) {
+    result.optimized_base_poses.reserve(graph.nodes().size());
+    for (const auto & node : graph.nodes()) {
+      result.optimized_base_poses.push_back(toPose3d(node.pose));
+    }
     const Eigen::Isometry3d optimized_latest = toPose3d(graph.nodes().back().pose);
     // The graph is deliberately SE(2).  Project both corrections back to
     // SE(2), rather than allowing roll/pitch from an input odometry sample to

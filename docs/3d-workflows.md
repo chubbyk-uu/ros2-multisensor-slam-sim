@@ -80,9 +80,15 @@ ros2 run slam_robot_slam_3d front_end_regression
 旧子图让失败自我延续；正常回归要求该恢复计数严格为零。`rate:=2.0` 只作
 计算压力测试，不能替代在线时间契约。回环后端成功提交后，节点默认发布唯一的
 标准 `map -> odom`；EKF 保持唯一的 `odom -> base_footprint` 发布者。自研链路
-尚未输出全局重放点云或二维 `OccupancyGrid`，所以当前仍不能替换 RTAB-Map 的
-Nav2 建图入口；`pose_graph.publish_map_to_odom_tf:=false` 可在只评估局部输出时
+已输出全局关键帧重放点云 `/custom_slam_3d/map_cloud`，但尚未输出二维
+`OccupancyGrid`，所以当前仍不能替换 RTAB-Map 的 Nav2 建图入口；
+`pose_graph.publish_map_to_odom_tf:=false` 可在只评估局部输出时
 显式关闭该 TF。
+
+`map_cloud` 不参与实时匹配：节点按 `global_map.rebuild_keyframe_interval` 取全局
+关键帧快照，在独立的有界定时批次中按优化位姿重放，并以
+`global_map.voxel_leaf_size` 体素去重。回环或新关键帧在重建期间到来时只保留最新
+请求，当前重建正常完成后再开始，确保前端回调不被地图重建占用。
 
 前端每次插入关键帧时还会写入独立的长期全局关键帧库：其中保存过滤后的
 传感器坐标系点云、时间戳、`x/y/yaw` 前端位姿、插值 `/odom` 预测、传感器
