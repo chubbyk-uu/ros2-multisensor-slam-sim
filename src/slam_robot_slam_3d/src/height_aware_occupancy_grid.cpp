@@ -61,11 +61,27 @@ void HeightAwareOccupancyGrid::integrate(
   const Eigen::Vector3d origin = map_from_sensor.translation();
   for (const auto & point : *keyframe.filtered_scan) {
     const Eigen::Vector3d endpoint = map_from_sensor * Eigen::Vector3d(point.x, point.y, point.z);
-    if (!endpoint.allFinite() || endpoint.z() < parameters_.minimum_obstacle_height ||
-      endpoint.z() > parameters_.maximum_obstacle_height) {continue;}
+    if (!endpoint.allFinite()) {
+      continue;
+    }
+    const slam_robot_slam::Point2D origin_xy{
+      static_cast<float>(origin.x()), static_cast<float>(origin.y())};
+    const slam_robot_slam::Point2D endpoint_xy{
+      static_cast<float>(endpoint.x()), static_cast<float>(endpoint.y())};
+    if (endpoint.z() < parameters_.minimum_obstacle_height) {
+      // A return below the navigation obstacle band is ground evidence.  It
+      // cannot occupy a 2D navigation cell, but its observed line of sight
+      // establishes free space.  Returns above the band remain excluded:
+      // projecting a ceiling or overhang ray into 2D would incorrectly clear
+      // an obstacle below it.
+      grid_.updateRay(origin_xy, endpoint_xy, false);
+      continue;
+    }
+    if (endpoint.z() > parameters_.maximum_obstacle_height) {
+      continue;
+    }
     grid_.updateRay(
-      {static_cast<float>(origin.x()), static_cast<float>(origin.y())},
-      {static_cast<float>(endpoint.x()), static_cast<float>(endpoint.y())}, true);
+      origin_xy, endpoint_xy, true);
   }
 }
 }  // namespace slam_robot_slam_3d
