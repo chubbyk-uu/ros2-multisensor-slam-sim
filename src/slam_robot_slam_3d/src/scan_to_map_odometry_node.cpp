@@ -18,6 +18,7 @@
 #include <diagnostic_msgs/msg/key_value.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <pcl/common/transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <rclcpp/rclcpp.hpp>
@@ -32,6 +33,7 @@
 #include "slam_robot_slam_3d/local_submap.hpp"
 #include "slam_robot_slam_3d/global_keyframe_map.hpp"
 #include "slam_robot_slam_3d/global_point_cloud_map.hpp"
+#include "slam_robot_slam_3d/height_aware_occupancy_grid.hpp"
 #include "slam_robot_slam_3d/loop_closure_verifier.hpp"
 #include "slam_robot_slam_3d/match_failure_recovery.hpp"
 #include "slam_robot_slam_3d/odometry_interpolator.hpp"
@@ -196,6 +198,10 @@ public:
       "global_map.rebuild_keyframes_per_batch", 4);
     const auto global_map_voxel_leaf_size = declare_parameter<double>(
       "global_map.voxel_leaf_size", 0.15);
+    const auto grid_batches = declare_parameter<int>("occupancy_grid.keyframes_per_batch", 4);
+    const auto grid_resolution = declare_parameter<double>("occupancy_grid.resolution", 0.05);
+    const auto grid_min_z = declare_parameter<double>("occupancy_grid.minimum_obstacle_height", 0.05);
+    const auto grid_max_z = declare_parameter<double>("occupancy_grid.maximum_obstacle_height", 0.45);
     if (input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
       local_frame_.empty() || odom_frame_.empty() || map_frame_.empty() ||
       !std::isfinite(maximum_odom_age_) ||
@@ -205,7 +211,9 @@ public:
       pending_cloud_limit <= 0 || failure_limit <= 0 ||
       pending_loop_keyframe_limit <= 0 || global_map_keyframe_interval <= 0 ||
       global_map_keyframes_per_batch <= 0 ||
-      !std::isfinite(global_map_voxel_leaf_size) || global_map_voxel_leaf_size <= 0.0)
+      !std::isfinite(global_map_voxel_leaf_size) || global_map_voxel_leaf_size <= 0.0 ||
+      grid_batches <= 0 || !std::isfinite(grid_resolution) || grid_resolution <= 0.0 ||
+      !std::isfinite(grid_min_z) || !std::isfinite(grid_max_z) || grid_min_z < 0.0 || grid_min_z >= grid_max_z)
     {
       throw std::invalid_argument("front-end parameters are invalid");
     }
@@ -218,6 +226,11 @@ public:
     global_point_cloud_map_ = std::make_unique<GlobalPointCloudMap>(
       GlobalPointCloudMapParameters{global_map_voxel_leaf_size,
         static_cast<std::size_t>(global_map_keyframes_per_batch)});
+    slam_robot_slam::OccupancyGridMapParameters grid_parameters;
+    grid_parameters.resolution = grid_resolution;
+    occupancy_grid_ = std::make_unique<HeightAwareOccupancyGrid>(
+      HeightAwareOccupancyGridParameters{grid_parameters, grid_min_z, grid_max_z,
+        static_cast<std::size_t>(grid_batches)});
     match_failure_recovery_ = std::make_unique<MatchFailureRecovery>(
       static_cast<std::size_t>(failure_limit));
 
@@ -230,6 +243,8 @@ public:
       "/custom_slam_3d/local_map", rclcpp::QoS(1).transient_local());
     global_map_publisher_ = create_publisher<sensor_msgs::msg::PointCloud2>(
       "/custom_slam_3d/map_cloud", rclcpp::QoS(1).transient_local());
+    occupancy_grid_publisher_ = create_publisher<nav_msgs::msg::OccupancyGrid>(
+      "/map", rclcpp::QoS(1).transient_local());
     diagnostics_publisher_ =
       create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/custom_slam_3d/front_end_diagnostics", 10);
@@ -269,6 +284,14 @@ public:
           RCLCPP_ERROR(
             get_logger(), "3D global map rebuild callback failed: %s", error.what());
           queued_global_map_rebuild_.reset();
+        }
+      });
+    occupancy_grid_timer_ = create_wall_timer(
+      std::chrono::milliseconds(20), [this]() {
+        try {processOccupancyGridBatch();} catch (const std::exception & error) {
+          ++occupancy_grid_failure_count_;
+          RCLCPP_ERROR(get_logger(), "3D occupancy-grid rebuild failed: %s", error.what());
+          queued_occupancy_grid_rebuild_.reset();
         }
       });
 
@@ -773,6 +796,7 @@ private:
       (keyframe.id + 1U) % global_map_rebuild_keyframe_interval_ == 0U)
     {
       requestGlobalMapRebuild();
+      requestOccupancyGridRebuild();
     }
     last_global_keyframe_base_pose_ = front_end_base_pose;
     has_last_global_keyframe_ = true;
@@ -880,6 +904,7 @@ private:
         map_from_odom_ = optimization.map_from_odom;
         optimized_global_base_poses_ = optimization.optimized_base_poses;
         requestGlobalMapRebuild();
+        requestOccupancyGridRebuild();
         ++pose_graph_commit_count_;
       } else {
         (void)pose_graph_submission_state_.completeFailure(task_id);
@@ -938,6 +963,42 @@ private:
       std::move(request.keyframes), std::move(request.base_poses));
     global_map_rebuild_stamp_ = request.stamp;
     ++global_map_rebuild_request_count_;
+  }
+
+  void requestOccupancyGridRebuild()
+  {
+    const auto keyframes = global_keyframes_.snapshot();
+    if (keyframes.empty()) return;
+    GlobalMapRebuildRequest request{keyframes, globalMapBasePoses(keyframes), keyframes.back().stamp};
+    if (occupancy_grid_->active()) {queued_occupancy_grid_rebuild_ = std::move(request); return;}
+    occupancy_grid_->begin(std::move(request.keyframes), std::move(request.base_poses));
+    occupancy_grid_stamp_ = request.stamp;
+  }
+
+  void processOccupancyGridBatch()
+  {
+    if (!occupancy_grid_->active() && queued_occupancy_grid_rebuild_) {
+      auto request = std::move(*queued_occupancy_grid_rebuild_);
+      queued_occupancy_grid_rebuild_.reset();
+      occupancy_grid_->begin(std::move(request.keyframes), std::move(request.base_poses));
+      occupancy_grid_stamp_ = request.stamp;
+    }
+    if (!occupancy_grid_->active() || !occupancy_grid_->processBatch()) return;
+    const auto snapshot = occupancy_grid_->snapshot();
+    if (snapshot.data.empty()) return;
+    nav_msgs::msg::OccupancyGrid map;
+    map.header.stamp = occupancy_grid_stamp_;
+    map.header.frame_id = map_frame_;
+    map.info.map_load_time = occupancy_grid_stamp_;
+    map.info.resolution = static_cast<float>(snapshot.resolution);
+    map.info.width = static_cast<uint32_t>(snapshot.width);
+    map.info.height = static_cast<uint32_t>(snapshot.height);
+    map.info.origin.position.x = snapshot.origin_cell_x * snapshot.resolution;
+    map.info.origin.position.y = snapshot.origin_cell_y * snapshot.resolution;
+    map.info.origin.orientation.w = 1.0;
+    map.data = snapshot.data;
+    occupancy_grid_publisher_->publish(map);
+    ++occupancy_grid_publish_count_;
   }
 
   void processGlobalMapRebuildBatch()
@@ -1270,11 +1331,16 @@ private:
   Eigen::Isometry3d map_from_odom_{Eigen::Isometry3d::Identity()};
   std::vector<Eigen::Isometry3d> optimized_global_base_poses_;
   std::unique_ptr<GlobalPointCloudMap> global_point_cloud_map_;
+  std::unique_ptr<HeightAwareOccupancyGrid> occupancy_grid_;
   std::optional<GlobalMapRebuildRequest> queued_global_map_rebuild_;
+  std::optional<GlobalMapRebuildRequest> queued_occupancy_grid_rebuild_;
   rclcpp::Time global_map_rebuild_stamp_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time occupancy_grid_stamp_{0, 0, RCL_ROS_TIME};
   std::size_t global_map_rebuild_request_count_{0U};
   std::size_t global_map_rebuild_publish_count_{0U};
   std::size_t global_map_rebuild_failure_count_{0U};
+  std::size_t occupancy_grid_publish_count_{0U};
+  std::size_t occupancy_grid_failure_count_{0U};
   std::size_t pose_graph_commit_count_{0U};
   std::size_t pose_graph_discard_count_{0U};
   std::size_t pose_graph_failure_count_{0U};
@@ -1288,11 +1354,13 @@ private:
     registered_scan_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_map_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr global_map_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_grid_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
     diagnostics_publisher_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;
   rclcpp::TimerBase::SharedPtr background_result_timer_;
   rclcpp::TimerBase::SharedPtr global_map_rebuild_timer_;
+  rclcpp::TimerBase::SharedPtr occupancy_grid_timer_;
 };
 
 }  // namespace slam_robot_slam_3d

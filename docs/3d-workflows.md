@@ -80,8 +80,9 @@ ros2 run slam_robot_slam_3d front_end_regression
 旧子图让失败自我延续；正常回归要求该恢复计数严格为零。`rate:=2.0` 只作
 计算压力测试，不能替代在线时间契约。回环后端成功提交后，节点默认发布唯一的
 标准 `map -> odom`；EKF 保持唯一的 `odom -> base_footprint` 发布者。自研链路
-已输出全局关键帧重放点云 `/custom_slam_3d/map_cloud`，但尚未输出二维
-`OccupancyGrid`，所以当前仍不能替换 RTAB-Map 的 Nav2 建图入口；
+已输出全局关键帧重放点云 `/custom_slam_3d/map_cloud` 和高度感知的标准
+`/map` `OccupancyGrid`；下一阶段才会将这套自研输出接入 Nav2，因此当前仍不
+替换 RTAB-Map 的导航入口；
 `pose_graph.publish_map_to_odom_tf:=false` 可在只评估局部输出时
 显式关闭该 TF。
 

@@ -112,3 +112,9 @@
       voxel_leaf_size: 0.15
       rebuild_keyframes_per_batch: 4
       rebuild_keyframe_interval: 10
+
+    occupancy_grid:
+      resolution: 0.05
+      minimum_obstacle_height: 0.05
+      maximum_obstacle_height: 0.45
+      keyframes_per_batch: 4

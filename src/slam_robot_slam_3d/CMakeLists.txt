@@ -83,6 +83,18 @@ target_link_libraries(
   PUBLIC global_keyframe_map Eigen3::Eigen ${PCL_LIBRARIES}
 )
 
+add_library(height_aware_occupancy_grid src/height_aware_occupancy_grid.cpp)
+target_compile_features(height_aware_occupancy_grid PUBLIC cxx_std_17)
+target_compile_options(height_aware_occupancy_grid PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  height_aware_occupancy_grid
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(
+  height_aware_occupancy_grid
+  PUBLIC global_keyframe_map slam_robot_slam::occupancy_grid_map Eigen3::Eigen
+)
+
 add_library(scan_context_index src/scan_context_index.cpp)
 target_compile_features(scan_context_index PUBLIC cxx_std_17)
 target_compile_options(scan_context_index PRIVATE -Wall -Wextra -Wpedantic)
@@ -187,6 +199,7 @@ target_link_libraries(
   local_submap
   global_keyframe_map
   global_point_cloud_map
+  height_aware_occupancy_grid
   loop_closure_verifier
   se2_pose_graph_backend
   pose_graph_submission_state
@@ -292,6 +305,14 @@ if(BUILD_TESTING)
   target_link_libraries(
     test_global_point_cloud_map
     global_point_cloud_map
+  )
+  ament_add_gtest(
+    test_height_aware_occupancy_grid
+    test/test_height_aware_occupancy_grid.cpp
+  )
+  target_link_libraries(
+    test_height_aware_occupancy_grid
+    height_aware_occupancy_grid
   )
   ament_add_gtest(
     test_scan_context_index

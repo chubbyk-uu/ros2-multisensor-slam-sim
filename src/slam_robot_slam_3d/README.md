@@ -106,6 +106,10 @@ ros2 run slam_robot_slam_3d front_end_regression
 `map_cloud` 由不可变全局关键帧按最近一次成功的位姿图优化结果后台分批重放，
 使用 `global_map.voxel_leaf_size` 增量体素化；新请求只保留最新快照，因此不会
 阻塞 10 Hz 前端或形成无界重建队列。局部输出仍使用
+同一快照还会以 `occupancy_grid.minimum_obstacle_height` 到
+`occupancy_grid.maximum_obstacle_height` 的高度带重放射线，持续发布标准
+`/map` `nav_msgs/OccupancyGrid`；它保留未知空间，不把未观测的点云空洞误判为
+自由空间。当前高度带为 `0.05–0.45 m`，覆盖最高 `0.35 m` 的机器人及余量。
 `custom_slam_3d_odom`，但回环后端成功优化后会发布唯一且可配置的标准
 `map -> odom`（默认开启）；EKF 继续唯一发布 `odom -> base_footprint`。
 该链路已有 Scan Context 检索、GICP 几何复核和后台 SE(2) 位姿图，但尚未
