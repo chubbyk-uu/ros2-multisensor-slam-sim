@@ -92,6 +92,22 @@ ros2 run slam_robot_slam_3d front_end_regression
 `global_map.voxel_leaf_size` 体素去重。回环或新关键帧在重建期间到来时只保留最新
 请求，当前重建正常完成后再开始，确保前端回调不被地图重建占用。
 
+要比较两条链路的二维投影本身产出多少可导航空间，用固定包分别回放、再比对普查
+结果。两趟消费同一份录制数据，因此轨迹、探索策略和实时率都不构成变量：
+
+```bash
+ros2 launch slam_robot_slam_3d map_projection_comparison.launch.py \
+  stack:=custom  map_topic:=/map          output:=/tmp/census_custom.json
+ros2 launch slam_robot_slam_3d map_projection_comparison.launch.py \
+  stack:=rtabmap map_topic:=/rtabmap/map  output:=/tmp/census_rtabmap.json
+ros2 run slam_robot_slam_3d map_projection_compare \
+  /tmp/census_rtabmap.json /tmp/census_custom.json
+```
+
+普查以自由/占据格数与面积、`free/(free+occupied)`、已知包围盒和 `/map` 发布间隔
+为指标。未知格数只作记录不作判据：栅格范围随观测边界增长，建图越多的一侧包住的
+未知格子也越多。该入口需要先按本文开头录制固定包。
+
 自研状态使用版本化单文件快照保存，写入同目录临时文件后原子替换目标。恢复
 `mapping` 模式时会重建最近局部子图、Scan Context 索引、已提交回环约束和两类
 地图输出，再继续追加关键帧；`localization` 模式使用完整全局点云作只读匹配
@@ -327,9 +343,9 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 38,000 个自由单元与 35 m 行程；快照服务不可用或保存失败也会直接判失败。路径
 规划、导航和取消请求分别有墙钟看门狗，因此 TF 暂时不可用不会阻塞超时恢复。
 
-上述门槛是防退化闸门，不是目标性能，也不代表两条链路能力对齐；当前自研覆盖约
-为基线的 55%，差距主要来自关键帧间距与点云体素化导致的自由空间证据密度，详见
-`docs/performance.md` 的“探索覆盖与栅格投影整改”。
+上述门槛是防退化闸门，不是目标性能，也不代表两条链路能力对齐；当前自研探索覆盖
+约为基线的 55%。固定包对照已证明二维投影本身不是原因（同轨迹下自研产出基线 98%
+的自由空间），差距落在探索侧，详见 `docs/performance.md` 的“固定包双栈投影对照”。
 
 ```bash
 ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py

@@ -32,6 +32,10 @@ def known_free_cells(message):
     return sum(1 for value in message.data if 0 <= value <= 20)
 
 
+def format_elapsed(seconds):
+    return "n/a" if seconds is None else f"{seconds:.1f} s"
+
+
 class ExplorationRegression(Node):
     def __init__(self):
         super().__init__(
@@ -52,6 +56,18 @@ class ExplorationRegression(Node):
         self.truth_distance = 0.0
         self.previous_truth = None
         self.critical_logs = []
+        self.completion_reason = ""
+        # Wall and simulation elapsed are both recorded because the two stacks
+        # do not run at the same real-time factor, so an equal wall-clock
+        # budget is not an equal simulated budget.
+        self.start_wall = time.monotonic()
+        self.start_sim = None
+        self.latest_sim = None
+        self.completion_wall = None
+        self.completion_sim = None
+        self.map_updates = 0
+        self.first_map_wall = None
+        self.last_map_wall = None
         map_qos = QoSProfile(
             depth=1,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -82,6 +98,11 @@ class ExplorationRegression(Node):
         self.create_subscription(Log, "/rosout", self.log_callback, 100)
 
     def map_callback(self, message):
+        now = time.monotonic()
+        if self.first_map_wall is None:
+            self.first_map_wall = now
+        self.last_map_wall = now
+        self.map_updates += 1
         self.latest_free_cells = known_free_cells(message)
         if self.initial_free_cells is None and self.latest_free_cells > 0:
             self.initial_free_cells = self.latest_free_cells
@@ -89,12 +110,24 @@ class ExplorationRegression(Node):
             self.maximum_free_cells, self.latest_free_cells
         )
 
+    # The caller samples the clock and hands the value in, so every callback
+    # stays free of node state and remains testable without a live context.
+    def note_sim_time(self, sim_seconds):
+        if sim_seconds <= 0.0:
+            return
+        if self.start_sim is None:
+            self.start_sim = sim_seconds
+        self.latest_sim = sim_seconds
+
     def completion_callback(self, message):
         if not message.data:
             self.seen_active_exploration = True
             self.complete = False
         elif self.seen_active_exploration and self.initial_free_cells is not None:
             self.complete = True
+            self.completion_wall = time.monotonic() - self.start_wall
+            if self.latest_sim is not None and self.start_sim is not None:
+                self.completion_sim = self.latest_sim - self.start_sim
 
     def diagnostics_callback(self, message):
         for status in message.status:
@@ -105,6 +138,9 @@ class ExplorationRegression(Node):
             self.failed_goals = int(values.get("failed_goals", 0))
             self.unreachable_candidates = int(
                 values.get("unreachable_candidates", 0)
+            )
+            self.completion_reason = values.get(
+                "completion_reason", self.completion_reason
             )
 
     def collision_callback(self, message):
@@ -128,6 +164,11 @@ class ExplorationRegression(Node):
             if step < 0.25:
                 self.truth_distance += step
         self.previous_truth = current
+
+    def mean_map_interval(self):
+        if self.map_updates < 2:
+            return None
+        return (self.last_map_wall - self.first_map_wall) / (self.map_updates - 1)
 
     def log_callback(self, message):
         if message.msg.startswith(("Running spin", "Running backup")):
@@ -193,6 +234,18 @@ def evaluate(regression, arguments):
         f"recovery events={regression.recovery_events}",
         flush=True,
     )
+    print(
+        f"  completion: reason={regression.completion_reason or 'none'!r} "
+        f"wall={format_elapsed(regression.completion_wall)} "
+        f"sim={format_elapsed(regression.completion_sim)} "
+        f"budget={arguments.wall_timeout:.0f} s wall",
+        flush=True,
+    )
+    print(
+        f"  map delivery: updates={regression.map_updates} "
+        f"mean interval={format_elapsed(regression.mean_map_interval())}",
+        flush=True,
+    )
     for name, passed in checks.items():
         print(f"  {'PASS' if passed else 'FAIL'} {name}", flush=True)
     for message in regression.critical_logs:
@@ -211,6 +264,9 @@ def main():
         while rclpy.ok() and not regression.complete:
             if time.monotonic() >= deadline:
                 break
+            regression.note_sim_time(
+                regression.get_clock().now().nanoseconds * 1.0e-9
+            )
             rclpy.spin_once(regression, timeout_sec=0.2)
         passed = evaluate(regression, arguments)
     except KeyboardInterrupt:

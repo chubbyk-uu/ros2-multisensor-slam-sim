@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+
+"""Rebuild odom -> base_footprint from a recorded odometry topic.
+
+The fixed 3D dataset records /odom but not /tf, so replaying it leaves the
+tree broken below odom. Live runs have robot_localization publishing both from
+one filtered state, so deriving the transform from the recorded messages
+reproduces what the EKF broadcast rather than inventing a new pose source.
+
+Consumers differ in whether they need it: the custom front end reads the topic
+directly, while RTAB-Map looks the transform up. Publishing it in every replay
+keeps a stack comparison from silently degrading one side.
+"""
+
+import sys
+
+from geometry_msgs.msg import TransformStamped
+from nav_msgs.msg import Odometry
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from tf2_ros import TransformBroadcaster
+
+
+def transform_from_odometry(message, parent_frame, child_frame):
+    """Copy one odometry pose into a transform without reinterpreting it."""
+    transform = TransformStamped()
+    transform.header.stamp = message.header.stamp
+    transform.header.frame_id = parent_frame or message.header.frame_id
+    transform.child_frame_id = child_frame or message.child_frame_id
+    transform.transform.translation.x = message.pose.pose.position.x
+    transform.transform.translation.y = message.pose.pose.position.y
+    transform.transform.translation.z = message.pose.pose.position.z
+    transform.transform.rotation = message.pose.pose.orientation
+    return transform
+
+
+class RecordedOdomTfPublisher(Node):
+    def __init__(self):
+        super().__init__(
+            "recorded_odom_tf_publisher",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
+        self.parent_frame = self.declare_parameter("parent_frame", "odom").value
+        self.child_frame = self.declare_parameter(
+            "child_frame", "base_footprint"
+        ).value
+        topic = self.declare_parameter("odom_topic", "/odom").value
+        self.broadcaster = TransformBroadcaster(self)
+        self.published = 0
+        self.create_subscription(
+            Odometry,
+            topic,
+            self.odom_callback,
+            QoSProfile(depth=50, reliability=ReliabilityPolicy.RELIABLE),
+        )
+        self.get_logger().info(
+            f"Republishing {topic} as {self.parent_frame} -> {self.child_frame}"
+        )
+
+    def odom_callback(self, message):
+        self.broadcaster.sendTransform(
+            transform_from_odometry(message, self.parent_frame, self.child_frame)
+        )
+        self.published += 1
+
+
+def main():
+    rclpy.init()
+    node = RecordedOdomTfPublisher()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.get_logger().info(f"Republished {node.published} odometry transforms")
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

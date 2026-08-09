@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+
+"""Compare two map_projection_census reports produced from the same dataset."""
+
+import argparse
+import json
+import sys
+
+
+ROWS = (
+    ("free cells", "free_cells", "{:,.0f}"),
+    ("occupied cells", "occupied_cells", "{:,.0f}"),
+    ("free area (m2)", "free_area_m2", "{:,.1f}"),
+    ("occupied area (m2)", "occupied_area_m2", "{:,.1f}"),
+    ("free / (free+occupied)", "free_ratio", "{:.3f}"),
+    ("known bounding box (m2)", "known_bounding_box_m2", "{:,.1f}"),
+    ("resolution (m)", "resolution", "{:.3f}"),
+    ("map updates", "updates", "{:,.0f}"),
+    ("mean publish interval (s)", "mean_publish_interval_sec", "{:.2f}"),
+)
+
+
+def load(path):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def ratio(reference_value, candidate_value):
+    if not reference_value:
+        return "n/a"
+    return f"{candidate_value / reference_value:.2f}x"
+
+
+def render(reference, candidate):
+    lines = [
+        f"MAP PROJECTION COMPARISON  reference={reference['label']} "
+        f"candidate={candidate['label']}",
+        f"{'metric':<28}{reference['label']:>16}{candidate['label']:>16}"
+        f"{'candidate/ref':>16}",
+    ]
+    for title, key, fmt in ROWS:
+        reference_value = reference.get(key, 0)
+        candidate_value = candidate.get(key, 0)
+        lines.append(
+            f"{title:<28}{fmt.format(reference_value):>16}"
+            f"{fmt.format(candidate_value):>16}"
+            f"{ratio(reference_value, candidate_value):>16}"
+        )
+    if abs(reference["resolution"] - candidate["resolution"]) > 1.0e-6:
+        lines.append(
+            "  WARNING: resolutions differ; compare areas rather than cell counts."
+        )
+    return "\n".join(lines)
+
+
+def parse_arguments(arguments):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("reference", help="Baseline census JSON.")
+    parser.add_argument("candidate", help="Census JSON to compare against it.")
+    return parser.parse_args(arguments)
+
+
+def main():
+    arguments = parse_arguments(sys.argv[1:])
+    print(render(load(arguments.reference), load(arguments.candidate)), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

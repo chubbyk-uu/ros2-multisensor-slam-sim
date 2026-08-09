@@ -58,7 +58,9 @@ def generate_launch_description():
             DeclareLaunchArgument("gui", default_value="false"),
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument("smoke", default_value="false"),
-            DeclareLaunchArgument("wall_timeout", default_value="600"),
+            # Matches the RTAB-Map entry point so neither run carries a
+            # different time budget into a coverage comparison.
+            DeclareLaunchArgument("wall_timeout", default_value="900"),
             DeclareLaunchArgument(
                 "maximum_recovery_events", default_value="5"
             ),

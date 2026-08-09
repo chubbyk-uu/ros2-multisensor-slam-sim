@@ -537,6 +537,10 @@ private:
   void completeExploration(const char * reason)
   {
     state_ = State::kComplete;
+    // Published as a diagnostic key, not only logged: a regression that only
+    // sees complete=true cannot tell "the map is finished" from "every
+    // remaining frontier is temporarily blacklisted".
+    completion_reason_ = reason;
     requestSnapshotSave();
     publishCompletion(true);
     RCLCPP_INFO(
@@ -589,7 +593,9 @@ private:
       keyValue("failed_goals", std::to_string(failed_goals_)),
       keyValue("stagnant_goals", std::to_string(stagnant_goals_)),
       keyValue("unreachable_candidates", std::to_string(unreachable_candidates_)),
-      keyValue("blacklisted_goals", std::to_string(blacklist_.size()))};
+      keyValue("blacklisted_goals", std::to_string(blacklist_.size())),
+      keyValue("empty_cycles", std::to_string(empty_cycles_)),
+      keyValue("completion_reason", completion_reason_)};
     array.status.push_back(std::move(status));
     diagnostics_publisher_->publish(array);
   }
@@ -636,6 +642,7 @@ private:
   std::size_t maximum_stagnant_goals_{3};
   std::string map_topic_{"/map"};
   std::string snapshot_service_{"/scan_to_map_odometry_3d/save_snapshot"};
+  std::string completion_reason_;
   bool save_snapshot_on_completion_{true};
   State state_{State::kWaiting};
   nav_msgs::msg::OccupancyGrid::ConstSharedPtr latest_map_;

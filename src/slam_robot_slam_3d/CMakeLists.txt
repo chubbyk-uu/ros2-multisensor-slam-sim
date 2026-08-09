@@ -254,8 +254,11 @@ install(
     scripts/frontier_exploration_regression
     scripts/grid_contract_check
     scripts/launch_smoke_check
+    scripts/map_projection_census
+    scripts/map_projection_compare
     scripts/pointcloud_contract_check
     scripts/preprocessing_regression
+    scripts/recorded_odom_tf_publisher
     scripts/structured_loop_regression
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -377,6 +380,14 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_grid_contract
     test/test_grid_contract.py
+  )
+  ament_add_pytest_test(
+    test_map_projection_census
+    test/test_map_projection_census.py
+  )
+  ament_add_pytest_test(
+    test_recorded_odom_tf_publisher
+    test/test_recorded_odom_tf_publisher.py
   )
   ament_add_pytest_test(
     test_front_end_regression

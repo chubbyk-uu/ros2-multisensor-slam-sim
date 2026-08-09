@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+
+"""Record what a 2D navigation projection actually contains.
+
+This exists to separate two things the exploration regression conflates: how
+much navigable space a mapping stack *produces*, and how much of it an
+exploration policy chooses to visit. Replaying one fixed dataset through each
+stack removes trajectory, policy and real-time-factor differences, so the
+remaining difference belongs to the projection itself.
+"""
+
+import argparse
+import json
+import math
+import sys
+import time
+
+from nav_msgs.msg import OccupancyGrid
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.utilities import remove_ros_args
+
+
+def census(message, free_maximum, occupied_minimum):
+    """Summarise one occupancy grid.
+
+    Unknown cells are reported but are deliberately not a headline metric: the
+    grid extent follows the observed bounding box, so a stack that maps more
+    free space also reports more enclosed unknown cells. Free and occupied
+    areas, and the known bounding box, are the comparable quantities.
+    """
+    resolution = message.info.resolution
+    if not math.isfinite(resolution) or resolution <= 0.0:
+        raise ValueError(f"invalid grid resolution: {resolution}")
+    width = message.info.width
+    height = message.info.height
+    if len(message.data) != width * height:
+        raise ValueError(
+            f"grid data length {len(message.data)} does not match {width}x{height}"
+        )
+
+    free = occupied = unknown = 0
+    minimum_x = minimum_y = None
+    maximum_x = maximum_y = None
+    for index, value in enumerate(message.data):
+        if value < 0:
+            unknown += 1
+            continue
+        if value <= free_maximum:
+            free += 1
+        elif value >= occupied_minimum:
+            occupied += 1
+        x = index % width
+        y = index // width
+        if minimum_x is None:
+            minimum_x = maximum_x = x
+            minimum_y = maximum_y = y
+        else:
+            minimum_x = min(minimum_x, x)
+            maximum_x = max(maximum_x, x)
+            minimum_y = min(minimum_y, y)
+            maximum_y = max(maximum_y, y)
+
+    cell_area = resolution * resolution
+    classified = free + occupied
+    known_width = 0 if minimum_x is None else maximum_x - minimum_x + 1
+    known_height = 0 if minimum_y is None else maximum_y - minimum_y + 1
+    return {
+        "resolution": resolution,
+        "grid_width": width,
+        "grid_height": height,
+        "free_cells": free,
+        "occupied_cells": occupied,
+        "unknown_cells": unknown,
+        "free_area_m2": free * cell_area,
+        "occupied_area_m2": occupied * cell_area,
+        "free_ratio": free / classified if classified else 0.0,
+        "known_bounding_box_m2": known_width * known_height * cell_area,
+        "stamp_sec": message.header.stamp.sec
+        + 1.0e-9 * message.header.stamp.nanosec,
+    }
+
+
+class MapProjectionCensus(Node):
+    def __init__(self, arguments):
+        super().__init__(
+            "map_projection_census",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
+        self.arguments = arguments
+        self.updates = 0
+        self.first_update_wall = None
+        self.last_update_wall = None
+        self.latest = None
+        self.create_subscription(
+            OccupancyGrid,
+            arguments.topic,
+            self.map_callback,
+            QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
+
+    def map_callback(self, message):
+        now = time.monotonic()
+        if self.first_update_wall is None:
+            self.first_update_wall = now
+        self.last_update_wall = now
+        self.updates += 1
+        try:
+            self.latest = census(
+                message, self.arguments.free_maximum, self.arguments.occupied_minimum
+            )
+        except ValueError as error:
+            self.get_logger().error(f"Rejected an occupancy grid: {error}")
+            return
+        # Written on every update so the file is complete no matter how the
+        # launch is torn down; the last write is the final map.
+        self.write()
+
+    def report(self):
+        if self.latest is None:
+            return None
+        span = 0.0
+        if self.first_update_wall is not None and self.last_update_wall is not None:
+            span = self.last_update_wall - self.first_update_wall
+        result = dict(self.latest)
+        result["label"] = self.arguments.label
+        result["topic"] = self.arguments.topic
+        result["updates"] = self.updates
+        result["publish_span_sec"] = span
+        result["mean_publish_interval_sec"] = (
+            span / (self.updates - 1) if self.updates > 1 else 0.0
+        )
+        return result
+
+    def write(self):
+        report = self.report()
+        if report is None:
+            return
+        with open(self.arguments.output, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+
+
+def parse_arguments(arguments):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--topic", default="/map")
+    parser.add_argument("--label", default="custom")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--free-maximum", type=int, default=20)
+    parser.add_argument("--occupied-minimum", type=int, default=65)
+    parser.add_argument("--wall-timeout", type=float, default=900.0)
+    return parser.parse_args(arguments)
+
+
+def main():
+    arguments = parse_arguments(remove_ros_args(sys.argv)[1:])
+    rclpy.init()
+    node = MapProjectionCensus(arguments)
+    deadline = time.monotonic() + arguments.wall_timeout
+    try:
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.2)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        report = node.report()
+        if report is not None:
+            node.write()
+            print(
+                f"CENSUS {report['label']} free={report['free_cells']} "
+                f"occupied={report['occupied_cells']} "
+                f"free_area={report['free_area_m2']:.1f} m2 "
+                f"updates={report['updates']} "
+                f"mean_interval={report['mean_publish_interval_sec']:.2f} s",
+                flush=True,
+            )
+        else:
+            print(f"CENSUS {arguments.label} received no occupancy grid", flush=True)
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+    return 0 if report is not None else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
