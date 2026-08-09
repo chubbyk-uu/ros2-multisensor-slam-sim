@@ -47,6 +47,13 @@ TEST(FrontierDetector, FindsAndRanksSafeFrontierClusters)
   }
 }
 
+TEST(FrontierDetector, ExposesItsConfiguredFreeThreshold)
+{
+  slam_robot_navigation::FrontierDetectorParameters parameters;
+  parameters.free_maximum = 15;
+  EXPECT_EQ(slam_robot_navigation::FrontierDetector(parameters).freeMaximum(), 15);
+}
+
 TEST(FrontierDetector, RejectsClustersWithoutObstacleClearance)
 {
   auto map = makeMap();

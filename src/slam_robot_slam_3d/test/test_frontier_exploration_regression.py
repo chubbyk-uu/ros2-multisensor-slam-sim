@@ -18,4 +18,6 @@ def test_default_acceptance_requires_motion_growth_and_success():
     assert arguments.minimum_successful_goals == 1
     assert arguments.maximum_recovery_events > 0
     assert arguments.minimum_free_cell_growth > 0
-    assert arguments.minimum_travel_distance > 0.0
+    assert arguments.minimum_final_free_cells >= 38000
+    assert arguments.minimum_travel_distance >= 35.0
+    assert "snapshot service is unavailable" in MODULE.CRITICAL_LOG_FRAGMENTS

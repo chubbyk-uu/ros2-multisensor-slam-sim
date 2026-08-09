@@ -9,6 +9,9 @@ frontier_explorer:
     # unreachable residual frontiers cannot rotate back into consideration.
     blacklist_duration: 900.0
     navigation_timeout: 120.0
+    # Bound action-server response and cancellation waits independently from
+    # the much longer physical navigation deadline.
+    action_response_timeout: 15.0
     minimum_known_free_cells: 100
     completion_empty_cycles: 5
     minimum_goal_free_cell_growth: 100

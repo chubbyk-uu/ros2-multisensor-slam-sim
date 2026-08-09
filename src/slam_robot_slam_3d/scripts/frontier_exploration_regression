@@ -23,6 +23,8 @@ CRITICAL_LOG_FRAGMENTS = (
     "process has died",
     "Exception caught",
     "snapshot save failed",
+    "snapshot service is unavailable",
+    "snapshot request failed",
 )
 
 
@@ -135,8 +137,11 @@ def parse_arguments(arguments):
     parser.add_argument("--wall-timeout", type=float, default=600.0)
     parser.add_argument("--minimum-successful-goals", type=int, default=1)
     parser.add_argument("--minimum-free-cell-growth", type=int, default=500)
-    parser.add_argument("--minimum-final-free-cells", type=int, default=1500)
-    parser.add_argument("--minimum-travel-distance", type=float, default=3.0)
+    # The fixed structured-world RTAB-Map baseline reaches 76,012 free cells
+    # and 70.778 m.  Require the self-developed chain to cover at least half
+    # that reference before accepting its own completion signal.
+    parser.add_argument("--minimum-final-free-cells", type=int, default=38000)
+    parser.add_argument("--minimum-travel-distance", type=float, default=35.0)
     parser.add_argument("--maximum-failed-goals", type=int, default=5)
     parser.add_argument("--maximum-collision-transitions", type=int, default=3)
     parser.add_argument("--maximum-recovery-events", type=int, default=5)

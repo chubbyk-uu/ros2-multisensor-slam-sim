@@ -41,6 +41,8 @@ class FrontierDetector
 public:
   explicit FrontierDetector(FrontierDetectorParameters parameters);
 
+  std::int8_t freeMaximum() const;
+
   std::vector<FrontierCandidate> detect(
     const nav_msgs::msg::OccupancyGrid & map, double robot_x, double robot_y) const;
 

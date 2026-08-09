@@ -47,6 +47,11 @@ FrontierDetector::FrontierDetector(FrontierDetectorParameters parameters)
   }
 }
 
+std::int8_t FrontierDetector::freeMaximum() const
+{
+  return parameters_.free_maximum;
+}
+
 std::vector<FrontierCandidate> FrontierDetector::detect(
   const nav_msgs::msg::OccupancyGrid & map, double robot_x, double robot_y) const
 {
@@ -150,9 +155,12 @@ std::vector<FrontierCandidate> FrontierDetector::detect(
         const double lhs_dy = static_cast<double>(lhs / width) - centroid_y;
         const double rhs_dx = static_cast<double>(rhs % width) - centroid_x;
         const double rhs_dy = static_cast<double>(rhs / width) - centroid_y;
-        const double lhs_cost = lhs_dx * lhs_dx + lhs_dy * lhs_dy - clearance[lhs];
-        const double rhs_cost = rhs_dx * rhs_dx + rhs_dy * rhs_dy - clearance[rhs];
-        return lhs_cost < rhs_cost;
+        const double lhs_distance_squared = lhs_dx * lhs_dx + lhs_dy * lhs_dy;
+        const double rhs_distance_squared = rhs_dx * rhs_dx + rhs_dy * rhs_dy;
+        if (lhs_distance_squared != rhs_distance_squared) {
+          return lhs_distance_squared < rhs_distance_squared;
+        }
+        return clearance[lhs] > clearance[rhs];
       });
     FrontierCandidate candidate;
     candidate.cell_x = goal % width;

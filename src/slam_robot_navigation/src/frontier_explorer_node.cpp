@@ -75,6 +75,8 @@ public:
     blacklist_radius_ = declare_parameter<double>("blacklist_radius", 0.5);
     blacklist_duration_ = declare_parameter<double>("blacklist_duration", 60.0);
     navigation_timeout_ = declare_parameter<double>("navigation_timeout", 120.0);
+    action_response_timeout_ =
+      declare_parameter<double>("action_response_timeout", 15.0);
     const int minimum_known_free_cells =
       declare_parameter<int>("minimum_known_free_cells", 100);
     const int completion_empty_cycles =
@@ -95,6 +97,7 @@ public:
       path_cost_weight_ < 0.0 || !std::isfinite(blacklist_radius_) || blacklist_radius_ <= 0.0 ||
       !std::isfinite(blacklist_duration_) || blacklist_duration_ <= 0.0 ||
       !std::isfinite(navigation_timeout_) || navigation_timeout_ <= 0.0 ||
+      !std::isfinite(action_response_timeout_) || action_response_timeout_ <= 0.0 ||
       map_topic_.empty() || (save_snapshot_on_completion_ && snapshot_service_.empty()) ||
       !std::isfinite(update_rate) || update_rate <= 0.0)
     {
@@ -211,7 +214,39 @@ private:
     // known space before the robot arrives.  That is progress, not a reason
     // to churn the action.  Replan only when the target itself is no longer a
     // known traversable cell; Nav2 remains responsible for path blockage.
-    return value >= 0 && value <= 20;
+    return value >= 0 && value <= detector_.freeMaximum();
+  }
+
+  std::chrono::steady_clock::time_point actionResponseDeadline() const
+  {
+    return std::chrono::steady_clock::now() +
+           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double>(action_response_timeout_));
+  }
+
+  void finishCanceledNavigation()
+  {
+    if (cancel_with_blacklist_) {
+      blacklistCurrentTarget();
+      ++failed_goals_;
+    }
+    current_target_.reset();
+    state_ = State::kWaiting;
+    ++navigation_request_id_;
+  }
+
+  void cancelNavigation(const char * reason, bool blacklist_target)
+  {
+    RCLCPP_WARN(get_logger(), "%s", reason);
+    cancel_with_blacklist_ = blacklist_target;
+    state_ = State::kCanceling;
+    cancellation_deadline_ = actionResponseDeadline();
+    const auto goal_handle = navigateGoalHandle();
+    if (goal_handle) {
+      navigate_client_->async_cancel_goal(goal_handle);
+    } else {
+      finishCanceledNavigation();
+    }
   }
 
   void tick()
@@ -221,46 +256,51 @@ private:
       std::remove_if(blacklist_.begin(), blacklist_.end(),
       [now](const auto & entry) {return entry.expires <= now;}),
       blacklist_.end());
-    if (!latest_map_ || state_ == State::kComplete || state_ == State::kCanceling) {
+    if (!latest_map_ || state_ == State::kComplete) {
       publishDiagnostics();
       return;
     }
-    const auto robot = robotPosition();
-    if (!robot) {return;}
     if (state_ == State::kNavigating) {
       if (now > navigation_deadline_) {
-        RCLCPP_WARN(get_logger(), "Frontier navigation timed out; canceling goal");
-        cancel_with_blacklist_ = true;
-        state_ = State::kCanceling;
-        const auto goal_handle = navigateGoalHandle();
-        if (goal_handle) {
-          navigate_client_->async_cancel_goal(goal_handle);
-        } else {
-          blacklistCurrentTarget();
-          ++failed_goals_;
-          current_target_.reset();
-          state_ = State::kWaiting;
-        }
+        cancelNavigation("Frontier navigation timed out; canceling goal", true);
         return;
       }
-      if (map_revision_ > target_map_revision_ && !targetStillTraversable()) {
-        RCLCPP_INFO(get_logger(), "Frontier goal became untraversable; canceling and replanning");
-        state_ = State::kCanceling;
-        const auto goal_handle = navigateGoalHandle();
-        if (goal_handle) {
-          navigate_client_->async_cancel_goal(goal_handle);
-        } else {
-          state_ = State::kWaiting;
-        }
+    }
+    if (state_ == State::kCanceling) {
+      if (now > cancellation_deadline_) {
+        RCLCPP_ERROR(get_logger(), "Frontier navigation cancel request timed out");
+        finishCanceledNavigation();
       }
       publishDiagnostics();
       return;
     }
     if (state_ == State::kPlanning) {
+      if (active_planning_candidate_ && now > planning_deadline_) {
+        RCLCPP_WARN(get_logger(), "Frontier path request timed out; skipping candidate");
+        blacklistCandidate(*active_planning_candidate_);
+        ++unreachable_candidates_;
+        active_planning_candidate_.reset();
+        ++planning_request_id_;
+        path_request_pending_ = true;
+      }
       if (path_request_pending_) {
         path_request_pending_ = false;
         requestNextPath();
       }
+      publishDiagnostics();
+      return;
+    }
+    const auto robot = robotPosition();
+    if (!robot) {
+      publishDiagnostics();
+      return;
+    }
+    if (state_ == State::kNavigating) {
+      if (map_revision_ > target_map_revision_ && !targetStillTraversable()) {
+        cancelNavigation(
+          "Frontier goal became untraversable; canceling and replanning", false);
+      }
+      publishDiagnostics();
       return;
     }
     if (stagnant_goals_ >= maximum_stagnant_goals_ &&
@@ -302,6 +342,7 @@ private:
     best_path_score_ = -std::numeric_limits<double>::infinity();
     state_ = State::kPlanning;
     path_request_pending_ = true;
+    active_planning_candidate_.reset();
   }
 
   geometry_msgs::msg::PoseStamped candidatePose(const FrontierCandidate & candidate) const
@@ -326,22 +367,33 @@ private:
       return;
     }
     const FrontierCandidate candidate = planning_candidates_[planning_index_++];
+    const std::size_t request_id = ++planning_request_id_;
+    active_planning_candidate_ = candidate;
+    planning_deadline_ = actionResponseDeadline();
     ComputePath::Goal goal;
     goal.goal = candidatePose(candidate);
     goal.use_start = false;
     auto options = rclcpp_action::Client<ComputePath>::SendGoalOptions();
     options.goal_response_callback = [this,
-        candidate](const ComputeGoalHandle::SharedPtr & handle) {
+        candidate, request_id](const ComputeGoalHandle::SharedPtr & handle) {
+        if (state_ != State::kPlanning || request_id != planning_request_id_) {
+          return;
+        }
         if (!handle) {
           ++unreachable_candidates_;
           blacklistCandidate(candidate);
+          active_planning_candidate_.reset();
           path_request_pending_ = true;
         } else {
           std::lock_guard<std::mutex> lock(action_handle_mutex_);
           compute_goal_handle_ = handle;
         }
       };
-    options.result_callback = [this, candidate](const ComputeGoalHandle::WrappedResult & result) {
+    options.result_callback = [this, candidate,
+        request_id](const ComputeGoalHandle::WrappedResult & result) {
+        if (state_ != State::kPlanning || request_id != planning_request_id_) {
+          return;
+        }
         {
           std::lock_guard<std::mutex> lock(action_handle_mutex_);
           compute_goal_handle_.reset();
@@ -360,6 +412,7 @@ private:
           ++unreachable_candidates_;
           blacklistCandidate(candidate);
         }
+        active_planning_candidate_.reset();
         path_request_pending_ = true;
       };
     compute_path_client_->async_send_goal(goal, options);
@@ -373,7 +426,12 @@ private:
     goal_start_free_cells_ = knownFreeCells();
     target_map_revision_ = map_revision_;
     auto options = rclcpp_action::Client<Navigate>::SendGoalOptions();
-    options.goal_response_callback = [this](const NavigateGoalHandle::SharedPtr & handle) {
+    const std::size_t request_id = ++navigation_request_id_;
+    options.goal_response_callback = [this,
+        request_id](const NavigateGoalHandle::SharedPtr & handle) {
+        if (state_ != State::kNavigating || request_id != navigation_request_id_) {
+          return;
+        }
         {
           std::lock_guard<std::mutex> lock(action_handle_mutex_);
           navigate_goal_handle_ = handle;
@@ -384,7 +442,12 @@ private:
           state_ = State::kWaiting;
         }
       };
-    options.result_callback = [this](const NavigateGoalHandle::WrappedResult & result) {
+    options.result_callback = [this, request_id](const NavigateGoalHandle::WrappedResult & result) {
+        if ((state_ != State::kNavigating && state_ != State::kCanceling) ||
+          request_id != navigation_request_id_)
+        {
+          return;
+        }
         {
           std::lock_guard<std::mutex> lock(action_handle_mutex_);
           navigate_goal_handle_.reset();
@@ -445,7 +508,9 @@ private:
     if (!latest_map_) {return 0;}
     return static_cast<std::size_t>(std::count_if(
         latest_map_->data.begin(), latest_map_->data.end(),
-             [](std::int8_t value) {return value >= 0 && value <= 20;}));
+             [this](std::int8_t value) {
+               return value >= 0 && value <= detector_.freeMaximum();
+             }));
   }
 
   void publishCompletion(bool complete)
@@ -550,6 +615,7 @@ private:
   double blacklist_radius_{0.5};
   double blacklist_duration_{60.0};
   double navigation_timeout_{120.0};
+  double action_response_timeout_{15.0};
   std::size_t minimum_known_free_cells_{100};
   std::size_t completion_empty_cycles_{5};
   std::size_t minimum_goal_free_cell_growth_{100};
@@ -574,6 +640,11 @@ private:
   double best_path_score_{0.0};
   bool cancel_with_blacklist_{false};
   std::chrono::steady_clock::time_point navigation_deadline_;
+  std::chrono::steady_clock::time_point planning_deadline_;
+  std::chrono::steady_clock::time_point cancellation_deadline_;
+  std::size_t planning_request_id_{0U};
+  std::size_t navigation_request_id_{0U};
+  std::optional<FrontierCandidate> active_planning_candidate_;
   std::optional<FrontierCandidate> current_target_;
   std::vector<BlacklistedGoal> blacklist_;
   NavigateGoalHandle::SharedPtr navigate_goal_handle_;
