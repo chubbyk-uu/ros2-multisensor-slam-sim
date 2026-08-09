@@ -143,8 +143,9 @@ def parse_arguments(arguments):
     parser.add_argument("--minimum-successful-goals", type=int, default=1)
     parser.add_argument("--minimum-free-cell-growth", type=int, default=500)
     # The fixed structured-world RTAB-Map baseline reaches 76,012 free cells
-    # and 70.778 m.  Require the self-developed chain to cover at least half
-    # that reference before accepting its own completion signal.
+    # and 70.778 m.  Half of that is an anti-regression gate, not a target:
+    # it only stops the self-developed chain from declaring completion on a
+    # map far smaller than the one it produced when this gate was written.
     parser.add_argument("--minimum-final-free-cells", type=int, default=38000)
     parser.add_argument("--minimum-travel-distance", type=float, default=35.0)
     parser.add_argument("--maximum-failed-goals", type=int, default=5)

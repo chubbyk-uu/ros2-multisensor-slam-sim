@@ -327,6 +327,10 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 38,000 个自由单元与 35 m 行程；快照服务不可用或保存失败也会直接判失败。路径
 规划、导航和取消请求分别有墙钟看门狗，因此 TF 暂时不可用不会阻塞超时恢复。
 
+上述门槛是防退化闸门，不是目标性能，也不代表两条链路能力对齐；当前自研覆盖约
+为基线的 55%，差距主要来自关键帧间距与点云体素化导致的自由空间证据密度，详见
+`docs/performance.md` 的“探索覆盖与栅格投影整改”。
+
 ```bash
 ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py
 ```
