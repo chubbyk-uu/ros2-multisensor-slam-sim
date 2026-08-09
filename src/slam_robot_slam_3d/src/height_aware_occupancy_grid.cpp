@@ -33,6 +33,15 @@ void HeightAwareOccupancyGrid::begin(
   next_ = 0U;
 }
 
+void HeightAwareOccupancyGrid::append(
+  const GlobalKeyframe & keyframe, const Eigen::Isometry3d & pose)
+{
+  if (active()) {
+    throw std::logic_error("cannot append while an occupancy rebuild is active");
+  }
+  integrate(keyframe, pose);
+}
+
 bool HeightAwareOccupancyGrid::processBatch()
 {
   if (!active()) {return false;}

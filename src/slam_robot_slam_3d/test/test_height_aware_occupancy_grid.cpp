@@ -32,4 +32,31 @@ TEST(HeightAwareOccupancyGrid, ProjectsObstacleHitsAndGroundFreeSpace)
   // High returns are not projected into a 2D obstacle map at all.
   EXPECT_LT(snapshot.origin_cell_x + static_cast<int>(snapshot.width), 60);
 }
+
+TEST(HeightAwareOccupancyGrid, AppendsNewKeyframesWithoutReplayingHistory)
+{
+  auto first_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  first_scan->push_back(pcl::PointXYZI{1.0F, 0.0F, 0.20F, 1.0F});
+  GlobalKeyframe first;
+  first.id = 0U;
+  first.filtered_scan = first_scan;
+  HeightAwareOccupancyGrid grid({{}, 0.05, 0.45, 1U});
+  grid.begin({first}, {Eigen::Isometry3d::Identity()});
+  ASSERT_TRUE(grid.processBatch());
+
+  auto second_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  second_scan->push_back(pcl::PointXYZI{2.0F, 0.0F, 0.20F, 1.0F});
+  GlobalKeyframe second;
+  second.id = 1U;
+  second.filtered_scan = second_scan;
+  grid.append(second, Eigen::Isometry3d::Identity());
+
+  const auto snapshot = grid.snapshot();
+  const auto cell = [&](int x) {
+      return snapshot.data[static_cast<std::size_t>(-snapshot.origin_cell_y) * snapshot.width +
+               static_cast<std::size_t>(x - snapshot.origin_cell_x)];
+    };
+  EXPECT_GE(cell(20), 50);
+  EXPECT_GE(cell(40), 50);
+}
 }  // namespace slam_robot_slam_3d

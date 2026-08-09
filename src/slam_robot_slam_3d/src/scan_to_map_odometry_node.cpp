@@ -239,6 +239,7 @@ public:
       static_cast<std::size_t>(pending_loop_keyframe_limit);
     global_map_rebuild_keyframe_interval_ =
       static_cast<std::size_t>(global_map_keyframe_interval);
+    occupancy_grid_keyframes_per_batch_ = static_cast<std::size_t>(grid_batches);
     global_point_cloud_map_ = std::make_unique<GlobalPointCloudMap>(
       GlobalPointCloudMapParameters{global_map_voxel_leaf_size,
         static_cast<std::size_t>(global_map_keyframes_per_batch)});
@@ -865,7 +866,7 @@ private:
       (keyframe.id + 1U) % global_map_rebuild_keyframe_interval_ == 0U)
     {
       requestGlobalMapRebuild();
-      requestOccupancyGridRebuild();
+      requestOccupancyGridIncrementalUpdate();
     }
     last_global_keyframe_base_pose_ = front_end_base_pose;
     has_last_global_keyframe_ = true;
@@ -973,7 +974,7 @@ private:
         map_from_odom_ = optimization.map_from_odom;
         optimized_global_base_poses_ = optimization.optimized_base_poses;
         requestGlobalMapRebuild();
-        requestOccupancyGridRebuild();
+        requestOccupancyGridFullRebuild();
         ++pose_graph_commit_count_;
       } else {
         (void)pose_graph_submission_state_.completeFailure(task_id);
@@ -1034,7 +1035,7 @@ private:
     }
     snapshot_loaded_ = true;
     requestGlobalMapRebuild();
-    requestOccupancyGridRebuild();
+    requestOccupancyGridFullRebuild();
     RCLCPP_INFO(
       get_logger(), "Restored %zu custom 3D keyframes in %s mode from %s",
       restored_keyframes.size(), operation_mode_.c_str(), snapshot_path_.c_str());
@@ -1082,26 +1083,25 @@ private:
     ++global_map_rebuild_request_count_;
   }
 
-  void requestOccupancyGridRebuild()
+  void requestOccupancyGridFullRebuild()
   {
     const auto keyframes = global_keyframes_.snapshot();
     if (keyframes.empty()) {return;}
     GlobalMapRebuildRequest request{keyframes, globalMapBasePoses(keyframes),
       keyframes.back().stamp};
+    occupancy_grid_incremental_update_requested_ = false;
     if (occupancy_grid_->active()) {queued_occupancy_grid_rebuild_ = std::move(request); return;}
     occupancy_grid_->begin(std::move(request.keyframes), std::move(request.base_poses));
     occupancy_grid_stamp_ = request.stamp;
   }
 
-  void processOccupancyGridBatch()
+  void requestOccupancyGridIncrementalUpdate()
   {
-    if (!occupancy_grid_->active() && queued_occupancy_grid_rebuild_) {
-      auto request = std::move(*queued_occupancy_grid_rebuild_);
-      queued_occupancy_grid_rebuild_.reset();
-      occupancy_grid_->begin(std::move(request.keyframes), std::move(request.base_poses));
-      occupancy_grid_stamp_ = request.stamp;
-    }
-    if (!occupancy_grid_->active() || !occupancy_grid_->processBatch()) {return;}
+    occupancy_grid_incremental_update_requested_ = true;
+  }
+
+  void publishOccupancyGrid()
+  {
     const auto snapshot = occupancy_grid_->snapshot();
     if (snapshot.data.empty()) {return;}
     nav_msgs::msg::OccupancyGrid map;
@@ -1117,6 +1117,41 @@ private:
     map.data = snapshot.data;
     occupancy_grid_publisher_->publish(map);
     ++occupancy_grid_publish_count_;
+  }
+
+  void processOccupancyGridBatch()
+  {
+    if (!occupancy_grid_->active() && queued_occupancy_grid_rebuild_) {
+      auto request = std::move(*queued_occupancy_grid_rebuild_);
+      queued_occupancy_grid_rebuild_.reset();
+      occupancy_grid_->begin(std::move(request.keyframes), std::move(request.base_poses));
+      occupancy_grid_stamp_ = request.stamp;
+    }
+    if (occupancy_grid_->active()) {
+      if (!occupancy_grid_->processBatch()) {return;}
+      occupancy_grid_integrated_keyframe_count_ = occupancy_grid_->totalKeyframes();
+      publishOccupancyGrid();
+      return;
+    }
+    if (!occupancy_grid_incremental_update_requested_) {return;}
+    const auto keyframes = global_keyframes_.snapshot();
+    if (occupancy_grid_integrated_keyframe_count_ > keyframes.size()) {
+      requestOccupancyGridFullRebuild();
+      return;
+    }
+    const auto poses = globalMapBasePoses(keyframes);
+    const std::size_t end = std::min(
+      keyframes.size(), occupancy_grid_integrated_keyframe_count_ +
+      occupancy_grid_keyframes_per_batch_);
+    for (std::size_t index = occupancy_grid_integrated_keyframe_count_; index < end; ++index) {
+      occupancy_grid_->append(keyframes[index], poses[index]);
+    }
+    occupancy_grid_integrated_keyframe_count_ = end;
+    occupancy_grid_stamp_ = keyframes.back().stamp;
+    if (occupancy_grid_integrated_keyframe_count_ == keyframes.size()) {
+      occupancy_grid_incremental_update_requested_ = false;
+      publishOccupancyGrid();
+    }
   }
 
   void processGlobalMapRebuildBatch()
@@ -1435,6 +1470,7 @@ private:
   std::size_t maximum_pending_clouds_{5U};
   std::size_t maximum_pending_loop_keyframes_{100U};
   std::size_t global_map_rebuild_keyframe_interval_{10U};
+  std::size_t occupancy_grid_keyframes_per_batch_{4U};
   std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};
@@ -1460,6 +1496,8 @@ private:
   std::unique_ptr<HeightAwareOccupancyGrid> occupancy_grid_;
   std::optional<GlobalMapRebuildRequest> queued_global_map_rebuild_;
   std::optional<GlobalMapRebuildRequest> queued_occupancy_grid_rebuild_;
+  std::size_t occupancy_grid_integrated_keyframe_count_{0U};
+  bool occupancy_grid_incremental_update_requested_{false};
   rclcpp::Time global_map_rebuild_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time occupancy_grid_stamp_{0, 0, RCL_ROS_TIME};
   std::size_t global_map_rebuild_request_count_{0U};

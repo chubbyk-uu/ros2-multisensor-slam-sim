@@ -24,6 +24,9 @@ class HeightAwareOccupancyGrid
 public:
   explicit HeightAwareOccupancyGrid(HeightAwareOccupancyGridParameters parameters);
   void begin(std::vector<GlobalKeyframe> keyframes, std::vector<Eigen::Isometry3d> poses);
+  // Adds a keyframe to an already-built grid.  Global pose corrections still
+  // require begin(), which deliberately replays a consistent full snapshot.
+  void append(const GlobalKeyframe & keyframe, const Eigen::Isometry3d & pose);
   bool processBatch();
   bool active() const;
   std::size_t processedKeyframes() const;
