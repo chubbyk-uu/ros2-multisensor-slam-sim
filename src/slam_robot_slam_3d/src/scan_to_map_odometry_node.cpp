@@ -24,6 +24,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/header.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <tf2/exceptions.hpp>
 #include <tf2/time.hpp>
 #include <tf2_ros/buffer.h>
@@ -177,6 +178,8 @@ public:
     map_frame_ = declare_parameter<std::string>("pose_graph.map_frame", "map");
     publish_map_to_odom_tf_ = declare_parameter<bool>(
       "pose_graph.publish_map_to_odom_tf", true);
+    transform_tolerance_ = declare_parameter<double>(
+      "pose_graph.transform_tolerance", 0.1);
     operation_mode_ = declare_parameter<std::string>("persistence.mode", "mapping");
     snapshot_path_ = declare_parameter<std::string>("persistence.snapshot_path", "");
     const bool load_snapshot = declare_parameter<bool>("persistence.load_snapshot", false);
@@ -215,6 +218,7 @@ public:
       (load_snapshot && snapshot_path_.empty()) ||
       input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
       local_frame_.empty() || odom_frame_.empty() || map_frame_.empty() ||
+      !std::isfinite(transform_tolerance_) || transform_tolerance_ < 0.0 ||
       !std::isfinite(maximum_odom_age_) ||
       maximum_odom_age_ <= 0.0 || !std::isfinite(keyframe_translation_) ||
       keyframe_translation_ <= 0.0 || !std::isfinite(keyframe_rotation_) ||
@@ -307,6 +311,30 @@ public:
           ++occupancy_grid_failure_count_;
           RCLCPP_ERROR(get_logger(), "3D occupancy-grid rebuild failed: %s", error.what());
           queued_occupancy_grid_rebuild_.reset();
+        }
+      });
+    save_snapshot_service_ = create_service<std_srvs::srv::Trigger>(
+      "~/save_snapshot",
+      [this](const std_srvs::srv::Trigger::Request::SharedPtr,
+      std_srvs::srv::Trigger::Response::SharedPtr response) {
+        if (operation_mode_ != "mapping" || snapshot_path_.empty() ||
+        global_keyframes_.size() == 0U)
+        {
+          response->success = false;
+          response->message = "mapping snapshot is unavailable";
+          return;
+        }
+        try {
+          saveSnapshot();
+          response->success = true;
+          response->message = snapshot_path_;
+          RCLCPP_INFO(
+            get_logger(), "Saved custom 3D SLAM snapshot on request to %s",
+            snapshot_path_.c_str());
+        } catch (const std::exception & error) {
+          response->success = false;
+          response->message = error.what();
+          RCLCPP_ERROR(get_logger(), "Requested 3D snapshot save failed: %s", error.what());
         }
       });
 
@@ -726,6 +754,9 @@ private:
     if (publish_map_to_odom_tf_) {
       geometry_msgs::msg::TransformStamped map_to_odom;
       map_to_odom.header = input_message.header;
+      map_to_odom.header.stamp =
+        rclcpp::Time(input_message.header.stamp) +
+        rclcpp::Duration::from_seconds(transform_tolerance_);
       map_to_odom.header.frame_id = map_frame_;
       map_to_odom.child_frame_id = odom_frame_;
       map_to_odom.transform.translation.x = map_from_odom_.translation().x();
@@ -1395,6 +1426,7 @@ private:
   bool save_snapshot_on_shutdown_{true};
   bool snapshot_loaded_{false};
   bool publish_map_to_odom_tf_{true};
+  double transform_tolerance_{0.1};
   double maximum_odom_age_{0.05};
   bool force_planar_motion_{true};
   double keyframe_translation_{0.25};
@@ -1455,6 +1487,7 @@ private:
   rclcpp::TimerBase::SharedPtr background_result_timer_;
   rclcpp::TimerBase::SharedPtr global_map_rebuild_timer_;
   rclcpp::TimerBase::SharedPtr occupancy_grid_timer_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_snapshot_service_;
 };
 
 }  // namespace slam_robot_slam_3d

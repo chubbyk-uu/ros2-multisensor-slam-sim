@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+
+"""Score autonomous frontier exploration without publishing velocity commands."""
+
+import argparse
+import math
+import sys
+import time
+
+from diagnostic_msgs.msg import DiagnosticArray
+from nav2_msgs.msg import CollisionMonitorState
+from nav_msgs.msg import OccupancyGrid, Odometry
+from rcl_interfaces.msg import Log
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.utilities import remove_ros_args
+from std_msgs.msg import Bool
+
+
+CRITICAL_LOG_FRAGMENTS = (
+    "process has died",
+    "Exception caught",
+    "snapshot save failed",
+)
+
+
+def known_free_cells(message):
+    return sum(1 for value in message.data if 0 <= value <= 20)
+
+
+class ExplorationRegression(Node):
+    def __init__(self):
+        super().__init__(
+            "frontier_exploration_regression",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
+        self.complete = False
+        self.latest_free_cells = 0
+        self.initial_free_cells = None
+        self.maximum_free_cells = 0
+        self.successful_goals = 0
+        self.failed_goals = 0
+        self.unreachable_candidates = 0
+        self.collision_transitions = 0
+        self.recovery_events = 0
+        self.last_collision_action = CollisionMonitorState.DO_NOTHING
+        self.truth_distance = 0.0
+        self.previous_truth = None
+        self.critical_logs = []
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(OccupancyGrid, "/map", self.map_callback, map_qos)
+        self.create_subscription(
+            Bool,
+            "/frontier_explorer/complete",
+            self.completion_callback,
+            map_qos,
+        )
+        self.create_subscription(
+            DiagnosticArray,
+            "/frontier_explorer/diagnostics",
+            self.diagnostics_callback,
+            10,
+        )
+        self.create_subscription(
+            CollisionMonitorState,
+            "/collision_monitor_state",
+            self.collision_callback,
+            10,
+        )
+        self.create_subscription(
+            Odometry, "/ground_truth/odom", self.truth_callback, 50
+        )
+        self.create_subscription(Log, "/rosout", self.log_callback, 100)
+
+    def map_callback(self, message):
+        self.latest_free_cells = known_free_cells(message)
+        if self.initial_free_cells is None and self.latest_free_cells > 0:
+            self.initial_free_cells = self.latest_free_cells
+        self.maximum_free_cells = max(
+            self.maximum_free_cells, self.latest_free_cells
+        )
+
+    def completion_callback(self, message):
+        self.complete = message.data
+
+    def diagnostics_callback(self, message):
+        for status in message.status:
+            if status.name != "frontier_explorer":
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            self.successful_goals = int(values.get("successful_goals", 0))
+            self.failed_goals = int(values.get("failed_goals", 0))
+            self.unreachable_candidates = int(
+                values.get("unreachable_candidates", 0)
+            )
+
+    def collision_callback(self, message):
+        if (
+            message.action_type != CollisionMonitorState.DO_NOTHING
+            and message.action_type != self.last_collision_action
+        ):
+            self.collision_transitions += 1
+        self.last_collision_action = message.action_type
+
+    def truth_callback(self, message):
+        current = (
+            message.pose.pose.position.x,
+            message.pose.pose.position.y,
+        )
+        if self.previous_truth is not None:
+            step = math.hypot(
+                current[0] - self.previous_truth[0],
+                current[1] - self.previous_truth[1],
+            )
+            if step < 0.25:
+                self.truth_distance += step
+        self.previous_truth = current
+
+    def log_callback(self, message):
+        if message.msg.startswith(("Running spin", "Running backup")):
+            self.recovery_events += 1
+        if any(fragment in message.msg for fragment in CRITICAL_LOG_FRAGMENTS):
+            if message.msg not in self.critical_logs:
+                self.critical_logs.append(message.msg)
+
+
+def parse_arguments(arguments):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--wall-timeout", type=float, default=600.0)
+    parser.add_argument("--minimum-successful-goals", type=int, default=1)
+    parser.add_argument("--minimum-free-cell-growth", type=int, default=500)
+    parser.add_argument("--minimum-final-free-cells", type=int, default=1500)
+    parser.add_argument("--minimum-travel-distance", type=float, default=3.0)
+    parser.add_argument("--maximum-failed-goals", type=int, default=5)
+    parser.add_argument("--maximum-collision-transitions", type=int, default=3)
+    parser.add_argument("--maximum-recovery-events", type=int, default=5)
+    return parser.parse_args(arguments)
+
+
+def evaluate(regression, arguments):
+    initial = regression.initial_free_cells or 0
+    growth = regression.maximum_free_cells - initial
+    checks = {
+        "exploration_completed": regression.complete,
+        "frontier_goal_succeeded": regression.successful_goals
+        >= arguments.minimum_successful_goals,
+        "known_free_area_grew": growth >= arguments.minimum_free_cell_growth,
+        "final_known_area": regression.maximum_free_cells
+        >= arguments.minimum_final_free_cells,
+        "robot_explored_physically": regression.truth_distance
+        >= arguments.minimum_travel_distance,
+        "failed_goal_budget": regression.failed_goals
+        <= arguments.maximum_failed_goals,
+        "collision_monitor_budget": regression.collision_transitions
+        <= arguments.maximum_collision_transitions,
+        "navigation_recovery_budget": regression.recovery_events
+        <= arguments.maximum_recovery_events,
+        "no_critical_logs": not regression.critical_logs,
+    }
+    print("RESULT frontier exploration", flush=True)
+    print(
+        f"  free cells: initial={initial} maximum={regression.maximum_free_cells} "
+        f"growth={growth}",
+        flush=True,
+    )
+    print(
+        f"  goals: succeeded={regression.successful_goals} "
+        f"failed={regression.failed_goals} "
+        f"unreachable={regression.unreachable_candidates}",
+        flush=True,
+    )
+    print(
+        f"  truth distance={regression.truth_distance:.3f} m "
+        f"collision transitions={regression.collision_transitions} "
+        f"recovery events={regression.recovery_events}",
+        flush=True,
+    )
+    for name, passed in checks.items():
+        print(f"  {'PASS' if passed else 'FAIL'} {name}", flush=True)
+    for message in regression.critical_logs:
+        print(f"  critical log: {message}", flush=True)
+    return all(checks.values())
+
+
+def main():
+    arguments = parse_arguments(remove_ros_args(sys.argv)[1:])
+    rclpy.init()
+    regression = ExplorationRegression()
+    deadline = time.monotonic() + arguments.wall_timeout
+    passed = False
+    interrupted = False
+    try:
+        while rclpy.ok() and not regression.complete:
+            if time.monotonic() >= deadline:
+                break
+            rclpy.spin_once(regression, timeout_sec=0.2)
+        passed = evaluate(regression, arguments)
+    except KeyboardInterrupt:
+        interrupted = True
+    finally:
+        regression.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+    if interrupted:
+        return 130
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

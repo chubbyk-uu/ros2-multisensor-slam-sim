@@ -24,6 +24,8 @@ def test_all_composite_launches_have_a_distinct_smoke_profile():
         "structured_loop",
         "structured_navigation",
         "structured_dataset",
+        "custom_exploration",
+        "rtabmap_exploration",
     }
     assert all(profile.required_nodes for profile in profiles.values())
     assert "/rtabmap/rtabmap" in profiles["structured_loop"].required_nodes
@@ -62,6 +64,8 @@ def test_composite_launches_declare_a_real_smoke_argument():
         "structured_navigation_regression.launch.py",
         "structured_dataset_recording.launch.py",
         "custom_3d_loop_regression.launch.py",
+        "frontier_exploration_regression.launch.py",
+        "rtabmap_frontier_exploration_regression.launch.py",
     ]
     for index, filename in enumerate(launch_files):
         loader = SourceFileLoader(

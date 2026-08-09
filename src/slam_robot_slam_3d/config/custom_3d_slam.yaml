@@ -86,8 +86,10 @@
         submap_voxel_leaf_size: 0.15
         minimum_overlap_ratio: 0.30
         # This is a post-GICP graph-consistency bound, not a retrieval gate:
-        # it permits material drift while rejecting implausible corridor jumps.
-        maximum_front_end_translation_disagreement: 10.0
+        # Align this graph-consistency gate with the maximum accepted GICP
+        # correction.  A wider gate admitted false closures between repeated
+        # structures as soon as the 8 m travel threshold was reached.
+        maximum_front_end_translation_disagreement: 3.0
         maximum_correction_translation: 3.0
         maximum_correction_rotation: 1.0
         maximum_candidates: 3
@@ -95,6 +97,9 @@
     pose_graph:
       map_frame: map
       publish_map_to_odom_tf: true
+      # Future-date the slowly updated map -> odom correction so Nav2 paths
+      # stamped between consecutive 10 Hz scans remain transformable.
+      transform_tolerance: 0.10
       maximum_iterations: 50
       loop_closure_huber_scale: 1.0
       sequential_translation_weight: 20.0

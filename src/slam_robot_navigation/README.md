@@ -70,3 +70,26 @@ ros2 run slam_robot_navigation navigation_regression.py \
 位置误差为 `0.173 m`，箱体随后成功自动删除。恢复次数和 Collision
 Monitor 触发次数均为 0，表示常规重规划已及时完成避障；完全封路后的
 恢复行为需要单独测试。
+
+## Frontier Exploration
+
+`frontier_explorer_node` 订阅在线占据栅格，聚类自由区—未知区边界，并按信息
+增益、机器人距离和障碍净距生成候选。候选先经 Nav2
+`ComputePathToPose` 可达性检查和路径长度重评分，再通过 `NavigateToPose`
+执行。节点不发布 `/cmd_vel`，因此规划、控制、避障和恢复仍全部由 Nav2
+负责。
+
+独立启动方式：
+
+```bash
+ros2 launch slam_robot_navigation frontier_exploration.launch.py \
+  map_topic:=/map
+```
+
+主要输出为 `/frontier_explorer/markers`、`/frontier_explorer/diagnostics` 和
+transient-local `/frontier_explorer/complete`。`map_topic`、候选数、评分权重、
+黑名单、超时与完成判据集中在 `config/frontier_exploration.yaml`。默认在连续
+若干周期没有未拉黑的可达候选，或连续成功目标未带来最低自由区增长时结束；
+900 秒空间黑名单确保永久不可达候选不会在导航超时后立即重新进入候选集。自研
+3D SLAM 默认在完成时调用快照服务；接 RTAB-Map 时关闭该调用，由 RTAB-Map
+数据库自身负责持久化。

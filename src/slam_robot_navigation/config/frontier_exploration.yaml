@@ -1,0 +1,26 @@
+frontier_explorer:
+  ros__parameters:
+    use_sim_time: true
+    update_rate: 1.0
+    evaluation_candidate_limit: 5
+    path_cost_weight: 1.0
+    blacklist_radius: 0.5
+    # Must outlive several full navigation timeouts so multiple permanently
+    # unreachable residual frontiers cannot rotate back into consideration.
+    blacklist_duration: 900.0
+    navigation_timeout: 120.0
+    minimum_known_free_cells: 100
+    completion_empty_cycles: 5
+    minimum_goal_free_cell_growth: 100
+    maximum_stagnant_goals: 3
+    map_topic: /map
+    save_snapshot_on_completion: true
+    snapshot_service: /scan_to_map_odometry_3d/save_snapshot
+    frontier:
+      free_maximum: 20
+      occupied_minimum: 65
+      minimum_cluster_cells: 8
+      minimum_clearance: 0.25
+      information_gain_weight: 2.0
+      distance_weight: 1.0
+      clearance_weight: 0.5

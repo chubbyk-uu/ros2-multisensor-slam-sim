@@ -19,6 +19,7 @@ find_package(pcl_conversions REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(slam_robot_slam REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
 add_library(point_cloud_preprocessor src/point_cloud_preprocessor.cpp)
@@ -224,6 +225,7 @@ ament_target_dependencies(
   pcl_conversions
   rclcpp
   sensor_msgs
+  std_srvs
   tf2_ros
 )
 
@@ -249,6 +251,7 @@ install(
     scripts/corridor_3d_regression
     scripts/front_end_motion_regression
     scripts/front_end_regression
+    scripts/frontier_exploration_regression
     scripts/grid_contract_check
     scripts/launch_smoke_check
     scripts/pointcloud_contract_check
@@ -406,6 +409,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_launch_smoke_check
     test/test_launch_smoke_check.py
+  )
+  ament_add_pytest_test(
+    test_frontier_exploration_regression
+    test/test_frontier_exploration_regression.py
   )
 endif()
 

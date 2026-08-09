@@ -289,7 +289,7 @@ ros2 launch slam_robot_slam_3d mola_lo_simulation.launch.py
 LIO。MOLA 输出局部里程计和局部点云，不提供与 RTAB-Map 等价的完整在线全局
 SLAM 能力。
 
-## 后续路线
+## 自主 Frontier Exploration
 
 RTAB-Map 是成熟算法验收基线；自研链路已经完成点云预处理、GICP 前端、
 弱几何退化处理、Scan Context + GICP 回环、后台位姿图、全局点云地图、二维
@@ -297,10 +297,40 @@ RTAB-Map 是成熟算法验收基线；自研链路已经完成点云预处理�
 持续发布 `/map`，Nav2 继续使用 3D 点云局部避障；RTAB-Map 基线及其回归场景
 继续保留用于同场景对照。
 
-最终阶段增加 Frontier Exploration。探索器只负责从实时占据栅格中提取、
-筛选和排序未知边界目标，再通过 Nav2 标准 `NavigateToPose` 动作导航；它不
-替代 Nav2 的规划控制，也不直接发布 `/cmd_vel`。自动验收从未知地图开始，
-检查覆盖率、不可达目标处理、回环修正后的重规划、碰撞和地图自动保存。
+探索器从实时占据栅格提取自由区与未知区边界，按连通簇、障碍净距、信息增益
+和机器人距离生成候选，再调用 Nav2 `ComputePathToPose` 过滤不可达候选并用
+实际路径长度重评分。最终目标只通过 `NavigateToPose` 发送；探索器不发布
+`/cmd_vel`。地图使在途目标不可通行时会取消并重规划，失败目标进入带过期时间
+的空间黑名单。
+
+自研 3D SLAM 完整入口：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
+```
+
+连续若干周期没有未拉黑的可达 frontier，或连续到达目标但已知自由区不再增长，
+且已知自由单元达到下限后，节点发布 `/frontier_explorer/complete=true`，并调用
+自研 SLAM 快照服务保存 `~/.ros/custom_slam_3d.snapshot`。不可达候选会进入长于
+导航超时的空间黑名单，避免多个永久不可达的残余边界循环轮换。成熟基线使用同一
+探索器，仅把地图输入切换到 `/rtabmap/map`；RTAB-Map 自行持续保存数据库：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py
+```
+
+无界面自动回归分别为：
+
+```bash
+ros2 launch slam_robot_slam_3d frontier_exploration_regression.launch.py
+ros2 launch slam_robot_slam_3d rtabmap_frontier_exploration_regression.launch.py
+```
+
+回归从固定出生点和未知地图开始，检查至少一个导航目标成功、自由区增长、
+真值行程、导航恢复预算、失败目标预算、Collision Monitor 触发和进程级错误；
+自研链路还检查探索完成后快照服务能够成功保存。
+
+## 后续路线
 
 相机随后用于增强地点识别和全局重定位，IMU 用于支持具备逐点时间数据的
 LIO；不计划融合 2D 与 3D LiDAR。详细分阶段任务和验收标准见项目根目录

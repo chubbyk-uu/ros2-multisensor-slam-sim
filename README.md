@@ -28,8 +28,8 @@ RTAB-Map 3D LiDAR 在线建图与 Nav2 高度语义导航基线。
 | 3D LiDAR 模型与接口 | 已完成 | 点云、TF、QoS、RViz 和输入契约 |
 | RTAB-Map 3D SLAM | 已完成成熟基线 | ICP、proximity 回环、位姿图、数据库和二维导航投影 |
 | 3D 在线导航 | 已完成基线验收 | Nav2 直接使用 RTAB-Map 地图和 3D 点云障碍层 |
-| 自研 3D SLAM | 进行中 | GICP 前端、回环后端、全局点云、二维导航投影、Nav2 在线入口及版本化快照恢复已完成；下一步是 Frontier Exploration |
-| Frontier Exploration | 计划中 | 自研 3D 在线建图 + Nav2，自主选择未知边界并完成探索 |
+| 自研 3D SLAM | 已完成首版闭环 | GICP 前端、回环后端、全局地图、Nav2 在线入口和版本化快照恢复 |
+| Frontier Exploration | 已完成基线 | 可达 frontier 评分、Nav2 动作调度、重规划、完成判据、自动保存和回归 |
 | 视觉融合 | 计划中 | 后续接入相机，研究 3D LiDAR + 相机 + IMU |
 
 ## 快速安装
@@ -147,6 +147,20 @@ ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py
 该入口边建图边导航，并在正常退出时原子保存自包含快照到
 `~/.ros/custom_slam_3d.snapshot`。继续建图或从保存末端位姿只读定位的命令见
 [3D 工作流](docs/3d-workflows.md)。首版只读定位尚不支持从任意初始位姿全局重定位。
+
+### 3D 自主探索
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
+```
+
+该入口从未知地图开始，探索器只向 Nav2 发送标准导航目标，不发布速度；完成后
+自动保存 `~/.ros/custom_slam_3d.snapshot`。使用 RTAB-Map 成熟基线运行同一
+探索策略：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py
+```
 
 3D 地图显示、数据库复用、结构化世界、MOLA 对照和完整验收标准见
 [3D 工作流](docs/3d-workflows.md)。

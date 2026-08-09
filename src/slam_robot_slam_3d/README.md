@@ -143,6 +143,29 @@ ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py \
 scan-to-map 匹配。它还不支持在地图任意位置启动后的全局重定位；这需要后续
 Scan Context 初始位姿搜索，不能用“成功加载地图”冒充已经完成。
 
+### 在线自主探索
+
+```bash
+# 自研 3D SLAM + Nav2 + Frontier Exploration
+ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
+
+# 同一探索器切换到 RTAB-Map 成熟基线
+ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py
+```
+
+探索器使用实时二维投影地图选择目标，Nav2 的局部 voxel layer 仍直接消费
+3D 点云完成高度带避障。自研入口在完成时调用
+`/scan_to_map_odometry_3d/save_snapshot`；RTAB-Map 入口不调用该服务，由其
+SQLite 数据库持续持久化。两条链路共享同一 C++ frontier 检测和 Nav2 动作
+调度实现。
+
+结构化世界的无人工目标回归：
+
+```bash
+ros2 launch slam_robot_slam_3d frontier_exploration_regression.launch.py
+ros2 launch slam_robot_slam_3d rtabmap_frontier_exploration_regression.launch.py
+```
+
 差速机器人默认启用平面运动约束：GICP 用完整三维几何求解，输出基座位姿再
 投影到 `x/y/yaw`，避免不可观测的微小横滚、俯仰和高度误差污染后续二维导航
 投影。前端还从最终对应点的局部表面法向构造 `x/y/yaw` 点到平面信息矩阵，

@@ -37,6 +37,16 @@ def generate_launch_description():
             "custom_3d_slam.yaml",
         ]
     )
+    default_rviz = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_slam_3d"),
+            "rviz",
+            "rtabmap_navigation_3d.rviz",
+        ]
+    )
+    default_nav2_parameters = PathJoinSubstitution(
+        [FindPackageShare("nav2_bringup"), "params", "nav2_params.yaml"]
+    )
     default_snapshot = str(
         Path.home() / ".ros" / "custom_slam_3d.snapshot"
     )
@@ -61,7 +71,7 @@ def generate_launch_description():
             )
         ),
         launch_arguments={
-            "params_file": LaunchConfiguration("params_file"),
+            "params_file": LaunchConfiguration("slam_params_file"),
             "use_sim_time": "true",
             "mode": LaunchConfiguration("mode"),
             "snapshot_path": LaunchConfiguration("snapshot_path"),
@@ -77,7 +87,9 @@ def generate_launch_description():
         ),
         launch_arguments={
             "use_sim_time": "true",
+            "params_file": LaunchConfiguration("nav2_params_file"),
             "use_rviz": LaunchConfiguration("rviz"),
+            "rviz_config": LaunchConfiguration("rviz_config"),
             "map_topic": "/map",
             "lidar_topic": "/lidar_3d/points",
         }.items(),
@@ -87,8 +99,12 @@ def generate_launch_description():
             DeclareLaunchArgument("world", default_value=default_world),
             DeclareLaunchArgument("gui", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),
+            DeclareLaunchArgument("rviz_config", default_value=default_rviz),
             DeclareLaunchArgument(
-                "params_file", default_value=default_parameters
+                "slam_params_file", default_value=default_parameters
+            ),
+            DeclareLaunchArgument(
+                "nav2_params_file", default_value=default_nav2_parameters
             ),
             DeclareLaunchArgument("mode", default_value="mapping"),
             DeclareLaunchArgument(

@@ -51,6 +51,7 @@
   <exec_depend>slam_robot_gazebo</exec_depend>
   <exec_depend>slam_robot_navigation</exec_depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
   <exec_depend>tf2_msgs</exec_depend>
   <depend>tf2_ros</depend>
 
