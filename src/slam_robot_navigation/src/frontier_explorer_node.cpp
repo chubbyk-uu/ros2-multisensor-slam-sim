@@ -30,6 +30,7 @@
 #include <tf2_ros/transform_listener.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
+#include "slam_robot_navigation/frontier_action_deadline.hpp"
 #include "slam_robot_navigation/frontier_detector.hpp"
 
 namespace slam_robot_navigation
@@ -217,10 +218,9 @@ private:
     return value >= 0 && value <= detector_.freeMaximum();
   }
 
-  std::chrono::steady_clock::time_point actionResponseDeadline() const
+  std::chrono::steady_clock::duration actionResponseTimeout() const
   {
-    return std::chrono::steady_clock::now() +
-           std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+    return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
       std::chrono::duration<double>(action_response_timeout_));
   }
 
@@ -232,6 +232,8 @@ private:
     }
     current_target_.reset();
     state_ = State::kWaiting;
+    navigation_deadline_.disarm();
+    cancellation_deadline_.disarm();
     ++navigation_request_id_;
   }
 
@@ -240,7 +242,8 @@ private:
     RCLCPP_WARN(get_logger(), "%s", reason);
     cancel_with_blacklist_ = blacklist_target;
     state_ = State::kCanceling;
-    cancellation_deadline_ = actionResponseDeadline();
+    cancellation_deadline_.arm(
+      std::chrono::steady_clock::now(), actionResponseTimeout());
     const auto goal_handle = navigateGoalHandle();
     if (goal_handle) {
       navigate_client_->async_cancel_goal(goal_handle);
@@ -261,13 +264,13 @@ private:
       return;
     }
     if (state_ == State::kNavigating) {
-      if (now > navigation_deadline_) {
+      if (navigation_deadline_.expired(now)) {
         cancelNavigation("Frontier navigation timed out; canceling goal", true);
         return;
       }
     }
     if (state_ == State::kCanceling) {
-      if (now > cancellation_deadline_) {
+      if (cancellation_deadline_.expired(now)) {
         RCLCPP_ERROR(get_logger(), "Frontier navigation cancel request timed out");
         finishCanceledNavigation();
       }
@@ -275,11 +278,12 @@ private:
       return;
     }
     if (state_ == State::kPlanning) {
-      if (active_planning_candidate_ && now > planning_deadline_) {
+      if (active_planning_candidate_ && planning_deadline_.expired(now)) {
         RCLCPP_WARN(get_logger(), "Frontier path request timed out; skipping candidate");
         blacklistCandidate(*active_planning_candidate_);
         ++unreachable_candidates_;
         active_planning_candidate_.reset();
+        planning_deadline_.disarm();
         ++planning_request_id_;
         path_request_pending_ = true;
       }
@@ -343,6 +347,7 @@ private:
     state_ = State::kPlanning;
     path_request_pending_ = true;
     active_planning_candidate_.reset();
+    planning_deadline_.disarm();
   }
 
   geometry_msgs::msg::PoseStamped candidatePose(const FrontierCandidate & candidate) const
@@ -369,7 +374,8 @@ private:
     const FrontierCandidate candidate = planning_candidates_[planning_index_++];
     const std::size_t request_id = ++planning_request_id_;
     active_planning_candidate_ = candidate;
-    planning_deadline_ = actionResponseDeadline();
+    planning_deadline_.arm(
+      std::chrono::steady_clock::now(), actionResponseTimeout());
     ComputePath::Goal goal;
     goal.goal = candidatePose(candidate);
     goal.use_start = false;
@@ -383,6 +389,7 @@ private:
           ++unreachable_candidates_;
           blacklistCandidate(candidate);
           active_planning_candidate_.reset();
+          planning_deadline_.disarm();
           path_request_pending_ = true;
         } else {
           std::lock_guard<std::mutex> lock(action_handle_mutex_);
@@ -413,6 +420,7 @@ private:
           blacklistCandidate(candidate);
         }
         active_planning_candidate_.reset();
+        planning_deadline_.disarm();
         path_request_pending_ = true;
       };
     compute_path_client_->async_send_goal(goal, options);
@@ -470,12 +478,15 @@ private:
         }
         current_target_.reset();
         state_ = State::kWaiting;
+        navigation_deadline_.disarm();
+        cancellation_deadline_.disarm();
       };
     state_ = State::kNavigating;
     cancel_with_blacklist_ = false;
-    navigation_deadline_ = std::chrono::steady_clock::now() +
+    navigation_deadline_.arm(
+      std::chrono::steady_clock::now(),
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-      std::chrono::duration<double>(navigation_timeout_));
+      std::chrono::duration<double>(navigation_timeout_)));
     navigate_client_->async_send_goal(goal, options);
     RCLCPP_INFO(
       get_logger(), "Navigating to frontier (%.2f, %.2f), score %.2f",
@@ -639,9 +650,9 @@ private:
   std::optional<FrontierCandidate> best_candidate_;
   double best_path_score_{0.0};
   bool cancel_with_blacklist_{false};
-  std::chrono::steady_clock::time_point navigation_deadline_;
-  std::chrono::steady_clock::time_point planning_deadline_;
-  std::chrono::steady_clock::time_point cancellation_deadline_;
+  FrontierActionDeadline navigation_deadline_;
+  FrontierActionDeadline planning_deadline_;
+  FrontierActionDeadline cancellation_deadline_;
   std::size_t planning_request_id_{0U};
   std::size_t navigation_request_id_{0U};
   std::optional<FrontierCandidate> active_planning_candidate_;

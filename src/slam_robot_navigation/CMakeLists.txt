@@ -64,6 +64,14 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_frontier_detector test/test_frontier_detector.cpp)
   target_link_libraries(test_frontier_detector frontier_detector)
+  ament_add_gtest(
+    test_frontier_action_deadline
+    test/test_frontier_action_deadline.cpp
+  )
+  target_include_directories(
+    test_frontier_action_deadline
+    PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  )
 endif()
 
 ament_package()

@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <limits>
 #include <stdexcept>
 #include <system_error>
 
@@ -114,9 +113,7 @@ GlobalKeyframe readKeyframe(std::istream & input, std::size_t id)
   readValue(input, correspondences);
   readValue(input, keyframe.rmse);
   readValue(input, point_count);
-  if (point_count == 0U || point_count > kMaximumPointsPerKeyframe ||
-    correspondences > std::numeric_limits<std::size_t>::max())
-  {
+  if (point_count == 0U || point_count > kMaximumPointsPerKeyframe) {
     throw std::runtime_error("invalid snapshot keyframe counts");
   }
   auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();

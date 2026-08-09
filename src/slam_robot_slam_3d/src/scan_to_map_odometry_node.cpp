@@ -239,6 +239,7 @@ public:
       static_cast<std::size_t>(pending_loop_keyframe_limit);
     global_map_rebuild_keyframe_interval_ =
       static_cast<std::size_t>(global_map_keyframe_interval);
+    global_map_voxel_leaf_size_ = global_map_voxel_leaf_size;
     occupancy_grid_keyframes_per_batch_ = static_cast<std::size_t>(grid_batches);
     global_point_cloud_map_ = std::make_unique<GlobalPointCloudMap>(
       GlobalPointCloudMapParameters{global_map_voxel_leaf_size,
@@ -1019,7 +1020,8 @@ private:
     global_accumulated_distance_ = restored_keyframes.back().accumulated_distance;
     has_last_global_keyframe_ = true;
     if (operation_mode_ == "localization") {
-      GlobalPointCloudMap localization_map({0.15, restored_keyframes.size()});
+      GlobalPointCloudMap localization_map(
+        {global_map_voxel_leaf_size_, restored_keyframes.size()});
       localization_map.begin(restored_keyframes, optimized_global_base_poses_);
       (void)localization_map.processBatch();
       local_submap_.replaceCloud(localization_map.cloud());
@@ -1470,6 +1472,7 @@ private:
   std::size_t maximum_pending_clouds_{5U};
   std::size_t maximum_pending_loop_keyframes_{100U};
   std::size_t global_map_rebuild_keyframe_interval_{10U};
+  double global_map_voxel_leaf_size_{0.15};
   std::size_t occupancy_grid_keyframes_per_batch_{4U};
   std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};

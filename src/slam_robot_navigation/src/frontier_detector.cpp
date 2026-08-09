@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <queue>
 #include <stdexcept>
@@ -71,27 +72,33 @@ std::vector<FrontierCandidate> FrontierDetector::detect(
   const auto is_unknown = [&map](std::size_t index) {return map.data[index] < 0;};
 
   std::vector<double> clearance(width * height, std::numeric_limits<double>::infinity());
-  std::queue<std::size_t> distance_queue;
+  using DistanceEntry = std::pair<double, std::size_t>;
+  std::priority_queue<DistanceEntry, std::vector<DistanceEntry>, std::greater<>> distance_queue;
   for (std::size_t i = 0; i < map.data.size(); ++i) {
     if (map.data[i] >= parameters_.occupied_minimum) {
       clearance[i] = 0.0;
-      distance_queue.push(i);
+      distance_queue.push({0.0, i});
     }
   }
   while (!distance_queue.empty()) {
-    const std::size_t current = distance_queue.front();
+    const DistanceEntry current_entry = distance_queue.top();
     distance_queue.pop();
+    const double current_distance = current_entry.first;
+    const std::size_t current = current_entry.second;
+    if (current_distance != clearance[current]) {continue;}
     const int x = static_cast<int>(current % width);
     const int y = static_cast<int>(current / width);
-    for (const auto & neighbor : kNeighbors4) {
+    for (const auto & neighbor : kNeighbors8) {
       const int nx = x + neighbor[0];
       const int ny = y + neighbor[1];
       if (!validCell(nx, ny, width, height)) {continue;}
       const std::size_t next = indexOf(nx, ny, width);
-      const double proposed = clearance[current] + resolution;
+      const double step = neighbor[0] == 0 || neighbor[1] == 0 ?
+        resolution : std::sqrt(2.0) * resolution;
+      const double proposed = clearance[current] + step;
       if (proposed < clearance[next]) {
         clearance[next] = proposed;
-        distance_queue.push(next);
+        distance_queue.push({proposed, next});
       }
     }
   }
