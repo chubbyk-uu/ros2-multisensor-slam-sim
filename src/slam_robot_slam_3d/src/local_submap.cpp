@@ -52,6 +52,19 @@ void LocalSubmap::clear()
   ++version_;
 }
 
+void LocalSubmap::replaceCloud(const pcl::PointCloud<pcl::PointXYZI> & cloud)
+{
+  if (cloud.empty() || !std::all_of(
+      cloud.begin(), cloud.end(), [](const auto & point) {return pcl::isFinite(point);}))
+  {
+    throw std::invalid_argument("replacement local map must be finite and non-empty");
+  }
+  keyframes_.clear();
+  cloud_ = cloud;
+  cloud_.is_dense = true;
+  ++version_;
+}
+
 const pcl::PointCloud<pcl::PointXYZI> & LocalSubmap::cloud() const
 {
   return cloud_;

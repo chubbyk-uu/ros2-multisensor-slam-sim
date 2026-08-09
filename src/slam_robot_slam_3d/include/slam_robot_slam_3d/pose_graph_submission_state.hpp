@@ -35,6 +35,9 @@ public:
   bool completeFailure(std::uint64_t task_id);
 
   const std::vector<Se2LoopConstraint> & committedConstraints() const;
+  void restoreCommitted(
+    std::vector<Se2LoopConstraint> constraints,
+    std::size_t latest_keyframe_id);
   std::size_t pendingConstraintCount() const;
   bool taskActive() const;
 

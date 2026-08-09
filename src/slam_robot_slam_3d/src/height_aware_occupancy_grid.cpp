@@ -35,16 +35,21 @@ void HeightAwareOccupancyGrid::begin(
 
 bool HeightAwareOccupancyGrid::processBatch()
 {
-  if (!active()) return false;
+  if (!active()) {return false;}
   const auto end = std::min(keyframes_.size(), next_ + parameters_.keyframes_per_batch);
-  for (; next_ < end; ++next_) integrate(keyframes_[next_], poses_[next_]);
+  for (; next_ < end; ++next_) {
+    integrate(keyframes_[next_], poses_[next_]);
+  }
   return !active();
 }
 
-bool HeightAwareOccupancyGrid::active() const { return next_ < keyframes_.size(); }
-std::size_t HeightAwareOccupancyGrid::processedKeyframes() const { return next_; }
-std::size_t HeightAwareOccupancyGrid::totalKeyframes() const { return keyframes_.size(); }
-slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::snapshot() const { return grid_.snapshot(); }
+bool HeightAwareOccupancyGrid::active() const {return next_ < keyframes_.size();}
+std::size_t HeightAwareOccupancyGrid::processedKeyframes() const {return next_;}
+std::size_t HeightAwareOccupancyGrid::totalKeyframes() const {return keyframes_.size();}
+slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::snapshot() const
+{
+  return grid_.snapshot();
+}
 
 void HeightAwareOccupancyGrid::integrate(
   const GlobalKeyframe & keyframe, const Eigen::Isometry3d & pose)
@@ -57,7 +62,7 @@ void HeightAwareOccupancyGrid::integrate(
   for (const auto & point : *keyframe.filtered_scan) {
     const Eigen::Vector3d endpoint = map_from_sensor * Eigen::Vector3d(point.x, point.y, point.z);
     if (!endpoint.allFinite() || endpoint.z() < parameters_.minimum_obstacle_height ||
-      endpoint.z() > parameters_.maximum_obstacle_height) continue;
+      endpoint.z() > parameters_.maximum_obstacle_height) {continue;}
     grid_.updateRay(
       {static_cast<float>(origin.x()), static_cast<float>(origin.y())},
       {static_cast<float>(endpoint.x()), static_cast<float>(endpoint.y())}, true);

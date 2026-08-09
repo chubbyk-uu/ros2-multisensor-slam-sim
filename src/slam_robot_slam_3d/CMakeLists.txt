@@ -90,6 +90,12 @@ target_include_directories(
   height_aware_occupancy_grid
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
+
+add_library(slam_snapshot src/slam_snapshot.cpp)
+target_compile_features(slam_snapshot PUBLIC cxx_std_17)
+target_compile_options(slam_snapshot PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(slam_snapshot PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(slam_snapshot PUBLIC global_keyframe_map Eigen3::Eigen ${PCL_LIBRARIES})
 target_link_libraries(
   height_aware_occupancy_grid
   PUBLIC global_keyframe_map slam_robot_slam::occupancy_grid_map Eigen3::Eigen
@@ -207,6 +213,7 @@ target_link_libraries(
   match_failure_recovery
   odometry_interpolator
   scan_to_map_matcher
+  slam_snapshot
   ${PCL_LIBRARIES}
 )
 ament_target_dependencies(
@@ -314,6 +321,8 @@ if(BUILD_TESTING)
     test_height_aware_occupancy_grid
     height_aware_occupancy_grid
   )
+  ament_add_gtest(test_slam_snapshot test/test_slam_snapshot.cpp)
+  target_link_libraries(test_slam_snapshot slam_snapshot)
   ament_add_gtest(
     test_scan_context_index
     test/test_scan_context_index.cpp

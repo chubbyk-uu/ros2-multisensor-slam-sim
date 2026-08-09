@@ -88,6 +88,24 @@ PoseGraphSubmissionState::committedConstraints() const
   return committed_constraints_;
 }
 
+void PoseGraphSubmissionState::restoreCommitted(
+  std::vector<Se2LoopConstraint> constraints,
+  const std::size_t latest_keyframe_id)
+{
+  if (active_submission_.has_value() || !pending_constraints_.empty()) {
+    throw std::logic_error("cannot restore a busy pose graph submission state");
+  }
+  std::vector<Se2LoopConstraint> validated;
+  appendUnique(validated, constraints);
+  if (validated.size() != constraints.size()) {
+    throw std::invalid_argument("restored loop constraints contain duplicates");
+  }
+  committed_constraints_ = std::move(validated);
+  last_successful_keyframe_id_ = latest_keyframe_id;
+  has_successful_submission_ = !committed_constraints_.empty();
+  waiting_for_new_keyframe_after_failure_ = false;
+}
+
 std::size_t PoseGraphSubmissionState::pendingConstraintCount() const
 {
   return pending_constraints_.size();

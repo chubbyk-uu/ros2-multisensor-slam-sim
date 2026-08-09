@@ -65,5 +65,16 @@ TEST(PoseGraphSubmissionState, DeduplicatesAndRejectsStaleCompletion)
   EXPECT_TRUE(state.completeSuccess(task->task_id));
 }
 
+TEST(PoseGraphSubmissionState, RestoresCommittedConstraints)
+{
+  PoseGraphSubmissionState state(3U);
+  state.restoreCommitted({makeConstraint(1U, 10U)}, 10U);
+  ASSERT_EQ(state.committedConstraints().size(), 1U);
+  state.enqueue({makeConstraint(2U, 14U)});
+  const auto task = state.begin(14U, 15U);
+  ASSERT_TRUE(task.has_value());
+  EXPECT_EQ(task->constraints.size(), 2U);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam_3d

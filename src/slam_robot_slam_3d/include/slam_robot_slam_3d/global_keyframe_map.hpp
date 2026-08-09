@@ -43,6 +43,7 @@ class GlobalKeyframeMap
 public:
   std::size_t add(GlobalKeyframe keyframe);
   std::vector<GlobalKeyframe> snapshot() const;
+  void replace(std::vector<GlobalKeyframe> keyframes);
   std::size_t size() const;
   std::size_t pointCount() const;
 

@@ -122,6 +122,27 @@ ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py
 它不启动 RTAB-Map、Map Server 或 AMCL：自研 SLAM 独占 `map -> odom`，Nav2
 订阅 `/map`，局部代价地图继续订阅实时 `/lidar_3d/points` 高度带避障。
 
+自研状态默认原子保存到 `~/.ros/custom_slam_3d.snapshot`。快照包含过滤后的
+关键帧扫描、传感器外参、前端/轮速位姿、协方差、已提交回环约束和优化位姿；
+不依赖启动目录，也不会提交到 Git。正常退出在线导航入口时自动保存：
+
+```bash
+# 新建地图（默认），退出时保存
+ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py
+
+# 从末端位姿继续建图
+ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py \
+  mode:=mapping load_snapshot:=true
+
+# 只定位：地图、关键帧和回环约束保持只读
+ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py \
+  mode:=localization load_snapshot:=true save_on_shutdown:=false
+```
+
+只定位首版要求仿真机器人从保存时的末端位姿恢复，随后使用只读全局点云作
+scan-to-map 匹配。它还不支持在地图任意位置启动后的全局重定位；这需要后续
+Scan Context 初始位姿搜索，不能用“成功加载地图”冒充已经完成。
+
 差速机器人默认启用平面运动约束：GICP 用完整三维几何求解，输出基座位姿再
 投影到 `x/y/yaw`，避免不可观测的微小横滚、俯仰和高度误差污染后续二维导航
 投影。前端还从最终对应点的局部表面法向构造 `x/y/yaw` 点到平面信息矩阵，

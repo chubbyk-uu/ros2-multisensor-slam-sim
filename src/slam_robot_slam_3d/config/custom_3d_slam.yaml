@@ -113,6 +113,12 @@
       rebuild_keyframes_per_batch: 4
       rebuild_keyframe_interval: 10
 
+    persistence:
+      mode: mapping
+      snapshot_path: ""
+      load_snapshot: false
+      save_on_shutdown: false
+
     occupancy_grid:
       resolution: 0.05
       minimum_obstacle_height: 0.05

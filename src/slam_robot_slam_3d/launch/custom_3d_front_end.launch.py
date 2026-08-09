@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -15,7 +17,15 @@ def generate_launch_description():
     )
     parameters = [
         LaunchConfiguration("params_file"),
-        {"use_sim_time": LaunchConfiguration("use_sim_time")},
+        {
+            "use_sim_time": LaunchConfiguration("use_sim_time"),
+            "persistence.mode": LaunchConfiguration("mode"),
+            "persistence.snapshot_path": LaunchConfiguration("snapshot_path"),
+            "persistence.load_snapshot": LaunchConfiguration("load_snapshot"),
+            "persistence.save_on_shutdown": LaunchConfiguration(
+                "save_on_shutdown"
+            ),
+        },
     ]
     return LaunchDescription(
         [
@@ -25,6 +35,15 @@ def generate_launch_description():
                 description="Custom 3D front-end parameter file.",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
+            DeclareLaunchArgument("mode", default_value="mapping"),
+            DeclareLaunchArgument(
+                "snapshot_path",
+                default_value=str(
+                    Path.home() / ".ros" / "custom_slam_3d.snapshot"
+                ),
+            ),
+            DeclareLaunchArgument("load_snapshot", default_value="false"),
+            DeclareLaunchArgument("save_on_shutdown", default_value="false"),
             Node(
                 package="slam_robot_slam_3d",
                 executable="point_cloud_preprocessor_node",

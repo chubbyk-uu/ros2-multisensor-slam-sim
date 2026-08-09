@@ -27,6 +27,21 @@ std::vector<GlobalKeyframe> GlobalKeyframeMap::snapshot() const
   return keyframes_;
 }
 
+void GlobalKeyframeMap::replace(std::vector<GlobalKeyframe> keyframes)
+{
+  std::size_t points = 0U;
+  for (std::size_t index = 0U; index < keyframes.size(); ++index) {
+    if (keyframes[index].id != index) {
+      throw std::invalid_argument("loaded global keyframes must use contiguous ids");
+    }
+    validateKeyframe(keyframes[index]);
+    points += keyframes[index].filtered_scan->size();
+  }
+  std::unique_lock<std::shared_mutex> lock(mutex_);
+  keyframes_ = std::move(keyframes);
+  point_count_ = points;
+}
+
 std::size_t GlobalKeyframeMap::size() const
 {
   std::shared_lock<std::shared_mutex> lock(mutex_);

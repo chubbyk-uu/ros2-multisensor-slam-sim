@@ -77,5 +77,19 @@ TEST(GlobalKeyframeMap, RejectsInvalidData)
   EXPECT_THROW(map.add(std::move(invalid_scan)), std::invalid_argument);
 }
 
+TEST(GlobalKeyframeMap, ReplacesStateWithAValidatedSnapshot)
+{
+  GlobalKeyframeMap map;
+  map.add(makeKeyframe(0.0));
+  std::vector<GlobalKeyframe> replacement{
+    makeKeyframe(2.0), makeKeyframe(3.0)};
+  replacement[0].id = 0U;
+  replacement[1].id = 1U;
+  map.replace(replacement);
+  EXPECT_EQ(map.size(), 2U);
+  EXPECT_EQ(map.pointCount(), 6U);
+  EXPECT_DOUBLE_EQ(map.snapshot().back().front_end_base_pose.translation().x(), 3.0);
+}
+
 }  // namespace
 }  // namespace slam_robot_slam_3d

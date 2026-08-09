@@ -27,6 +27,7 @@ public:
     const pcl::PointCloud<pcl::PointXYZI> & scan,
     const Eigen::Isometry3d & scan_pose);
   void clear();
+  void replaceCloud(const pcl::PointCloud<pcl::PointXYZI> & cloud);
 
   const pcl::PointCloud<pcl::PointXYZI> & cloud() const;
   std::size_t keyframeCount() const;

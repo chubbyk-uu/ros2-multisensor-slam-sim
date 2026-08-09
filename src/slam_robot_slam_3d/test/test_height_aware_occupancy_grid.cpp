@@ -22,7 +22,7 @@ TEST(HeightAwareOccupancyGrid, ProjectsOnlyTheNavigationHeightBand)
   ASSERT_FALSE(snapshot.data.empty());
   const auto cell = [&](int x) {
       return snapshot.data[static_cast<std::size_t>(-snapshot.origin_cell_y) * snapshot.width +
-        static_cast<std::size_t>(x - snapshot.origin_cell_x)];
+               static_cast<std::size_t>(x - snapshot.origin_cell_x)];
     };
   EXPECT_GE(cell(20), 50);
   EXPECT_LT(snapshot.origin_cell_x + static_cast<int>(snapshot.width), 40);

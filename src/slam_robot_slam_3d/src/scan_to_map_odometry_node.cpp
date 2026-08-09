@@ -41,6 +41,7 @@
 #include "slam_robot_slam_3d/scan_context_index.hpp"
 #include "slam_robot_slam_3d/scan_to_map_matcher.hpp"
 #include "slam_robot_slam_3d/se2_pose_graph_backend.hpp"
+#include "slam_robot_slam_3d/slam_snapshot.hpp"
 
 namespace slam_robot_slam_3d
 {
@@ -176,6 +177,11 @@ public:
     map_frame_ = declare_parameter<std::string>("pose_graph.map_frame", "map");
     publish_map_to_odom_tf_ = declare_parameter<bool>(
       "pose_graph.publish_map_to_odom_tf", true);
+    operation_mode_ = declare_parameter<std::string>("persistence.mode", "mapping");
+    snapshot_path_ = declare_parameter<std::string>("persistence.snapshot_path", "");
+    const bool load_snapshot = declare_parameter<bool>("persistence.load_snapshot", false);
+    save_snapshot_on_shutdown_ = declare_parameter<bool>(
+      "persistence.save_on_shutdown", true);
     maximum_odom_age_ = declare_parameter<double>(
       "front_end.maximum_odom_age", 0.05);
     force_planar_motion_ = declare_parameter<bool>(
@@ -200,9 +206,14 @@ public:
       "global_map.voxel_leaf_size", 0.15);
     const auto grid_batches = declare_parameter<int>("occupancy_grid.keyframes_per_batch", 4);
     const auto grid_resolution = declare_parameter<double>("occupancy_grid.resolution", 0.05);
-    const auto grid_min_z = declare_parameter<double>("occupancy_grid.minimum_obstacle_height", 0.05);
-    const auto grid_max_z = declare_parameter<double>("occupancy_grid.maximum_obstacle_height", 0.45);
-    if (input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
+    const auto grid_min_z = declare_parameter<double>("occupancy_grid.minimum_obstacle_height",
+        0.05);
+    const auto grid_max_z = declare_parameter<double>("occupancy_grid.maximum_obstacle_height",
+        0.45);
+    if ((operation_mode_ != "mapping" && operation_mode_ != "localization") ||
+      (operation_mode_ == "localization" && (!load_snapshot || snapshot_path_.empty())) ||
+      (load_snapshot && snapshot_path_.empty()) ||
+      input_topic_.empty() || odom_topic_.empty() || base_frame_.empty() ||
       local_frame_.empty() || odom_frame_.empty() || map_frame_.empty() ||
       !std::isfinite(maximum_odom_age_) ||
       maximum_odom_age_ <= 0.0 || !std::isfinite(keyframe_translation_) ||
@@ -213,7 +224,8 @@ public:
       global_map_keyframes_per_batch <= 0 ||
       !std::isfinite(global_map_voxel_leaf_size) || global_map_voxel_leaf_size <= 0.0 ||
       grid_batches <= 0 || !std::isfinite(grid_resolution) || grid_resolution <= 0.0 ||
-      !std::isfinite(grid_min_z) || !std::isfinite(grid_max_z) || grid_min_z < 0.0 || grid_min_z >= grid_max_z)
+      !std::isfinite(grid_min_z) || !std::isfinite(grid_max_z) || grid_min_z < 0.0 ||
+      grid_min_z >= grid_max_z)
     {
       throw std::invalid_argument("front-end parameters are invalid");
     }
@@ -272,6 +284,9 @@ public:
             get_logger(), "3D background result callback failed: %s", error.what());
         }
       });
+    if (load_snapshot) {
+      restoreSnapshot();
+    }
     // This is intentionally wall-clock scheduled: a finite rosbag stops
     // advancing /clock before the last background batches finish.  It only
     // drives bounded reconstruction work and never stamps sensor data.
@@ -301,6 +316,21 @@ public:
       input_topic_.c_str(), odom_topic_.c_str(),
       publish_map_to_odom_tf_ ? "standard" : "disabled", map_frame_.c_str(),
       odom_frame_.c_str());
+  }
+
+  ~ScanToMapOdometryNode() override
+  {
+    if (operation_mode_ != "mapping" || !save_snapshot_on_shutdown_ ||
+      snapshot_path_.empty() || global_keyframes_.size() == 0U)
+    {
+      return;
+    }
+    try {
+      saveSnapshot();
+      RCLCPP_INFO(get_logger(), "Saved custom 3D SLAM snapshot to %s", snapshot_path_.c_str());
+    } catch (const std::exception & error) {
+      RCLCPP_ERROR(get_logger(), "Failed to save custom 3D SLAM snapshot: %s", error.what());
+    }
   }
 
 private:
@@ -576,6 +606,11 @@ private:
 
       pcl::PointCloud<pcl::PointXYZI> scan;
       pcl::fromROSMsg(*message, scan);
+      if (!initialized_ && snapshot_loaded_) {
+        last_odom_pose_ = odom_pose;
+        map_from_odom_ = planarPose(estimated_base_pose_ * odom_pose.inverse());
+        initialized_ = true;
+      }
       if (!initialized_) {
         estimated_base_pose_ = Eigen::Isometry3d::Identity();
         last_keyframe_base_pose_ = estimated_base_pose_;
@@ -616,8 +651,9 @@ private:
         lidar_pose = estimated_base_pose_ * base_to_lidar;
         const Eigen::Isometry3d keyframe_delta =
           last_keyframe_base_pose_.inverse() * estimated_base_pose_;
-        if (keyframe_delta.translation().norm() >= keyframe_translation_ ||
-          rotationMagnitude(keyframe_delta) >= keyframe_rotation_)
+        if (operation_mode_ == "mapping" &&
+          (keyframe_delta.translation().norm() >= keyframe_translation_ ||
+          rotationMagnitude(keyframe_delta) >= keyframe_rotation_))
         {
           local_submap_.addKeyframe(scan, lidar_pose);
           last_keyframe_base_pose_ = estimated_base_pose_;
@@ -625,7 +661,9 @@ private:
         }
       } else {
         estimated_base_pose_ = predicted_base_pose;
-        if (match_failure_recovery_->observe(match_result.status)) {
+        if (operation_mode_ == "mapping" &&
+          match_failure_recovery_->observe(match_result.status))
+        {
           local_submap_.clear();
           local_submap_.addKeyframe(scan, lidar_pose);
           last_keyframe_base_pose_ = estimated_base_pose_;
@@ -636,7 +674,7 @@ private:
             "Reinitialized the 3D local submap after consecutive match failures");
         }
       }
-      if (keyframe_added) {
+      if (keyframe_added && operation_mode_ == "mapping") {
         addGlobalKeyframe(
           message->header, scan, estimated_base_pose_, odom_pose,
           base_to_lidar, &match_result);
@@ -923,6 +961,54 @@ private:
     startPoseGraphOptimization(global_keyframes_.snapshot());
   }
 
+  void saveSnapshot() const
+  {
+    const auto keyframes = global_keyframes_.snapshot();
+    saveSlamSnapshot(snapshot_path_, {
+        keyframes, pose_graph_submission_state_.committedConstraints(),
+        globalMapBasePoses(keyframes)});
+  }
+
+  void restoreSnapshot()
+  {
+    auto snapshot = loadSlamSnapshot(snapshot_path_);
+    const auto restored_keyframes = snapshot.keyframes;
+    global_keyframes_.replace(std::move(snapshot.keyframes));
+    optimized_global_base_poses_ = std::move(snapshot.optimized_base_poses);
+    pose_graph_submission_state_.restoreCommitted(
+      std::move(snapshot.loop_constraints), restored_keyframes.back().id);
+    for (const auto & keyframe : restored_keyframes) {
+      (void)scan_context_index_.addAndQuery(keyframe);
+    }
+    scan_context_index_size_ = scan_context_index_.size();
+    estimated_base_pose_ = optimized_global_base_poses_.back();
+    last_keyframe_base_pose_ = estimated_base_pose_;
+    last_global_keyframe_base_pose_ = estimated_base_pose_;
+    global_accumulated_distance_ = restored_keyframes.back().accumulated_distance;
+    has_last_global_keyframe_ = true;
+    if (operation_mode_ == "localization") {
+      GlobalPointCloudMap localization_map({0.15, restored_keyframes.size()});
+      localization_map.begin(restored_keyframes, optimized_global_base_poses_);
+      (void)localization_map.processBatch();
+      local_submap_.replaceCloud(localization_map.cloud());
+    } else {
+      const std::size_t first = restored_keyframes.size() >
+        local_submap_.parameters().maximum_keyframes ?
+        restored_keyframes.size() - local_submap_.parameters().maximum_keyframes : 0U;
+      for (std::size_t index = first; index < restored_keyframes.size(); ++index) {
+        local_submap_.addKeyframe(
+          *restored_keyframes[index].filtered_scan,
+          optimized_global_base_poses_[index] * restored_keyframes[index].base_to_sensor);
+      }
+    }
+    snapshot_loaded_ = true;
+    requestGlobalMapRebuild();
+    requestOccupancyGridRebuild();
+    RCLCPP_INFO(
+      get_logger(), "Restored %zu custom 3D keyframes in %s mode from %s",
+      restored_keyframes.size(), operation_mode_.c_str(), snapshot_path_.c_str());
+  }
+
   struct GlobalMapRebuildRequest
   {
     std::vector<GlobalKeyframe> keyframes;
@@ -968,8 +1054,9 @@ private:
   void requestOccupancyGridRebuild()
   {
     const auto keyframes = global_keyframes_.snapshot();
-    if (keyframes.empty()) return;
-    GlobalMapRebuildRequest request{keyframes, globalMapBasePoses(keyframes), keyframes.back().stamp};
+    if (keyframes.empty()) {return;}
+    GlobalMapRebuildRequest request{keyframes, globalMapBasePoses(keyframes),
+      keyframes.back().stamp};
     if (occupancy_grid_->active()) {queued_occupancy_grid_rebuild_ = std::move(request); return;}
     occupancy_grid_->begin(std::move(request.keyframes), std::move(request.base_poses));
     occupancy_grid_stamp_ = request.stamp;
@@ -983,9 +1070,9 @@ private:
       occupancy_grid_->begin(std::move(request.keyframes), std::move(request.base_poses));
       occupancy_grid_stamp_ = request.stamp;
     }
-    if (!occupancy_grid_->active() || !occupancy_grid_->processBatch()) return;
+    if (!occupancy_grid_->active() || !occupancy_grid_->processBatch()) {return;}
     const auto snapshot = occupancy_grid_->snapshot();
-    if (snapshot.data.empty()) return;
+    if (snapshot.data.empty()) {return;}
     nav_msgs::msg::OccupancyGrid map;
     map.header.stamp = occupancy_grid_stamp_;
     map.header.frame_id = map_frame_;
@@ -1169,6 +1256,9 @@ private:
       "local_map_points", std::to_string(local_submap_.cloud().size())));
     status.values.push_back(makeValue(
       "global_keyframes", std::to_string(global_keyframes_.size())));
+    status.values.push_back(makeValue("operation_mode", operation_mode_));
+    status.values.push_back(makeValue(
+      "snapshot_loaded", snapshot_loaded_ ? "true" : "false"));
     status.values.push_back(makeValue(
       "global_keyframe_points", std::to_string(global_keyframes_.pointCount())));
     status.values.push_back(makeValue(
@@ -1300,6 +1390,10 @@ private:
   std::string local_frame_;
   std::string odom_frame_;
   std::string map_frame_;
+  std::string operation_mode_{"mapping"};
+  std::string snapshot_path_;
+  bool save_snapshot_on_shutdown_{true};
+  bool snapshot_loaded_{false};
   bool publish_map_to_odom_tf_{true};
   double maximum_odom_age_{0.05};
   bool force_planar_motion_{true};
