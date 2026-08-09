@@ -21,3 +21,23 @@ def test_default_acceptance_requires_motion_growth_and_success():
     assert arguments.minimum_final_free_cells >= 38000
     assert arguments.minimum_travel_distance >= 35.0
     assert "snapshot service is unavailable" in MODULE.CRITICAL_LOG_FRAGMENTS
+
+
+def test_stale_completion_does_not_finish_a_new_regression():
+    regression = object.__new__(MODULE.ExplorationRegression)
+    regression.complete = False
+    regression.seen_active_exploration = False
+    regression.initial_free_cells = None
+    MODULE.ExplorationRegression.completion_callback(
+        regression, type("Completion", (), {"data": True})()
+    )
+    assert not regression.complete
+
+    MODULE.ExplorationRegression.completion_callback(
+        regression, type("Completion", (), {"data": False})()
+    )
+    regression.initial_free_cells = 1
+    MODULE.ExplorationRegression.completion_callback(
+        regression, type("Completion", (), {"data": True})()
+    )
+    assert regression.complete
