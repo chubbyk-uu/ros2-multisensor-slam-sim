@@ -112,8 +112,15 @@ ros2 run slam_robot_slam_3d front_end_regression
 自由空间。当前高度带为 `0.05–0.45 m`，覆盖最高 `0.35 m` 的机器人及余量。
 `custom_slam_3d_odom`，但回环后端成功优化后会发布唯一且可配置的标准
 `map -> odom`（默认开启）；EKF 继续唯一发布 `odom -> base_footprint`。
-该链路已有 Scan Context 检索、GICP 几何复核和后台 SE(2) 位姿图，但尚未
-重放为全局 3D 地图或二维导航栅格，因此还不能直接替换 RTAB-Map 的 Nav2 入口。
+该链路已有 Scan Context 检索、GICP 几何复核、后台 SE(2) 位姿图、全局点云和
+二维导航栅格。自研 Nav2 在线入口为：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py
+```
+
+它不启动 RTAB-Map、Map Server 或 AMCL：自研 SLAM 独占 `map -> odom`，Nav2
+订阅 `/map`，局部代价地图继续订阅实时 `/lidar_3d/points` 高度带避障。
 
 差速机器人默认启用平面运动约束：GICP 用完整三维几何求解，输出基座位姿再
 投影到 `x/y/yaw`，避免不可观测的微小横滚、俯仰和高度误差污染后续二维导航
