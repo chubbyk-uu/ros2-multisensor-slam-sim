@@ -237,9 +237,10 @@ private:
     ++navigation_request_id_;
   }
 
-  void cancelNavigation(const char * reason, bool blacklist_target)
+  // Callers log the cause themselves: a navigation timeout is a fault, while
+  // replanning a goal the growing map turned untraversable is routine.
+  void cancelNavigation(bool blacklist_target)
   {
-    RCLCPP_WARN(get_logger(), "%s", reason);
     cancel_with_blacklist_ = blacklist_target;
     state_ = State::kCanceling;
     cancellation_deadline_.arm(
@@ -265,7 +266,8 @@ private:
     }
     if (state_ == State::kNavigating) {
       if (navigation_deadline_.expired(now)) {
-        cancelNavigation("Frontier navigation timed out; canceling goal", true);
+        RCLCPP_WARN(get_logger(), "Frontier navigation timed out; canceling goal");
+        cancelNavigation(true);
         return;
       }
     }
@@ -301,8 +303,9 @@ private:
     }
     if (state_ == State::kNavigating) {
       if (map_revision_ > target_map_revision_ && !targetStillTraversable()) {
-        cancelNavigation(
-          "Frontier goal became untraversable; canceling and replanning", false);
+        RCLCPP_INFO(
+          get_logger(), "Frontier goal became untraversable; canceling and replanning");
+        cancelNavigation(false);
       }
       publishDiagnostics();
       return;

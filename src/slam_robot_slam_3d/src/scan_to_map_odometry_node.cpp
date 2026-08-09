@@ -1137,6 +1137,10 @@ private:
     }
     if (!occupancy_grid_incremental_update_requested_) {return;}
     const auto keyframes = global_keyframes_.snapshot();
+    if (keyframes.empty()) {
+      occupancy_grid_incremental_update_requested_ = false;
+      return;
+    }
     if (occupancy_grid_integrated_keyframe_count_ > keyframes.size()) {
       requestOccupancyGridFullRebuild();
       return;

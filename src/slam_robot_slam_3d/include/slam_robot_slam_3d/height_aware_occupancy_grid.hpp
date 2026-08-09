@@ -11,6 +11,7 @@
 
 namespace slam_robot_slam_3d
 {
+
 struct HeightAwareOccupancyGridParameters
 {
   slam_robot_slam::OccupancyGridMapParameters grid;
@@ -19,6 +20,11 @@ struct HeightAwareOccupancyGridParameters
   std::size_t keyframes_per_batch{4U};
 };
 
+// Projects global keyframes into the 2D navigation grid Nav2 consumes.  Only
+// returns inside the obstacle height band mark cells occupied; returns below
+// it contribute ray-traced free space, and returns above it are ignored.
+// Mapping appends new keyframes in place, while a pose-graph correction
+// replays a consistent full snapshot through begin() in bounded batches.
 class HeightAwareOccupancyGrid
 {
 public:
@@ -35,11 +41,14 @@ public:
 
 private:
   void integrate(const GlobalKeyframe & keyframe, const Eigen::Isometry3d & pose);
+
   HeightAwareOccupancyGridParameters parameters_;
   slam_robot_slam::OccupancyGridMap grid_;
   std::vector<GlobalKeyframe> keyframes_;
   std::vector<Eigen::Isometry3d> poses_;
   std::size_t next_{0U};
 };
+
 }  // namespace slam_robot_slam_3d
-#endif
+
+#endif  // SLAM_ROBOT_SLAM_3D__HEIGHT_AWARE_OCCUPANCY_GRID_HPP_

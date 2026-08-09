@@ -7,6 +7,7 @@
 
 namespace slam_robot_slam_3d
 {
+
 HeightAwareOccupancyGrid::HeightAwareOccupancyGrid(
   HeightAwareOccupancyGridParameters parameters)
 : parameters_(std::move(parameters)), grid_(parameters_.grid)
@@ -44,7 +45,9 @@ void HeightAwareOccupancyGrid::append(
 
 bool HeightAwareOccupancyGrid::processBatch()
 {
-  if (!active()) {return false;}
+  if (!active()) {
+    return false;
+  }
   const auto end = std::min(keyframes_.size(), next_ + parameters_.keyframes_per_batch);
   for (; next_ < end; ++next_) {
     integrate(keyframes_[next_], poses_[next_]);
@@ -52,9 +55,21 @@ bool HeightAwareOccupancyGrid::processBatch()
   return !active();
 }
 
-bool HeightAwareOccupancyGrid::active() const {return next_ < keyframes_.size();}
-std::size_t HeightAwareOccupancyGrid::processedKeyframes() const {return next_;}
-std::size_t HeightAwareOccupancyGrid::totalKeyframes() const {return keyframes_.size();}
+bool HeightAwareOccupancyGrid::active() const
+{
+  return next_ < keyframes_.size();
+}
+
+std::size_t HeightAwareOccupancyGrid::processedKeyframes() const
+{
+  return next_;
+}
+
+std::size_t HeightAwareOccupancyGrid::totalKeyframes() const
+{
+  return keyframes_.size();
+}
+
 slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::snapshot() const
 {
   return grid_.snapshot();
@@ -89,8 +104,8 @@ void HeightAwareOccupancyGrid::integrate(
     if (endpoint.z() > parameters_.maximum_obstacle_height) {
       continue;
     }
-    grid_.updateRay(
-      origin_xy, endpoint_xy, true);
+    grid_.updateRay(origin_xy, endpoint_xy, true);
   }
 }
+
 }  // namespace slam_robot_slam_3d
