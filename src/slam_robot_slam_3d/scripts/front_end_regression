@@ -8,6 +8,8 @@ import time
 
 from diagnostic_msgs.msg import DiagnosticArray
 from nav_msgs.msg import Odometry
+from nav_msgs.msg import OccupancyGrid
+from sensor_msgs.msg import PointCloud2
 import rclpy
 from rclpy.node import Node
 
@@ -62,6 +64,8 @@ class FrontEndRegression(Node):
         self.declare_parameter("minimum_pose_graph_commits", 0)
         self.declare_parameter("maximum_pose_graph_discards", 0)
         self.declare_parameter("maximum_pose_graph_failures", 0)
+        self.declare_parameter("minimum_global_map_messages", 1)
+        self.declare_parameter("minimum_occupancy_grid_messages", 1)
 
         self.minimum_samples = self.get_parameter("minimum_samples").value
         self.minimum_truth_distance = self.get_parameter(
@@ -100,6 +104,8 @@ class FrontEndRegression(Node):
         self.maximum_pose_graph_failures = self.get_parameter(
             "maximum_pose_graph_failures"
         ).value
+        self.minimum_global_map_messages = self.get_parameter("minimum_global_map_messages").value
+        self.minimum_occupancy_grid_messages = self.get_parameter("minimum_occupancy_grid_messages").value
 
         self.truth_buffer = deque(maxlen=200)
         self.custom_origin = None
@@ -123,11 +129,17 @@ class FrontEndRegression(Node):
         self.pose_graph_commits = 0
         self.pose_graph_discards = 0
         self.pose_graph_failures = 0
+        self.global_map_messages = 0
+        self.occupancy_grid_messages = 0
+        self.global_map_points = 0
+        self.occupancy_grid_cells = 0
         self.result = None
 
         self.create_subscription(
             Odometry, "/ground_truth/odom", self._truth_callback, 100
         )
+        self.create_subscription(PointCloud2, "/custom_slam_3d/map_cloud", self._map_cloud_callback, 10)
+        self.create_subscription(OccupancyGrid, "/map", self._map_callback, 10)
         self.create_subscription(
             Odometry, "/custom_slam_3d/laser_odom", self._custom_callback, 50
         )
@@ -137,6 +149,18 @@ class FrontEndRegression(Node):
             self._diagnostics_callback,
             100,
         )
+
+    def _map_cloud_callback(self, message):
+        if message.header.frame_id == "map" and message.width > 0:
+            self.global_map_messages += 1
+            self.global_map_points = max(self.global_map_points, message.width)
+        self._finish_if_ready()
+
+    def _map_callback(self, message):
+        if message.header.frame_id == "map" and message.info.width > 0 and message.info.height > 0:
+            self.occupancy_grid_messages += 1
+            self.occupancy_grid_cells = max(self.occupancy_grid_cells, len(message.data))
+        self._finish_if_ready()
 
     def _truth_callback(self, message):
         stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
@@ -237,6 +261,8 @@ class FrontEndRegression(Node):
             or self.trajectory_samples < self.minimum_samples
             or self.truth_distance < self.minimum_truth_distance
             or self.latest_sim_time < self.minimum_sim_time
+            or self.global_map_messages < self.minimum_global_map_messages
+            or self.occupancy_grid_messages < self.minimum_occupancy_grid_messages
         ):
             return
         acceptance_ratio = self.accepted_matches / self.diagnostic_samples
@@ -274,6 +300,8 @@ class FrontEndRegression(Node):
             f"pose_graph_commits={self.pose_graph_commits} "
             f"pose_graph_discards={self.pose_graph_discards} "
             f"pose_graph_failures={self.pose_graph_failures} "
+            f"map_cloud_messages={self.global_map_messages} map_cloud_points={self.global_map_points} "
+            f"occupancy_grid_messages={self.occupancy_grid_messages} occupancy_grid_cells={self.occupancy_grid_cells} "
             f"position_error={self.latest_position_error:.3f}m "
             f"position_error_max={self.maximum_observed_position_error:.3f}m "
             f"yaw_error={math.degrees(self.latest_yaw_error):.3f}deg"
@@ -310,6 +338,14 @@ class FrontEndRegression(Node):
             (
                 self.pose_graph_commits >= self.minimum_pose_graph_commits,
                 "pose graph commit count",
+            ),
+            (
+                self.global_map_messages >= self.minimum_global_map_messages,
+                "global point-cloud map publication",
+            ),
+            (
+                self.occupancy_grid_messages >= self.minimum_occupancy_grid_messages,
+                "occupancy-grid publication",
             ),
             (
                 self.pose_graph_discards <= self.maximum_pose_graph_discards,
