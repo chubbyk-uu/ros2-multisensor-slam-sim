@@ -2,8 +2,9 @@
 
 基于 ROS 2 Jazzy 和 Gazebo Sim 的差速轮式机器人多传感器 SLAM 仿真项目。
 项目按照“成熟算法基线 → 自动回归 → 自研模块替换”的路线推进，已完成
-2D LiDAR 建图与导航、自研 C++ 2D SLAM、轮速 + IMU 二维 EKF，以及
-RTAB-Map 3D LiDAR 在线建图与 Nav2 高度语义导航基线。
+2D LiDAR 建图与导航、自研 C++ 2D SLAM、轮速 + IMU 二维 EKF、RTAB-Map
+3D LiDAR 成熟基线，以及自研 3D SLAM、在线导航和 Frontier Exploration
+完整闭环。
 
 ## 运行效果
 
@@ -29,7 +30,7 @@ RTAB-Map 3D LiDAR 在线建图与 Nav2 高度语义导航基线。
 | RTAB-Map 3D SLAM | 已完成成熟基线 | ICP、proximity 回环、位姿图、数据库和二维导航投影 |
 | 3D 在线导航 | 已完成基线验收 | Nav2 直接使用 RTAB-Map 地图和 3D 点云障碍层 |
 | 自研 3D SLAM | 已完成首版闭环 | GICP 前端、回环后端、全局地图、Nav2 在线入口和版本化快照恢复 |
-| Frontier Exploration | 已完成基线 | 可达 frontier 评分、Nav2 动作调度、重规划、完成判据、自动保存和回归 |
+| Frontier Exploration | 已完成双链路验收 | 自研 3D 与 RTAB-Map 共用候选评分、Nav2 调度、重规划、自动保存和回归 |
 | 视觉融合 | 计划中 | 后续接入相机，研究 3D LiDAR + 相机 + IMU |
 
 ## 快速安装
@@ -162,6 +163,13 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py
 ```
 
+无界面端到端回归使用相同世界和评分器：
+
+```bash
+ros2 launch slam_robot_slam_3d frontier_exploration_regression.launch.py
+ros2 launch slam_robot_slam_3d rtabmap_frontier_exploration_regression.launch.py
+```
+
 3D 地图显示、数据库复用、结构化世界、MOLA 对照和完整验收标准见
 [3D 工作流](docs/3d-workflows.md)。
 
@@ -193,7 +201,7 @@ map -> odom -> base_footprint -> base_link
 | --- | --- |
 | [安装与首次运行](docs/getting-started.md) | 依赖、构建、模型与基础仿真检查 |
 | [2D 工作流](docs/2d-workflows.md) | 建图、保存、AMCL、Nav2、自研 SLAM 和回归 |
-| [3D 工作流](docs/3d-workflows.md) | RTAB-Map、在线导航、结构化验收和 MOLA |
+| [3D 工作流](docs/3d-workflows.md) | 自研 3D、RTAB-Map、在线导航、自主探索、结构化验收和 MOLA |
 | [系统架构](docs/architecture.md) | 包职责、数据流、话题和 TF |
 | [常见问题](docs/troubleshooting.md) | Gazebo、RViz、地图重置、扫描错位和假障碍 |
 | [开发计划](plan.md) | 阶段目标、完成状态和后续路线 |

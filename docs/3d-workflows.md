@@ -1,8 +1,9 @@
 # 3D 建图、导航与验收
 
-当前在线 3D 基线使用 RTAB-Map；MOLA GICP 作为不伪造逐点时间字段的纯激光
-里程计对照。两者使用相同的 3D LiDAR 机器人变体，但不能同时发布
-`map -> odom`。
+当前保留两条在线 3D SLAM 链路：RTAB-Map 是成熟验收基线，自研链路已完成
+GICP 前端、回环后端、全局地图、Nav2 和 Frontier Exploration。MOLA GICP
+作为不伪造逐点时间字段的纯激光里程计对照。各算法使用相同的 3D LiDAR
+机器人变体，但不能同时发布 `map -> odom`。
 
 ## 固定 3D 数据集
 
@@ -81,8 +82,8 @@ ros2 run slam_robot_slam_3d front_end_regression
 计算压力测试，不能替代在线时间契约。回环后端成功提交后，节点默认发布唯一的
 标准 `map -> odom`；EKF 保持唯一的 `odom -> base_footprint` 发布者。自研链路
 已输出全局关键帧重放点云 `/custom_slam_3d/map_cloud` 和高度感知的标准
-`/map` `OccupancyGrid`；下一阶段才会将这套自研输出接入 Nav2，因此当前仍不
-替换 RTAB-Map 的导航入口；
+`/map` `OccupancyGrid`；`custom_3d_navigation_simulation.launch.py` 已用这套
+输出接入 Nav2，RTAB-Map 成熟基线入口继续独立保留；
 `pose_graph.publish_map_to_odom_tf:=false` 可在只评估局部输出时
 显式关闭该 TF。
 
@@ -101,8 +102,8 @@ ros2 run slam_robot_slam_3d front_end_regression
 传感器坐标系点云、时间戳、`x/y/yaw` 前端位姿、插值 `/odom` 预测、传感器
 外参与协方差/退化诊断。它不参与实时 GICP 的目标构建，也不会因本地 12 帧
 子图淘汰而丢失数据；`front_end_regression` 会检查诊断中的
-`global_keyframes` 与 `global_keyframe_points`。下一阶段的地点描述子和后台
-回环仅消费该库的不可变快照。
+`global_keyframes` 与 `global_keyframe_points`。现有 Scan Context 地点描述子、
+GICP 回环复核和后台位姿图仅消费该库的不可变快照。
 
 当前已接入 Scan Context 风格的极坐标高度描述子检索：ring key 先筛选历史
 候选，再按扇区循环位移比较完整描述子并输出预测偏航。候选必须跨过关键帧

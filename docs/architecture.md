@@ -8,8 +8,8 @@
 | `slam_robot_gazebo` | Gazebo 世界、系统插件和 ROS–Gazebo 桥接 |
 | `slam_robot_bringup` | 2D 建图、定位、导航、自研 SLAM 和回归的组合启动入口 |
 | `slam_robot_slam` | SLAM Toolbox 配置、自研 C++ 2D SLAM、数据录制和算法测试 |
-| `slam_robot_slam_3d` | 3D 点云契约、RTAB-Map、MOLA 对照和结构化回归 |
-| `slam_robot_navigation` | AMCL、Nav2、在线 SLAM 导航配置和导航回归 |
+| `slam_robot_slam_3d` | 自研 3D SLAM、点云契约、RTAB-Map/MOLA 对照、快照和结构化回归 |
+| `slam_robot_navigation` | AMCL、Nav2、在线 SLAM 导航、Frontier Exploration 和导航回归 |
 
 各包内部参数与实现细节见对应的 `src/<package>/README.md`。
 
@@ -47,11 +47,21 @@ IMU 偏航角速度，不融合 IMU 绝对姿态或线加速度。
     -> 优化射线重放 -> /custom_slam/map
     -> map -> odom
 
-3D 在线链路
+3D RTAB-Map 成熟链路
   /lidar_3d/points + /odom -> RTAB-Map ICP + 回环 + 位姿图
     -> 3D MapData + /rtabmap/map + map -> odom
     -> Nav2 全局静态层
+
+3D 自研链路
+  /lidar_3d/points + /odom -> 预处理 + GICP 局部子图前端
+    -> Scan Context + GICP 回环 + 后台 SE(2) 位姿图
+    -> /custom_slam_3d/map_cloud + /map + map -> odom
+    -> Nav2 全局静态层
   /lidar_3d/points -> Nav2 局部体素障碍层
+
+在线自主探索
+  /map 或 /rtabmap/map -> frontier 聚类 + ComputePathToPose
+    -> NavigateToPose -> Nav2（探索器不发布 /cmd_vel）
 
 3D 里程计对照
   /lidar_3d/points -> MOLA GICP
@@ -88,8 +98,8 @@ map
 ## 设计边界
 
 - 2D 与 3D LiDAR 使用互斥机器人模型，分别服务于独立 SLAM 基线。
-- 当前 3D Gazebo 点云没有逐点时间字段，因此 RTAB-Map 是低速几何 ICP
-  基线，MOLA 对照关闭 deskew；两者都不应称为完整 LIO。
+- 当前 3D Gazebo 点云没有逐点时间字段，因此 RTAB-Map 和自研链路属于低速
+  几何 ICP SLAM，MOLA 对照关闭 deskew；三者都不应称为完整 LIO。
 - 真值 `/ground_truth/odom` 只能用于自动驾驶测试和误差评分，禁止进入
   SLAM、EKF 或导航估计链路。
 - 后续多传感器路线是 3D LiDAR + 相机 + IMU，不机械融合 2D 与 3D LiDAR。

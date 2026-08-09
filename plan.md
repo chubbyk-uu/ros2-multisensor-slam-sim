@@ -12,9 +12,10 @@
 6. 多传感器融合。
 
 2D 激光 SLAM、定位导航和自研 2D SLAM 基线均已完成；RTAB-Map 在线 3D
-建图与 Nav2 高度语义导航基线也已通过验收。当前主线是在保持这些成熟基线
-和回归场景不退化的前提下，实现自研 3D 激光 SLAM，最终完成“在线建图、
-Nav2 导航、Frontier Exploration 自主探索”的完整闭环。
+建图与 Nav2 高度语义导航基线也已通过验收。自研 3D 激光 SLAM 已完成
+“在线建图、Nav2 导航、Frontier Exploration 自主探索”的首版完整闭环。
+当前剩余主线是固定输入下与 RTAB-Map 的系统对比、地面/离群点预处理和动态
+封路恢复专项，完成工程收尾后进入视觉 SLAM 与激光—视觉融合。
 
 ## 2. 当前环境
 
@@ -88,9 +89,10 @@ slam/
 - `slam_robot_gazebo`：世界文件、Gazebo 系统和 ROS-Gazebo 桥接。
 - `slam_robot_bringup`：统一组织机器人、仿真和算法启动。
 - `slam_robot_slam`：`slam_toolbox` 配置、自研 C++ 2D SLAM、数据集与回归工具。
-- `slam_robot_slam_3d`：3D 点云输入检查、成熟算法适配与 3D 回归工具。
-- `slam_robot_navigation`：地图加载、AMCL、Nav2 配置和后续 Frontier
-  Exploration 调度。
+- `slam_robot_slam_3d`：自研 3D SLAM、点云输入检查、成熟算法对照、快照与
+  3D 回归工具。
+- `slam_robot_navigation`：地图加载、AMCL、Nav2 配置、Frontier Exploration
+  调度和导航回归。
 
 ## 4. 系统架构
 
@@ -486,9 +488,10 @@ TF 发布职责：
 3D 阶段的“模型、点云、TF、性能、受控闭环建图、真实 proximity 回环和
 Nav2 高度语义多目标导航”验收已经完成；在线算法基线确定为 RTAB-Map。
 固定 3D 数据集、C++ 点云预处理、首版 PCL GICP 前端和有界局部子图已经
-完成，专用长走廊的弱几何诊断与连续退化处理也已通过自动回归。下一主线按
-“前端专项收尾、回环与后端、地图输出、在线导航、自主探索”的顺序替换成熟
-基线。动态障碍物与完全封路恢复作为导航专项补充。
+完成，专用长走廊的弱几何诊断与连续退化处理也已通过自动回归。自研回环
+后端、全局地图、在线导航、版本化快照和自主探索现已完成并保留 RTAB-Map
+同场景对照。下一主线收口固定输入性能/精度对比、地面与离群点预处理，以及
+动态障碍物和完全封路恢复专项。
 
 当前 Gazebo `PointCloud2` 只有 `x/y/z/intensity/ring`，没有厂家常见的
 逐点时间字段。MOLA 基线因此是明确关闭去畸变的几何 LO，不伪造时间戳；
