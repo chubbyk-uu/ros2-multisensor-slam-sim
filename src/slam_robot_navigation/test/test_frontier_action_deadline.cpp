@@ -1,6 +1,8 @@
-#include <chrono>
+// Copyright 2026 Jerry
 
 #include <gtest/gtest.h>
+
+#include <chrono>
 
 #include "slam_robot_navigation/frontier_action_deadline.hpp"
 

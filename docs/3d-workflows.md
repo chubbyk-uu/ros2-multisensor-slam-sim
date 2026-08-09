@@ -316,6 +316,17 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 导航超时的空间黑名单，避免多个永久不可达的残余边界循环轮换。成熟基线使用同一
 探索器，仅把地图输入切换到 `/rtabmap/map`；RTAB-Map 自行持续保存数据库：
 
+二维导航投影只将 `0.05–0.45 m` 高度带内的回波写成障碍；低于带下限的地面回波
+只提供射线自由空间证据，高于带上限的回波不投影，避免二维地图错误清除低处障碍。
+常规建图仅增量整合新关键帧；仅在位姿图回环提交或快照恢复后，以分批全量重建
+修正过的地图。
+
+探索回归必须先收到本次运行的 `complete=false` 和地图，才接受 `complete=true`，
+从而隔离 DDS transient-local 的历史完成消息。固定 `structured_loop_3d.sdf` 场景
+以 RTAB-Map 的 76,012 个自由单元和 70.778 m 真值行程为参考，自研链路至少需达到
+38,000 个自由单元与 35 m 行程；快照服务不可用或保存失败也会直接判失败。路径
+规划、导航和取消请求分别有墙钟看门狗，因此 TF 暂时不可用不会阻塞超时恢复。
+
 ```bash
 ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py
 ```
