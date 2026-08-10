@@ -416,7 +416,14 @@ def parse_arguments(arguments):
     # check: the warped map this catches was 20.10 m tall while still fitting
     # under an area limit.
     parser.add_argument("--maximum-known-bbox-width-m", type=float, default=28.0)
-    parser.add_argument("--maximum-known-bbox-height-m", type=float, default=17.0)
+    # Ten calibration runs measured 14.95-16.80 m. Nine of them sat inside
+    # 15.55 m with the map fitting the outer wall exactly; one stretched by
+    # 1.6 m in y, pushing north and south out together. That stretch has no
+    # known cause and does not correlate with travel, loop closures or
+    # front-end resets, so this limit covers it with margin rather than
+    # pretending its size is bounded. It still separates cleanly from the
+    # 20.10 m a warped map produced.
+    parser.add_argument("--maximum-known-bbox-height-m", type=float, default=17.5)
     parser.add_argument("--maximum-known-bbox-area-m2", type=float, default=480.0)
     # Host health is measured as warnings per minute, not per run: completions
     # span 352-610 s, so an absolute count penalises the longer ones. Six runs
@@ -424,8 +431,13 @@ def parse_arguments(arguments):
     # Provisional until a calibration campaign supplies a real distribution.
     parser.add_argument(
         "--maximum-control-starvation-per-minute", type=float, default=0.40)
+    # Calibration measured 0.00-0.50/min across ten runs with no host-caused
+    # failure, so 0.40 would have flagged a healthy run. Erring loose is the
+    # safe direction here: health only ever downgrades a failure, so a
+    # too-generous limit reports a host problem as an algorithm one, while a
+    # too-tight limit would excuse a real regression as bad luck.
     parser.add_argument(
-        "--maximum-planner-starvation-per-minute", type=float, default=0.40)
+        "--maximum-planner-starvation-per-minute", type=float, default=0.60)
     parser.add_argument("--maximum-submap-reinitializations", type=int, default=1)
     # A single exploration pass need not revisit a place closely enough to
     # produce a loop. Positive loop recall belongs to the fixed-bag two-lap

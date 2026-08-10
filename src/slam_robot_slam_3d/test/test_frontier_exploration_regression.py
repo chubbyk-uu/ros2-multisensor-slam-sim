@@ -206,9 +206,9 @@ def test_verdict_codes_are_distinct():
 def test_map_shape_limits_leave_more_margin_than_the_observed_spread():
     arguments = MODULE.parse_arguments([])
 
-    # Six healthy runs measured 27.05-27.50 m wide and 15.10-16.40 m tall.
-    assert arguments.maximum_known_bbox_width_m >= 27.5 + 0.4
-    assert arguments.maximum_known_bbox_height_m >= 16.4 + 0.4
+    # Ten calibration runs measured 26.95-27.60 m wide and 14.95-16.80 m tall.
+    assert arguments.maximum_known_bbox_width_m >= 27.6 + 0.4
+    assert arguments.maximum_known_bbox_height_m >= 16.8 + 0.4
     assert arguments.maximum_known_bbox_area_m2 >= 451.0 + 20.0
     # Still far below the 20.10 m height a warped map produced.
     assert arguments.maximum_known_bbox_height_m < 20.0
