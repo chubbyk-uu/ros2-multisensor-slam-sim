@@ -118,7 +118,7 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
   GlobalKeyframe ground;
   ground.id = 0U;
   ground.filtered_scan = ground_scan;
-  HeightAwareOccupancyGrid grid(makeParameters());
+  HeightAwareOccupancyGrid grid(makeParameters(100.0, 25, 50));
   grid.begin({ground}, {Eigen::Isometry3d::Identity()});
   ASSERT_TRUE(grid.processBatch());
 
@@ -142,13 +142,14 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
   GlobalKeyframe obstacle;
   obstacle.id = 1U;
   obstacle.filtered_scan = obstacle_scan;
-  HeightAwareOccupancyGrid obstacle_grid(makeParameters());
+  HeightAwareOccupancyGrid obstacle_grid(makeParameters(100.0, 25, 50));
   obstacle_grid.begin({obstacle}, {Eigen::Isometry3d::Identity()});
   ASSERT_TRUE(obstacle_grid.processBatch());
   EXPECT_EQ(cell(obstacle_grid.navigationSnapshot(obstacle_grid.snapshot()), 40), 100);
 
-  // A later contradictory ground ray weakens the obstacle posterior to 61,
-  // but must never turn it into navigation free space.
+  // A later contradictory ground ray weakens the obstacle posterior to 61.
+  // The evidence still net-favours an obstacle, so navigation must see one:
+  // publishing unknown here is what let exploration target the wall.
   auto long_ground_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
   long_ground_scan->push_back(pcl::PointXYZI{2.0F, 0.0F, 0.00F, 1.0F});
   GlobalKeyframe long_ground;
@@ -156,7 +157,28 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
   long_ground.filtered_scan = long_ground_scan;
   obstacle_grid.append(long_ground, Eigen::Isometry3d::Identity());
   EXPECT_EQ(cell(obstacle_grid.snapshot(), 40), 61);
-  EXPECT_EQ(cell(obstacle_grid.navigationSnapshot(obstacle_grid.snapshot()), 40), -1);
+  EXPECT_EQ(cell(obstacle_grid.navigationSnapshot(obstacle_grid.snapshot()), 40), 100);
+}
+
+TEST(HeightAwareOccupancyGrid, EvidenceLeaningOccupiedIsNotPublishedAsUnexplored)
+{
+  // The three cases the navigation map must keep apart. Only the middle one
+  // is genuinely "go and look": the leaning-occupied cell is a wall seen a
+  // few times, and calling it unknown is what turned walls into frontiers.
+  slam_robot_slam::OccupancyGridSnapshot snapshot;
+  snapshot.resolution = 0.05;
+  snapshot.width = 4U;
+  snapshot.height = 1U;
+  snapshot.data = {-1, 23, 40, 51};
+
+  const auto navigation =
+    HeightAwareOccupancyGrid(makeParameters(100.0, 25, 50))
+    .navigationSnapshot(snapshot);
+
+  EXPECT_EQ(navigation.data[0], -1);   // never observed
+  EXPECT_EQ(navigation.data[1], 0);    // three clear rays
+  EXPECT_EQ(navigation.data[2], -1);   // one clear ray, still worth visiting
+  EXPECT_EQ(navigation.data[3], 100);  // evidence net-favours an obstacle
 }
 
 TEST(HeightAwareOccupancyGrid, UsesConfiguredFreeEvidenceThreshold)

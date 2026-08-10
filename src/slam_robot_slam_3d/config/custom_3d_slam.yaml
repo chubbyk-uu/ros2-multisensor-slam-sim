@@ -152,4 +152,11 @@
       # observations (40 -> 31 -> 23). This is the conventional 0.25
       # occupancy threshold, while weak hit evidence remains unknown.
       free_maximum: 25
-      occupied_minimum: 65
+      # An observed cell at or above 0.5 has evidence that net-favours being
+      # occupied, so publishing it as unknown understates what the map already
+      # knows. It also manufactures a frontier: exploration reads the wall as
+      # unexplored space and drives at it, which cost three 120 s navigation
+      # timeouts in one measured run. Unobserved cells are never scored, so
+      # nothing is classified from the 0.5 prior alone. RTAB-Map resolves the
+      # same question with a single GridGlobal/OccupancyThr of 0.5.
+      occupied_minimum: 50
