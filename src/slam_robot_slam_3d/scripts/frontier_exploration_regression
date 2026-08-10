@@ -32,6 +32,36 @@ def known_free_cells(message):
     return sum(1 for value in message.data if 0 <= value <= 20)
 
 
+def map_bounds(message, predicate):
+    """Return a world-coordinate bounding box for cells selected by predicate."""
+    width = message.info.width
+    height = message.info.height
+    resolution = message.info.resolution
+    if width == 0 or height == 0 or resolution <= 0.0:
+        return None
+    selected = [
+        (index % width, index // width)
+        for index, value in enumerate(message.data)
+        if predicate(value)
+    ]
+    if not selected:
+        return None
+    xs, ys = zip(*selected)
+    origin = message.info.origin.position
+    return (
+        origin.x + min(xs) * resolution,
+        origin.y + min(ys) * resolution,
+        origin.x + (max(xs) + 1) * resolution,
+        origin.y + (max(ys) + 1) * resolution,
+    )
+
+
+def bounds_area(bounds):
+    if bounds is None:
+        return 0.0
+    return (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
+
+
 def format_elapsed(seconds):
     return "n/a" if seconds is None else f"{seconds:.1f} s"
 
@@ -47,6 +77,11 @@ class ExplorationRegression(Node):
         self.latest_free_cells = 0
         self.initial_free_cells = None
         self.maximum_free_cells = 0
+        self.maximum_free_area = 0.0
+        self.maximum_free_bounds = None
+        self.maximum_known_bounds = None
+        self.maximum_known_bbox_area = 0.0
+        self.maximum_free_bbox_area = 0.0
         self.successful_goals = 0
         self.failed_goals = 0
         self.unreachable_candidates = 0
@@ -55,6 +90,7 @@ class ExplorationRegression(Node):
         self.last_collision_action = CollisionMonitorState.DO_NOTHING
         self.truth_distance = 0.0
         self.previous_truth = None
+        self.truth_bounds = None
         self.critical_logs = []
         self.completion_reason = ""
         self.probability_unknown_cells = 0
@@ -63,6 +99,9 @@ class ExplorationRegression(Node):
         self.probability_occupied_cells = 0
         self.raw_frontier_candidates = 0
         self.blacklisted_frontier_candidates = 0
+        self.pose_graph_commits = 0
+        self.pose_graph_discards = 0
+        self.pose_graph_failures = 0
         # Wall and simulation elapsed are both recorded because the two stacks
         # do not run at the same real-time factor, so an equal wall-clock
         # budget is not an equal simulated budget.
@@ -124,6 +163,18 @@ class ExplorationRegression(Node):
         self.maximum_free_cells = max(
             self.maximum_free_cells, self.latest_free_cells
         )
+        cell_area = message.info.resolution * message.info.resolution
+        self.maximum_free_area = max(
+            self.maximum_free_area, self.latest_free_cells * cell_area
+        )
+        known_bounds = map_bounds(message, lambda value: value >= 0)
+        free_bounds = map_bounds(message, lambda value: 0 <= value <= 20)
+        if bounds_area(known_bounds) > self.maximum_known_bbox_area:
+            self.maximum_known_bbox_area = bounds_area(known_bounds)
+            self.maximum_known_bounds = known_bounds
+        if bounds_area(free_bounds) > self.maximum_free_bbox_area:
+            self.maximum_free_bbox_area = bounds_area(free_bounds)
+            self.maximum_free_bounds = free_bounds
 
     # The caller samples the clock and hands the value in, so every callback
     # stays free of node state and remains testable without a live context.
@@ -175,6 +226,9 @@ class ExplorationRegression(Node):
                 self.probability_occupied_cells = int(
                     values.get("occupancy_probability_occupied_cells", 0)
                 )
+                self.pose_graph_commits = int(values.get("pose_graph_commits", 0))
+                self.pose_graph_discards = int(values.get("pose_graph_discards", 0))
+                self.pose_graph_failures = int(values.get("pose_graph_failures", 0))
 
     def collision_callback(self, message):
         if (
@@ -189,6 +243,15 @@ class ExplorationRegression(Node):
             message.pose.pose.position.x,
             message.pose.pose.position.y,
         )
+        if self.truth_bounds is None:
+            self.truth_bounds = (*current, *current)
+        else:
+            self.truth_bounds = (
+                min(self.truth_bounds[0], current[0]),
+                min(self.truth_bounds[1], current[1]),
+                max(self.truth_bounds[2], current[0]),
+                max(self.truth_bounds[3], current[1]),
+            )
         if self.previous_truth is not None:
             step = math.hypot(
                 current[0] - self.previous_truth[0],
@@ -225,10 +288,16 @@ def parse_arguments(arguments):
     parser.add_argument("--maximum-failed-goals", type=int, default=5)
     parser.add_argument("--maximum-collision-transitions", type=int, default=3)
     parser.add_argument("--maximum-recovery-events", type=int, default=5)
+    # The closed structured-loop corridor has less than 216 m2 of physical
+    # floor area. 240 m2 leaves measurement margin while rejecting a warped
+    # map that fabricates free space outside the world.
+    parser.add_argument("--maximum-free-area-m2", type=float, default=240.0)
     parser.add_argument("--completion-drain", type=float, default=5.0)
     parsed = parser.parse_args(arguments)
     if parsed.completion_drain < 0.0:
         parser.error("--completion-drain must be non-negative")
+    if parsed.maximum_free_area_m2 <= 0.0:
+        parser.error("--maximum-free-area-m2 must be positive")
     return parsed
 
 
@@ -243,6 +312,8 @@ def evaluate(regression, arguments):
         "known_free_area_grew": growth >= arguments.minimum_free_cell_growth,
         "final_known_area": regression.maximum_free_cells
         >= arguments.minimum_final_free_cells,
+        "free_area_within_structured_world": regression.maximum_free_area
+        <= arguments.maximum_free_area_m2,
         "robot_explored_physically": regression.truth_distance
         >= arguments.minimum_travel_distance,
         "failed_goal_budget": regression.failed_goals
@@ -260,6 +331,14 @@ def evaluate(regression, arguments):
         flush=True,
     )
     print(
+        f"  free area={regression.maximum_free_area:.3f} m2 "
+        f"free bbox={regression.maximum_free_bbox_area:.3f} m2 "
+        f"{regression.maximum_free_bounds} "
+        f"known bbox={regression.maximum_known_bbox_area:.3f} m2 "
+        f"{regression.maximum_known_bounds}",
+        flush=True,
+    )
+    print(
         f"  goals: succeeded={regression.successful_goals} "
         f"failed={regression.failed_goals} "
         f"unreachable={regression.unreachable_candidates}",
@@ -269,6 +348,10 @@ def evaluate(regression, arguments):
         f"  truth distance={regression.truth_distance:.3f} m "
         f"collision transitions={regression.collision_transitions} "
         f"recovery events={regression.recovery_events}",
+        flush=True,
+    )
+    print(
+        f"  truth bbox={bounds_area(regression.truth_bounds):.3f} m2",
         flush=True,
     )
     print(
@@ -289,6 +372,13 @@ def evaluate(regression, arguments):
         f"free={regression.probability_free_cells} "
         f"partial={regression.probability_partial_cells} "
         f"occupied={regression.probability_occupied_cells}",
+        flush=True,
+    )
+    print(
+        "  pose graph: "
+        f"commits={regression.pose_graph_commits} "
+        f"discards={regression.pose_graph_discards} "
+        f"failures={regression.pose_graph_failures}",
         flush=True,
     )
     print(

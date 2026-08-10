@@ -14,6 +14,26 @@ def test_known_free_cells_uses_navigation_free_threshold():
     assert MODULE.known_free_cells(message) == 3
 
 
+def test_map_bounds_tracks_only_selected_cells_in_world_coordinates():
+    origin = type("Origin", (), {"position": type("Point", (), {"x": 1.0, "y": -2.0})()})()
+    message = type(
+        "Grid",
+        (),
+        {
+            "info": type(
+                "Info",
+                (),
+                {"width": 3, "height": 2, "resolution": 0.5, "origin": origin},
+            )(),
+            "data": [-1, 0, 100, -1, 20, 20],
+        },
+    )()
+    assert MODULE.map_bounds(message, lambda value: 0 <= value <= 20) == (
+        1.5, -2.0, 2.5, -1.0
+    )
+    assert MODULE.bounds_area((1.5, -2.0, 2.5, -1.0)) == 1.0
+
+
 def test_default_acceptance_requires_motion_growth_and_success():
     arguments = MODULE.parse_arguments([])
     assert arguments.minimum_successful_goals == 1
@@ -95,22 +115,32 @@ def test_completion_records_both_wall_and_simulated_elapsed():
     assert regression.completion_wall is not None
 
 
+def value(key, text):
+    return type("Value", (), {"key": key, "value": text})()
+
+
 def test_front_end_diagnostics_are_recorded_separately_from_explorer_state():
     regression = object.__new__(MODULE.ExplorationRegression)
     regression.probability_unknown_cells = 0
     regression.probability_free_cells = 0
     regression.probability_partial_cells = 0
     regression.probability_occupied_cells = 0
+    regression.pose_graph_commits = 0
+    regression.pose_graph_discards = 0
+    regression.pose_graph_failures = 0
     status = type(
         "Status",
         (),
         {
             "name": "custom_slam_3d/scan_to_map_front_end",
             "values": [
-                type("Value", (), {"key": "occupancy_probability_unknown_cells", "value": "12"})(),
-                type("Value", (), {"key": "occupancy_probability_free_cells", "value": "34"})(),
-                type("Value", (), {"key": "occupancy_probability_partial_cells", "value": "56"})(),
-                type("Value", (), {"key": "occupancy_probability_occupied_cells", "value": "78"})(),
+                value("occupancy_probability_unknown_cells", "12"),
+                value("occupancy_probability_free_cells", "34"),
+                value("occupancy_probability_partial_cells", "56"),
+                value("occupancy_probability_occupied_cells", "78"),
+                value("pose_graph_commits", "9"),
+                value("pose_graph_discards", "2"),
+                value("pose_graph_failures", "1"),
             ],
         },
     )()
@@ -123,3 +153,8 @@ def test_front_end_diagnostics_are_recorded_separately_from_explorer_state():
         regression.probability_partial_cells,
         regression.probability_occupied_cells,
     ) == (12, 34, 56, 78)
+    assert (
+        regression.pose_graph_commits,
+        regression.pose_graph_discards,
+        regression.pose_graph_failures,
+    ) == (9, 2, 1)

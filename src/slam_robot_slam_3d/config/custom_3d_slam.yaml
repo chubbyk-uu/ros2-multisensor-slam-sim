@@ -78,6 +78,10 @@
         angular_bins: 60
         minimum_keyframe_separation: 80
         minimum_travel_distance: 8.0
+        # Scan Context is a retrieval proposal, not an unconditional loop
+        # edge source. Recorded structured-world candidates above 0.15 were
+        # visually dissimilar false proposals despite ranking first.
+        maximum_descriptor_distance: 0.15
         ring_key_candidate_count: 20
         maximum_candidates: 5
 

@@ -153,6 +153,9 @@ std::vector<ScanContextCandidate> ScanContextIndex::query(
   for (const auto & ring_key_candidate : ring_key_candidates) {
     const auto [descriptor_distance, shift] = alignedDescriptorDistance(
       current.descriptor.cells, ring_key_candidate.entry->descriptor.cells);
+    if (descriptor_distance > parameters_.maximum_descriptor_distance) {
+      continue;
+    }
     candidates.push_back({
         ring_key_candidate.entry->keyframe_id,
         descriptor_distance,
@@ -179,6 +182,8 @@ void ScanContextIndex::validateParameters() const
     parameters_.minimum_keyframe_separation == 0U ||
     !std::isfinite(parameters_.minimum_travel_distance) ||
     parameters_.minimum_travel_distance < 0.0 ||
+    !std::isfinite(parameters_.maximum_descriptor_distance) ||
+    parameters_.maximum_descriptor_distance <= 0.0 ||
     parameters_.ring_key_candidate_count == 0U ||
     parameters_.maximum_candidates == 0U)
   {

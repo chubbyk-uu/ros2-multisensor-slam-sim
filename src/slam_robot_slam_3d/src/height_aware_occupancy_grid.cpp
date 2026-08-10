@@ -76,9 +76,10 @@ slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::snapshot() cons
   return grid_.snapshot();
 }
 
-slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::navigationSnapshot() const
+slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::navigationSnapshot(
+  const slam_robot_slam::OccupancyGridSnapshot & probability_snapshot) const
 {
-  auto result = grid_.snapshot();
+  auto result = probability_snapshot;
   for (auto & cell : result.data) {
     if (cell < 0) {
       continue;

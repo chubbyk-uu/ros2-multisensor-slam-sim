@@ -80,5 +80,27 @@ TEST(ScanContextIndex, ExcludesTemporalAndShortTravelCandidates)
     return_index.addAndQuery(makeKeyframe(1U, 10.0, 0.0, 0.0)).empty());
 }
 
+TEST(ScanContextIndex, RejectsDissimilarRetrievalProposal)
+{
+  ScanContextParameters parameters;
+  parameters.radial_bins = 10U;
+  parameters.angular_bins = 36U;
+  parameters.minimum_keyframe_separation = 1U;
+  parameters.minimum_travel_distance = 0.0;
+  parameters.maximum_descriptor_distance = 0.01;
+  ScanContextIndex index(parameters);
+
+  index.addAndQuery(makeKeyframe(0U, 0.0, 0.0, 0.0));
+  auto different = makeKeyframe(1U, 10.0, 0.0, 0.0);
+  auto modified_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(
+    *different.filtered_scan);
+  for (auto & point : *modified_scan) {
+    point.x *= 1.8F;
+    point.y *= 1.8F;
+  }
+  different.filtered_scan = modified_scan;
+  EXPECT_TRUE(index.addAndQuery(different).empty());
+}
+
 }  // namespace
 }  // namespace slam_robot_slam_3d

@@ -18,6 +18,9 @@ struct ScanContextParameters
   std::size_t angular_bins{60U};
   std::size_t minimum_keyframe_separation{80U};
   double minimum_travel_distance{8.0};
+  // Retrieval is only a proposal stage. Do not hand arbitrarily dissimilar
+  // places to geometric verification merely because they rank first.
+  double maximum_descriptor_distance{0.15};
   std::size_t ring_key_candidate_count{20U};
   std::size_t maximum_candidates{5U};
 };

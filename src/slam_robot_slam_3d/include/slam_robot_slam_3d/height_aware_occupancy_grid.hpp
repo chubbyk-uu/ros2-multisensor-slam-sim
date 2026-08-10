@@ -44,7 +44,11 @@ public:
   std::size_t totalKeyframes() const;
   // Full log-odds projection for diagnosis only. It is not a Nav2 input.
   slam_robot_slam::OccupancyGridSnapshot snapshot() const;
-  slam_robot_slam::OccupancyGridSnapshot navigationSnapshot() const;
+  // Converts one already-captured probability snapshot. Keeping both output
+  // maps derived from the same snapshot avoids a second full grid traversal
+  // and guarantees identical metadata.
+  slam_robot_slam::OccupancyGridSnapshot navigationSnapshot(
+    const slam_robot_slam::OccupancyGridSnapshot & probability_snapshot) const;
 
 private:
   void integrate(const GlobalKeyframe & keyframe, const Eigen::Isometry3d & pose);

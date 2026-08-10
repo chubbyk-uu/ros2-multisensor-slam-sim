@@ -498,6 +498,9 @@ private:
     parameters.minimum_travel_distance = declare_parameter<double>(
       "loop_closure.scan_context.minimum_travel_distance",
       parameters.minimum_travel_distance);
+    parameters.maximum_descriptor_distance = declare_parameter<double>(
+      "loop_closure.scan_context.maximum_descriptor_distance",
+      parameters.maximum_descriptor_distance);
     parameters.ring_key_candidate_count =
       static_cast<std::size_t>(ring_key_candidate_count);
     parameters.maximum_candidates = static_cast<std::size_t>(maximum_candidates);
@@ -1120,7 +1123,7 @@ private:
   {
     const auto probability_snapshot = occupancy_grid_->snapshot();
     if (probability_snapshot.data.empty()) {return;}
-    const auto navigation_snapshot = occupancy_grid_->navigationSnapshot();
+    const auto navigation_snapshot = occupancy_grid_->navigationSnapshot(probability_snapshot);
     occupancy_probability_unknown_cells_ = 0U;
     occupancy_probability_free_cells_ = 0U;
     occupancy_probability_partial_cells_ = 0U;

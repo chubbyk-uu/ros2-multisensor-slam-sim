@@ -76,7 +76,7 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
                static_cast<std::size_t>(x - snapshot.origin_cell_x)];
     };
   EXPECT_EQ(cell(grid.snapshot(), 20), 40);
-  EXPECT_EQ(cell(grid.navigationSnapshot(), 20), -1);
+  EXPECT_EQ(cell(grid.navigationSnapshot(grid.snapshot()), 20), -1);
 
   // Four clear observations are required before a cell becomes navigation
   // free. Repeating the immutable keyframe here models later views along the
@@ -84,7 +84,7 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
   grid.append(ground, Eigen::Isometry3d::Identity());
   grid.append(ground, Eigen::Isometry3d::Identity());
   grid.append(ground, Eigen::Isometry3d::Identity());
-  EXPECT_EQ(cell(grid.navigationSnapshot(), 20), 0);
+  EXPECT_EQ(cell(grid.navigationSnapshot(grid.snapshot()), 20), 0);
 
   auto obstacle_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
   obstacle_scan->push_back(pcl::PointXYZI{2.0F, 0.0F, 0.20F, 1.0F});
@@ -94,7 +94,7 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
   HeightAwareOccupancyGrid obstacle_grid({{}, 0.05, 0.45, 1U});
   obstacle_grid.begin({obstacle}, {Eigen::Isometry3d::Identity()});
   ASSERT_TRUE(obstacle_grid.processBatch());
-  EXPECT_EQ(cell(obstacle_grid.navigationSnapshot(), 40), 100);
+  EXPECT_EQ(cell(obstacle_grid.navigationSnapshot(obstacle_grid.snapshot()), 40), 100);
 
   // A later contradictory ground ray weakens the obstacle posterior to 61,
   // but must never turn it into navigation free space.
@@ -105,7 +105,7 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
   long_ground.filtered_scan = long_ground_scan;
   obstacle_grid.append(long_ground, Eigen::Isometry3d::Identity());
   EXPECT_EQ(cell(obstacle_grid.snapshot(), 40), 61);
-  EXPECT_EQ(cell(obstacle_grid.navigationSnapshot(), 40), -1);
+  EXPECT_EQ(cell(obstacle_grid.navigationSnapshot(obstacle_grid.snapshot()), 40), -1);
 }
 
 TEST(HeightAwareOccupancyGrid, UsesConfiguredFreeEvidenceThreshold)
@@ -126,6 +126,6 @@ TEST(HeightAwareOccupancyGrid, UsesConfiguredFreeEvidenceThreshold)
                static_cast<std::size_t>(20 - snapshot.origin_cell_x)];
     };
   EXPECT_EQ(cell(grid.snapshot()), 23);
-  EXPECT_EQ(cell(grid.navigationSnapshot()), 0);
+  EXPECT_EQ(cell(grid.navigationSnapshot(grid.snapshot())), 0);
 }
 }  // namespace slam_robot_slam_3d
