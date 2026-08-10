@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+
+"""Run the frontier exploration regression N times and judge the batch.
+
+A single run cannot validate an intermittent failure. The pre-fix entry point
+measured five passes in eight runs, so one pass carries roughly a 62% prior and
+does not distinguish a fix from luck. This runner exists so the acceptance rule
+is written down before the numbers arrive, rather than chosen to fit them.
+
+It also keeps the host out of the way: runs are serial and headless, leftover
+simulator processes are refused rather than tolerated, and a simulator that
+crashes while shutting down is recorded separately from the verdict it produced.
+"""
+
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+PASS = 0
+FAIL = 1
+INFRA_UNSTABLE = 2
+VERDICT_NAMES = {PASS: "PASS", FAIL: "FAIL", INFRA_UNSTABLE: "INFRA_UNSTABLE"}
+
+# Anything here means a previous run is still alive. Starting anyway would let
+# two simulators share the machine, which is the very condition this campaign
+# is trying to keep out of its measurements.
+LEFTOVER_PROCESS_PATTERNS = (
+    "gz sim",
+    "frontier_explorer_node",
+    "scan_to_map_odometry_node",
+    "bt_navigator",
+    "controller_server",
+    "planner_server",
+)
+
+# ros2 launch prefixes every captured line with the node name, so these must
+# tolerate arbitrary leading text rather than anchoring at the line start.
+VERDICT_PATTERN = re.compile(r"VERDICT (PASS|FAIL|INFRA_UNSTABLE)\s*$", re.M)
+FAILED_CHECK_PATTERN = re.compile(r"(?:^|\s)FAIL ([a-z_]+)\s*$", re.M)
+GAZEBO_CRASH_PATTERN = re.compile(r"\[gazebo-\d+\]: process has died.*exit code -\d+")
+
+
+def leftover_processes():
+    if shutil.which("pgrep") is None:
+        return []
+    found = []
+    for pattern in LEFTOVER_PROCESS_PATTERNS:
+        result = subprocess.run(
+            ["pgrep", "-f", pattern], capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            found.append(pattern)
+    return found
+
+
+def parse_run(text, exit_code):
+    """Prefer the reported verdict over the exit code.
+
+    They agree in normal operation. When the launch wrapper masks the child's
+    status they do not, and silently trusting the exit code would turn a
+    reported FAIL into a campaign pass.
+    """
+    match = VERDICT_PATTERN.search(text)
+    reported = match.group(1) if match else None
+    verdict = {v: k for k, v in VERDICT_NAMES.items()}.get(reported)
+    return {
+        "verdict": verdict if verdict is not None else FAIL,
+        "verdict_reported": reported,
+        "exit_code": exit_code,
+        "verdict_missing": reported is None,
+        "gazebo_teardown_crash": bool(GAZEBO_CRASH_PATTERN.search(text)),
+        "failed_checks": FAILED_CHECK_PATTERN.findall(text),
+    }
+
+
+def judge(runs, arguments):
+    """Apply the pre-registered rule and say why, in one place."""
+    total = len(runs)
+    passes = sum(1 for run in runs if run["verdict"] == PASS)
+    fails = [run for run in runs if run["verdict"] == FAIL]
+    infra = sum(1 for run in runs if run["verdict"] == INFRA_UNSTABLE)
+    if infra > arguments.maximum_infra_unstable_for_valid_batch:
+        return "BATCH_INVALID", (
+            f"{infra}/{total} runs were INFRA_UNSTABLE; this host was too "
+            "unstable to say anything about the algorithm"
+        )
+    if fails:
+        return "REJECTED", f"{len(fails)}/{total} runs failed a core criterion"
+    if passes < arguments.minimum_passes:
+        return "REJECTED", (
+            f"only {passes}/{total} runs passed, below the required "
+            f"{arguments.minimum_passes}"
+        )
+    return "ACCEPTED", f"{passes}/{total} passed with {infra} attributed to the host"
+
+
+def parse_arguments(arguments):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--runs", type=int, default=10)
+    parser.add_argument("--minimum-passes", type=int, default=9)
+    # Two environment-attributed runs are tolerated as noise; beyond that the
+    # batch says more about the machine than the code, so it is void rather
+    # than a rejection of the algorithm.
+    parser.add_argument(
+        "--maximum-infra-unstable-for-valid-batch", type=int, default=2)
+    parser.add_argument("--launch-file", default="frontier_exploration_regression.launch.py")
+    parser.add_argument("--log-directory", default="campaign_logs")
+    parser.add_argument("--settle-seconds", type=float, default=15.0)
+    parser.add_argument(
+        "--allow-leftover-processes", action="store_true",
+        help="Start even if a previous simulation is still running.")
+    parsed = parser.parse_args(arguments)
+    if parsed.runs <= 0:
+        parser.error("--runs must be positive")
+    if parsed.minimum_passes > parsed.runs:
+        parser.error("--minimum-passes cannot exceed --runs")
+    return parsed
+
+
+def main():
+    arguments = parse_arguments(sys.argv[1:])
+    leftover = leftover_processes()
+    if leftover and not arguments.allow_leftover_processes:
+        print(
+            f"REFUSING TO START: leftover processes match {leftover}. "
+            "Stop them first, or pass --allow-leftover-processes.",
+            flush=True,
+        )
+        return 3
+    log_directory = Path(arguments.log_directory)
+    log_directory.mkdir(parents=True, exist_ok=True)
+
+    runs = []
+    for index in range(1, arguments.runs + 1):
+        log_path = log_directory / f"run_{index:02d}.log"
+        print(f"=== campaign run {index}/{arguments.runs} -> {log_path}", flush=True)
+        started = time.monotonic()
+        with open(log_path, "w", encoding="utf-8") as handle:
+            completed = subprocess.run(
+                ["ros2", "launch", "slam_robot_slam_3d", arguments.launch_file,
+                 "gui:=false", "rviz:=false"],
+                stdout=handle, stderr=subprocess.STDOUT, check=False,
+            )
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+        record = parse_run(text, completed.returncode)
+        record["index"] = index
+        record["wall_seconds"] = round(time.monotonic() - started, 1)
+        record["log"] = str(log_path)
+        runs.append(record)
+        print(
+            f"    verdict={VERDICT_NAMES[record['verdict']]} "
+            f"exit={record['exit_code']} "
+            f"wall={record['wall_seconds']} s "
+            f"gazebo_teardown_crash={record['gazebo_teardown_crash']} "
+            f"failed={record['failed_checks'] or '-'}",
+            flush=True,
+        )
+        time.sleep(arguments.settle_seconds)
+
+    outcome, reason = judge(runs, arguments)
+    summary = {
+        "outcome": outcome,
+        "reason": reason,
+        "runs": runs,
+        "passes": sum(1 for run in runs if run["verdict"] == PASS),
+        "core_failures": sum(1 for run in runs if run["verdict"] == FAIL),
+        "infra_unstable": sum(1 for run in runs if run["verdict"] == INFRA_UNSTABLE),
+        "gazebo_teardown_crashes": sum(
+            1 for run in runs if run["gazebo_teardown_crash"]),
+        "criteria": {
+            "runs": arguments.runs,
+            "minimum_passes": arguments.minimum_passes,
+            "maximum_infra_unstable_for_valid_batch":
+                arguments.maximum_infra_unstable_for_valid_batch,
+        },
+    }
+    (log_directory / "campaign_summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(f"CAMPAIGN {outcome}: {reason}", flush=True)
+    print(
+        f"  passes={summary['passes']} core_failures={summary['core_failures']} "
+        f"infra_unstable={summary['infra_unstable']} "
+        f"gazebo_teardown_crashes={summary['gazebo_teardown_crashes']}",
+        flush=True,
+    )
+    return 0 if outcome == "ACCEPTED" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

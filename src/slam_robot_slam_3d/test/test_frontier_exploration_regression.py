@@ -1,5 +1,6 @@
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+import time
 
 import pytest
 
@@ -119,6 +120,98 @@ def test_completion_records_both_wall_and_simulated_elapsed():
 
     assert regression.completion_sim == 185.0
     assert regression.completion_wall is not None
+
+
+def test_nav2_starvation_fragments_match_the_messages_nav2_actually_emits():
+    # Pinned verbatim. If Nav2 rewords these the parser would report a
+    # perfectly healthy host for every run, and that error biases towards
+    # calling a starved run PASS, so this test must fail loudly instead.
+    control = (
+        "Control loop missed its desired rate of 20.0000 Hz. "
+        "Current loop rate is 4.9020 Hz."
+    )
+    planner = (
+        "Planner loop missed its desired rate of 20.0000 Hz. "
+        "Current loop rate is 1.1062 Hz"
+    )
+    assert MODULE.CONTROL_STARVATION_FRAGMENT in control
+    assert MODULE.PLANNER_STARVATION_FRAGMENT in planner
+    assert MODULE.CONTROL_STARVATION_FRAGMENT not in planner
+    assert MODULE.PLANNER_STARVATION_FRAGMENT not in control
+
+
+def test_starvation_is_counted_per_minute_not_per_run():
+    regression = object.__new__(MODULE.ExplorationRegression)
+    regression.recovery_events = 0
+    regression.critical_logs = []
+    regression.control_starvation_warnings = 0
+    regression.planner_starvation_warnings = 0
+    for _ in range(6):
+        MODULE.ExplorationRegression.log_callback(
+            regression,
+            type("Log", (), {"msg": "Control loop missed its desired rate of 20 Hz"})(),
+        )
+    assert regression.control_starvation_warnings == 6
+
+    # A ten-minute run with six warnings is calmer than a five-minute one.
+    regression.start_wall = time.monotonic() - 600.0
+    control_rate, _ = MODULE.ExplorationRegression.starvation_rates(regression)
+    assert control_rate == pytest.approx(0.6, abs=0.05)
+
+
+def test_wall_overshoot_is_reported_per_side():
+    # A box that pushes past the south wall only.
+    overshoot = MODULE.wall_overshoot((-1.6, -2.35, 25.6, 13.6))
+
+    assert overshoot["south"] == pytest.approx(0.75)
+    assert overshoot["north"] == pytest.approx(0.0)
+    assert overshoot["west"] == pytest.approx(0.0)
+    assert overshoot["east"] == pytest.approx(0.0)
+    assert MODULE.wall_overshoot(None) is None
+
+
+def core_checks(**overrides):
+    checks = {"exploration_completed": True, "known_map_height_ok": True}
+    checks.update({name: True for name in MODULE.NAVIGATION_BEHAVIOUR_CHECKS})
+    checks.update(overrides)
+    return checks
+
+
+def test_classification_covers_every_combination_of_core_behaviour_and_host():
+    # A core failure is an algorithm regression whatever the host was doing.
+    assert MODULE.classify(core_checks(exploration_completed=False), True) == MODULE.FAIL
+    assert MODULE.classify(core_checks(exploration_completed=False), False) == MODULE.FAIL
+
+    # Nothing failed: a merely slow host must not spend the campaign's
+    # environment budget, so this stays a pass.
+    assert MODULE.classify(core_checks(), True) == MODULE.PASS
+    assert MODULE.classify(core_checks(), False) == MODULE.PASS
+
+    # Collisions on a healthy host are a real navigation problem.
+    assert MODULE.classify(
+        core_checks(collision_monitor_budget=False), True) == MODULE.FAIL
+    # The same collisions on a starved host are attributed to the environment.
+    assert MODULE.classify(
+        core_checks(collision_monitor_budget=False), False) == MODULE.INFRA_UNSTABLE
+    # Recovery budget is navigation behaviour too, not a core criterion.
+    assert MODULE.classify(
+        core_checks(navigation_recovery_budget=False), False) == MODULE.INFRA_UNSTABLE
+
+
+def test_verdict_codes_are_distinct():
+    assert len({MODULE.PASS, MODULE.FAIL, MODULE.INFRA_UNSTABLE}) == 3
+    assert MODULE.PASS == 0
+
+
+def test_map_shape_limits_leave_more_margin_than_the_observed_spread():
+    arguments = MODULE.parse_arguments([])
+
+    # Six healthy runs measured 27.05-27.50 m wide and 15.10-16.40 m tall.
+    assert arguments.maximum_known_bbox_width_m >= 27.5 + 0.4
+    assert arguments.maximum_known_bbox_height_m >= 16.4 + 0.4
+    assert arguments.maximum_known_bbox_area_m2 >= 451.0 + 20.0
+    # Still far below the 20.10 m height a warped map produced.
+    assert arguments.maximum_known_bbox_height_m < 20.0
 
 
 def value(key, text):

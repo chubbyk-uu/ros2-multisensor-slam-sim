@@ -7,6 +7,28 @@
 
 namespace slam_robot_slam_3d
 {
+namespace
+{
+
+// Built field by field on purpose. Positional aggregate initialisation reads
+// compactly but silently reassigns every later value when a field is inserted
+// in the middle, which is how a range limit once became a free threshold.
+HeightAwareOccupancyGridParameters makeParameters(
+  double maximum_ray_range = 100.0, std::int8_t free_maximum = 20,
+  std::int8_t occupied_minimum = 65)
+{
+  HeightAwareOccupancyGridParameters parameters;
+  parameters.minimum_obstacle_height = 0.05;
+  parameters.maximum_obstacle_height = 0.45;
+  parameters.keyframes_per_batch = 1U;
+  parameters.maximum_ray_range = maximum_ray_range;
+  parameters.free_maximum = free_maximum;
+  parameters.occupied_minimum = occupied_minimum;
+  return parameters;
+}
+
+}  // namespace
+
 TEST(HeightAwareOccupancyGrid, ProjectsObstacleHitsAndGroundFreeSpace)
 {
   auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
@@ -16,7 +38,7 @@ TEST(HeightAwareOccupancyGrid, ProjectsObstacleHitsAndGroundFreeSpace)
   GlobalKeyframe keyframe;
   keyframe.id = 0U;
   keyframe.filtered_scan = scan;
-  HeightAwareOccupancyGrid grid({{}, 0.05, 0.45, 1U});
+  HeightAwareOccupancyGrid grid(makeParameters());
   grid.begin({keyframe}, {Eigen::Isometry3d::Identity()});
   EXPECT_TRUE(grid.processBatch());
   const auto snapshot = grid.snapshot();
@@ -33,6 +55,35 @@ TEST(HeightAwareOccupancyGrid, ProjectsObstacleHitsAndGroundFreeSpace)
   EXPECT_LT(snapshot.origin_cell_x + static_cast<int>(snapshot.width), 60);
 }
 
+TEST(HeightAwareOccupancyGrid, DropsReturnsBeyondTheProjectionRange)
+{
+  // The far return is what a grazing look at a distant wall produces: one
+  // sample, poorly localised. Integrating it is worse than ignoring it,
+  // because the ray also clears everything between here and there.
+  auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  scan->push_back(pcl::PointXYZI{2.0F, 0.0F, 0.20F, 1.0F});
+  scan->push_back(pcl::PointXYZI{9.0F, 0.0F, 0.20F, 1.0F});
+  GlobalKeyframe keyframe;
+  keyframe.id = 0U;
+  keyframe.filtered_scan = scan;
+  const auto parameters = makeParameters(8.0, 25, 65);
+  HeightAwareOccupancyGrid grid(parameters);
+  grid.begin({keyframe}, {Eigen::Isometry3d::Identity()});
+  ASSERT_TRUE(grid.processBatch());
+
+  const auto snapshot = grid.snapshot();
+  // The near return is inside the range and occupies its cell; the far one
+  // never reaches the grid, so the map simply does not extend that far.
+  EXPECT_LT(
+    snapshot.origin_cell_x + static_cast<int>(snapshot.width), 9.0 / 0.05);
+}
+
+TEST(HeightAwareOccupancyGrid, RejectsANonPositiveProjectionRange)
+{
+  const auto parameters = makeParameters(0.0, 25, 65);
+  EXPECT_THROW(HeightAwareOccupancyGrid{parameters}, std::invalid_argument);
+}
+
 TEST(HeightAwareOccupancyGrid, AppendsNewKeyframesWithoutReplayingHistory)
 {
   auto first_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
@@ -40,7 +91,7 @@ TEST(HeightAwareOccupancyGrid, AppendsNewKeyframesWithoutReplayingHistory)
   GlobalKeyframe first;
   first.id = 0U;
   first.filtered_scan = first_scan;
-  HeightAwareOccupancyGrid grid({{}, 0.05, 0.45, 1U});
+  HeightAwareOccupancyGrid grid(makeParameters());
   grid.begin({first}, {Eigen::Isometry3d::Identity()});
   ASSERT_TRUE(grid.processBatch());
 
@@ -67,7 +118,7 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
   GlobalKeyframe ground;
   ground.id = 0U;
   ground.filtered_scan = ground_scan;
-  HeightAwareOccupancyGrid grid({{}, 0.05, 0.45, 1U});
+  HeightAwareOccupancyGrid grid(makeParameters());
   grid.begin({ground}, {Eigen::Isometry3d::Identity()});
   ASSERT_TRUE(grid.processBatch());
 
@@ -91,7 +142,7 @@ TEST(HeightAwareOccupancyGrid, PublishesOnlyTrinaryNavigationSemantics)
   GlobalKeyframe obstacle;
   obstacle.id = 1U;
   obstacle.filtered_scan = obstacle_scan;
-  HeightAwareOccupancyGrid obstacle_grid({{}, 0.05, 0.45, 1U});
+  HeightAwareOccupancyGrid obstacle_grid(makeParameters());
   obstacle_grid.begin({obstacle}, {Eigen::Isometry3d::Identity()});
   ASSERT_TRUE(obstacle_grid.processBatch());
   EXPECT_EQ(cell(obstacle_grid.navigationSnapshot(obstacle_grid.snapshot()), 40), 100);
@@ -115,7 +166,7 @@ TEST(HeightAwareOccupancyGrid, UsesConfiguredFreeEvidenceThreshold)
   GlobalKeyframe keyframe;
   keyframe.id = 0U;
   keyframe.filtered_scan = scan;
-  HeightAwareOccupancyGrid grid({{}, 0.05, 0.45, 1U, 25, 65});
+  HeightAwareOccupancyGrid grid(makeParameters(100.0, 25, 65));
   grid.begin({keyframe}, {Eigen::Isometry3d::Identity()});
   ASSERT_TRUE(grid.processBatch());
   grid.append(keyframe, Eigen::Isometry3d::Identity());

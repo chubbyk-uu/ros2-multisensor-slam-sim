@@ -249,6 +249,7 @@ install(
   PROGRAMS
     scripts/dataset_contract_check
     scripts/corridor_3d_regression
+    scripts/exploration_campaign
     scripts/front_end_motion_regression
     scripts/front_end_regression
     scripts/frontier_exploration_regression
@@ -384,6 +385,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_map_projection_census
     test/test_map_projection_census.py
+  )
+  ament_add_pytest_test(
+    test_exploration_campaign
+    test/test_exploration_campaign.py
   )
   ament_add_pytest_test(
     test_recorded_odom_tf_publisher

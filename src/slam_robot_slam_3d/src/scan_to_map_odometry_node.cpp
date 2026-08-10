@@ -214,6 +214,8 @@ public:
         0.05);
     const auto grid_max_z = declare_parameter<double>("occupancy_grid.maximum_obstacle_height",
         0.45);
+    const auto grid_maximum_ray_range = declare_parameter<double>(
+      "occupancy_grid.maximum_ray_range", 8.0);
     const auto grid_free_maximum = declare_parameter<int>("occupancy_grid.free_maximum", 20);
     const auto grid_occupied_minimum = declare_parameter<int>(
       "occupancy_grid.occupied_minimum", 65);
@@ -234,7 +236,8 @@ public:
       grid_batches <= 0 || !std::isfinite(grid_resolution) || grid_resolution <= 0.0 ||
       !std::isfinite(grid_min_z) || !std::isfinite(grid_max_z) || grid_min_z < 0.0 ||
       grid_min_z >= grid_max_z || grid_free_maximum < 0 || grid_free_maximum > 100 ||
-      grid_occupied_minimum <= grid_free_maximum || grid_occupied_minimum > 100)
+      grid_occupied_minimum <= grid_free_maximum || grid_occupied_minimum > 100 ||
+      !std::isfinite(grid_maximum_ray_range) || grid_maximum_ray_range <= 0.0)
     {
       throw std::invalid_argument("front-end parameters are invalid");
     }
@@ -256,8 +259,8 @@ public:
     grid_parameters.resolution = grid_resolution;
     occupancy_grid_ = std::make_unique<HeightAwareOccupancyGrid>(
       HeightAwareOccupancyGridParameters{grid_parameters, grid_min_z, grid_max_z,
-        static_cast<std::size_t>(grid_batches), occupancy_grid_free_maximum_,
-        occupancy_grid_occupied_minimum_});
+        static_cast<std::size_t>(grid_batches), grid_maximum_ray_range,
+        occupancy_grid_free_maximum_, occupancy_grid_occupied_minimum_});
     match_failure_recovery_ = std::make_unique<MatchFailureRecovery>(
       static_cast<std::size_t>(failure_limit));
 

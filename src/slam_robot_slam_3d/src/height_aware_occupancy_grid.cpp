@@ -17,7 +17,9 @@ HeightAwareOccupancyGrid::HeightAwareOccupancyGrid(
     parameters_.minimum_obstacle_height < 0.0 ||
     parameters_.minimum_obstacle_height >= parameters_.maximum_obstacle_height ||
     parameters_.keyframes_per_batch == 0U || parameters_.free_maximum < 0 ||
-    parameters_.occupied_minimum <= parameters_.free_maximum)
+    parameters_.occupied_minimum <= parameters_.free_maximum ||
+    !std::isfinite(parameters_.maximum_ray_range) ||
+    parameters_.maximum_ray_range <= 0.0)
   {
     throw std::invalid_argument("height-aware occupancy grid parameters are invalid");
   }
@@ -109,6 +111,15 @@ void HeightAwareOccupancyGrid::integrate(
   for (const auto & point : *keyframe.filtered_scan) {
     const Eigen::Vector3d endpoint = map_from_sensor * Eigen::Vector3d(point.x, point.y, point.z);
     if (!endpoint.allFinite()) {
+      continue;
+    }
+    // Measured in the projection plane, because that is the geometry this
+    // grid reasons about: a return 18 m away along the floor carries the same
+    // weight here as one at 2 m, while the sensor's angular spacing means the
+    // far one may be the only sample its whole wall segment ever receives.
+    if ((endpoint.head<2>() - origin.head<2>()).norm() >
+      parameters_.maximum_ray_range)
+    {
       continue;
     }
     const slam_robot_slam::Point2D origin_xy{
