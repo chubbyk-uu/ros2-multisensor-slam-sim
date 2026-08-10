@@ -213,6 +213,9 @@ public:
         0.05);
     const auto grid_max_z = declare_parameter<double>("occupancy_grid.maximum_obstacle_height",
         0.45);
+    const auto grid_free_maximum = declare_parameter<int>("occupancy_grid.free_maximum", 20);
+    const auto grid_occupied_minimum = declare_parameter<int>(
+      "occupancy_grid.occupied_minimum", 65);
     if ((operation_mode_ != "mapping" && operation_mode_ != "localization") ||
       (operation_mode_ == "localization" && (!load_snapshot || snapshot_path_.empty())) ||
       (load_snapshot && snapshot_path_.empty()) ||
@@ -229,7 +232,8 @@ public:
       !std::isfinite(global_map_voxel_leaf_size) || global_map_voxel_leaf_size <= 0.0 ||
       grid_batches <= 0 || !std::isfinite(grid_resolution) || grid_resolution <= 0.0 ||
       !std::isfinite(grid_min_z) || !std::isfinite(grid_max_z) || grid_min_z < 0.0 ||
-      grid_min_z >= grid_max_z)
+      grid_min_z >= grid_max_z || grid_free_maximum < 0 || grid_free_maximum > 100 ||
+      grid_occupied_minimum <= grid_free_maximum || grid_occupied_minimum > 100)
     {
       throw std::invalid_argument("front-end parameters are invalid");
     }
@@ -241,6 +245,9 @@ public:
       static_cast<std::size_t>(global_map_keyframe_interval);
     global_map_voxel_leaf_size_ = global_map_voxel_leaf_size;
     occupancy_grid_keyframes_per_batch_ = static_cast<std::size_t>(grid_batches);
+    occupancy_grid_free_maximum_ = static_cast<std::int8_t>(grid_free_maximum);
+    occupancy_grid_occupied_minimum_ =
+      static_cast<std::int8_t>(grid_occupied_minimum);
     global_point_cloud_map_ = std::make_unique<GlobalPointCloudMap>(
       GlobalPointCloudMapParameters{global_map_voxel_leaf_size,
         static_cast<std::size_t>(global_map_keyframes_per_batch)});
@@ -248,7 +255,8 @@ public:
     grid_parameters.resolution = grid_resolution;
     occupancy_grid_ = std::make_unique<HeightAwareOccupancyGrid>(
       HeightAwareOccupancyGridParameters{grid_parameters, grid_min_z, grid_max_z,
-        static_cast<std::size_t>(grid_batches)});
+        static_cast<std::size_t>(grid_batches), occupancy_grid_free_maximum_,
+        occupancy_grid_occupied_minimum_});
     match_failure_recovery_ = std::make_unique<MatchFailureRecovery>(
       static_cast<std::size_t>(failure_limit));
 
@@ -263,6 +271,8 @@ public:
       "/custom_slam_3d/map_cloud", rclcpp::QoS(1).transient_local());
     occupancy_grid_publisher_ = create_publisher<nav_msgs::msg::OccupancyGrid>(
       "/map", rclcpp::QoS(1).transient_local());
+    occupancy_probability_publisher_ = create_publisher<nav_msgs::msg::OccupancyGrid>(
+      "/custom_slam_3d/occupancy_probability", rclcpp::QoS(1).transient_local());
     diagnostics_publisher_ =
       create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "/custom_slam_3d/front_end_diagnostics", 10);
@@ -863,11 +873,15 @@ private:
         "Dropping an unverified 3D loop keyframe because the worker queue is full");
     }
     startLoopClosureTask();
+    // Nav2 and the explorer must see fresh free-space evidence as soon as a
+    // keyframe arrives. The expensive visualisation cloud can stay on its
+    // coarser cadence, but coupling the navigation grid to that ten-keyframe
+    // interval made the explorer judge a stale first map as complete.
+    requestOccupancyGridIncrementalUpdate();
     if (keyframe.id == 0U ||
       (keyframe.id + 1U) % global_map_rebuild_keyframe_interval_ == 0U)
     {
       requestGlobalMapRebuild();
-      requestOccupancyGridIncrementalUpdate();
     }
     last_global_keyframe_base_pose_ = front_end_base_pose;
     has_last_global_keyframe_ = true;
@@ -1104,20 +1118,40 @@ private:
 
   void publishOccupancyGrid()
   {
-    const auto snapshot = occupancy_grid_->snapshot();
-    if (snapshot.data.empty()) {return;}
+    const auto probability_snapshot = occupancy_grid_->snapshot();
+    if (probability_snapshot.data.empty()) {return;}
+    const auto navigation_snapshot = occupancy_grid_->navigationSnapshot();
+    occupancy_probability_unknown_cells_ = 0U;
+    occupancy_probability_free_cells_ = 0U;
+    occupancy_probability_partial_cells_ = 0U;
+    occupancy_probability_occupied_cells_ = 0U;
+    for (const auto cell : probability_snapshot.data) {
+      if (cell < 0) {
+        ++occupancy_probability_unknown_cells_;
+      } else if (cell <= occupancy_grid_free_maximum_) {
+        ++occupancy_probability_free_cells_;
+      } else if (cell >= occupancy_grid_occupied_minimum_) {
+        ++occupancy_probability_occupied_cells_;
+      } else {
+        ++occupancy_probability_partial_cells_;
+      }
+    }
     nav_msgs::msg::OccupancyGrid map;
     map.header.stamp = occupancy_grid_stamp_;
     map.header.frame_id = map_frame_;
     map.info.map_load_time = occupancy_grid_stamp_;
-    map.info.resolution = static_cast<float>(snapshot.resolution);
-    map.info.width = static_cast<uint32_t>(snapshot.width);
-    map.info.height = static_cast<uint32_t>(snapshot.height);
-    map.info.origin.position.x = snapshot.origin_cell_x * snapshot.resolution;
-    map.info.origin.position.y = snapshot.origin_cell_y * snapshot.resolution;
+    map.info.resolution = static_cast<float>(probability_snapshot.resolution);
+    map.info.width = static_cast<uint32_t>(probability_snapshot.width);
+    map.info.height = static_cast<uint32_t>(probability_snapshot.height);
+    map.info.origin.position.x =
+      probability_snapshot.origin_cell_x * probability_snapshot.resolution;
+    map.info.origin.position.y =
+      probability_snapshot.origin_cell_y * probability_snapshot.resolution;
     map.info.origin.orientation.w = 1.0;
-    map.data = snapshot.data;
+    map.data = navigation_snapshot.data;
     occupancy_grid_publisher_->publish(map);
+    map.data = probability_snapshot.data;
+    occupancy_probability_publisher_->publish(map);
     ++occupancy_grid_publish_count_;
   }
 
@@ -1349,6 +1383,18 @@ private:
       "global_map_points", global_point_cloud_map_ == nullptr ? "0" :
       std::to_string(global_point_cloud_map_->cloud().size())));
     status.values.push_back(makeValue(
+      "occupancy_probability_unknown_cells",
+      std::to_string(occupancy_probability_unknown_cells_)));
+    status.values.push_back(makeValue(
+      "occupancy_probability_free_cells",
+      std::to_string(occupancy_probability_free_cells_)));
+    status.values.push_back(makeValue(
+      "occupancy_probability_partial_cells",
+      std::to_string(occupancy_probability_partial_cells_)));
+    status.values.push_back(makeValue(
+      "occupancy_probability_occupied_cells",
+      std::to_string(occupancy_probability_occupied_cells_)));
+    status.values.push_back(makeValue(
       "global_map_rebuild_requests", std::to_string(global_map_rebuild_request_count_)));
     status.values.push_back(makeValue(
       "global_map_rebuild_publishes", std::to_string(global_map_rebuild_publish_count_)));
@@ -1478,6 +1524,8 @@ private:
   std::size_t global_map_rebuild_keyframe_interval_{10U};
   double global_map_voxel_leaf_size_{0.15};
   std::size_t occupancy_grid_keyframes_per_batch_{4U};
+  std::int8_t occupancy_grid_free_maximum_{20};
+  std::int8_t occupancy_grid_occupied_minimum_{65};
   std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};
@@ -1512,6 +1560,10 @@ private:
   std::size_t global_map_rebuild_failure_count_{0U};
   std::size_t occupancy_grid_publish_count_{0U};
   std::size_t occupancy_grid_failure_count_{0U};
+  std::size_t occupancy_probability_unknown_cells_{0U};
+  std::size_t occupancy_probability_free_cells_{0U};
+  std::size_t occupancy_probability_partial_cells_{0U};
+  std::size_t occupancy_probability_occupied_cells_{0U};
   std::size_t pose_graph_commit_count_{0U};
   std::size_t pose_graph_discard_count_{0U};
   std::size_t pose_graph_failure_count_{0U};
@@ -1526,6 +1578,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr local_map_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr global_map_publisher_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_grid_publisher_;
+  rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr occupancy_probability_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
     diagnostics_publisher_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> transform_broadcaster_;

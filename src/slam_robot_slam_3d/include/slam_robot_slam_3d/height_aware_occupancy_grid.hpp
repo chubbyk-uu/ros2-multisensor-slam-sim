@@ -2,6 +2,7 @@
 #define SLAM_ROBOT_SLAM_3D__HEIGHT_AWARE_OCCUPANCY_GRID_HPP_
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include <Eigen/Geometry>
@@ -18,11 +19,15 @@ struct HeightAwareOccupancyGridParameters
   double minimum_obstacle_height{0.05};
   double maximum_obstacle_height{0.45};
   std::size_t keyframes_per_batch{4U};
+  std::int8_t free_maximum{20};
+  std::int8_t occupied_minimum{65};
 };
 
-// Projects global keyframes into the 2D navigation grid Nav2 consumes.  Only
-// returns inside the obstacle height band mark cells occupied; returns below
-// it contribute ray-traced free space, and returns above it are ignored.
+// Projects global keyframes into a probabilistic 2D grid. Only returns inside
+// the obstacle height band mark cells occupied; returns below it contribute
+// ray-traced free space, and returns above it are ignored. navigationSnapshot
+// converts that internal probability map to Nav2's unambiguous -1/0/100
+// contract: cells without enough free or occupied evidence remain unknown.
 // Mapping appends new keyframes in place, while a pose-graph correction
 // replays a consistent full snapshot through begin() in bounded batches.
 class HeightAwareOccupancyGrid
@@ -37,7 +42,9 @@ public:
   bool active() const;
   std::size_t processedKeyframes() const;
   std::size_t totalKeyframes() const;
+  // Full log-odds projection for diagnosis only. It is not a Nav2 input.
   slam_robot_slam::OccupancyGridSnapshot snapshot() const;
+  slam_robot_slam::OccupancyGridSnapshot navigationSnapshot() const;
 
 private:
   void integrate(const GlobalKeyframe & keyframe, const Eigen::Isometry3d & pose);

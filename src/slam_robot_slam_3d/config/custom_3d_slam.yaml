@@ -129,3 +129,10 @@
       minimum_obstacle_height: 0.05
       maximum_obstacle_height: 0.45
       keyframes_per_batch: 4
+      # /map is deliberately trinary for Nav2 and frontier exploration. The
+      # underlying probability grid is published separately for diagnosis.
+      # A cell becomes navigation-free after three independent free-ray
+      # observations (40 -> 31 -> 23). This is the conventional 0.25
+      # occupancy threshold, while weak hit evidence remains unknown.
+      free_maximum: 25
+      occupied_minimum: 65

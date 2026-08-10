@@ -72,6 +72,14 @@ if(BUILD_TESTING)
     test_frontier_action_deadline
     PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   )
+  ament_add_gtest(
+    test_empty_frontier_counter
+    test/test_empty_frontier_counter.cpp
+  )
+  target_include_directories(
+    test_empty_frontier_counter
+    PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  )
 endif()
 
 ament_package()

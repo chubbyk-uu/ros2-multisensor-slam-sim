@@ -69,6 +69,9 @@ std::vector<FrontierCandidate> FrontierDetector::detect(
   const auto is_free = [this, &map](std::size_t index) {
       return map.data[index] >= 0 && map.data[index] <= parameters_.free_maximum;
     };
+  // The navigation map is trinary by contract: uncertain cells are published
+  // as unknown by the map producer, rather than guessed as free or occupied
+  // by a downstream consumer.
   const auto is_unknown = [&map](std::size_t index) {return map.data[index] < 0;};
 
   std::vector<double> clearance(width * height, std::numeric_limits<double>::infinity());

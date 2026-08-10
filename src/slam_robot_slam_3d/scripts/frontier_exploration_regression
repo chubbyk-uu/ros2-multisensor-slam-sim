@@ -57,6 +57,12 @@ class ExplorationRegression(Node):
         self.previous_truth = None
         self.critical_logs = []
         self.completion_reason = ""
+        self.probability_unknown_cells = 0
+        self.probability_free_cells = 0
+        self.probability_partial_cells = 0
+        self.probability_occupied_cells = 0
+        self.raw_frontier_candidates = 0
+        self.blacklisted_frontier_candidates = 0
         # Wall and simulation elapsed are both recorded because the two stacks
         # do not run at the same real-time factor, so an equal wall-clock
         # budget is not an equal simulated budget.
@@ -83,6 +89,15 @@ class ExplorationRegression(Node):
         self.create_subscription(
             DiagnosticArray,
             "/frontier_explorer/diagnostics",
+            self.diagnostics_callback,
+            10,
+        )
+        # The explorer and front end publish independent diagnostic streams.
+        # Subscribe to both so the probability-grid census in the final report
+        # reflects the map that drove frontier selection.
+        self.create_subscription(
+            DiagnosticArray,
+            "/custom_slam_3d/front_end_diagnostics",
             self.diagnostics_callback,
             10,
         )
@@ -131,17 +146,35 @@ class ExplorationRegression(Node):
 
     def diagnostics_callback(self, message):
         for status in message.status:
-            if status.name != "frontier_explorer":
-                continue
             values = {entry.key: entry.value for entry in status.values}
-            self.successful_goals = int(values.get("successful_goals", 0))
-            self.failed_goals = int(values.get("failed_goals", 0))
-            self.unreachable_candidates = int(
-                values.get("unreachable_candidates", 0)
-            )
-            self.completion_reason = values.get(
-                "completion_reason", self.completion_reason
-            )
+            if status.name == "frontier_explorer":
+                self.successful_goals = int(values.get("successful_goals", 0))
+                self.failed_goals = int(values.get("failed_goals", 0))
+                self.unreachable_candidates = int(
+                    values.get("unreachable_candidates", 0)
+                )
+                self.raw_frontier_candidates = int(
+                    values.get("raw_frontier_candidates", 0)
+                )
+                self.blacklisted_frontier_candidates = int(
+                    values.get("blacklisted_frontier_candidates", 0)
+                )
+                self.completion_reason = values.get(
+                    "completion_reason", self.completion_reason
+                )
+            elif status.name == "custom_slam_3d/scan_to_map_front_end":
+                self.probability_unknown_cells = int(
+                    values.get("occupancy_probability_unknown_cells", 0)
+                )
+                self.probability_free_cells = int(
+                    values.get("occupancy_probability_free_cells", 0)
+                )
+                self.probability_partial_cells = int(
+                    values.get("occupancy_probability_partial_cells", 0)
+                )
+                self.probability_occupied_cells = int(
+                    values.get("occupancy_probability_occupied_cells", 0)
+                )
 
     def collision_callback(self, message):
         if (
@@ -192,7 +225,11 @@ def parse_arguments(arguments):
     parser.add_argument("--maximum-failed-goals", type=int, default=5)
     parser.add_argument("--maximum-collision-transitions", type=int, default=3)
     parser.add_argument("--maximum-recovery-events", type=int, default=5)
-    return parser.parse_args(arguments)
+    parser.add_argument("--completion-drain", type=float, default=5.0)
+    parsed = parser.parse_args(arguments)
+    if parsed.completion_drain < 0.0:
+        parser.error("--completion-drain must be non-negative")
+    return parsed
 
 
 def evaluate(regression, arguments):
@@ -246,6 +283,21 @@ def evaluate(regression, arguments):
         f"mean interval={format_elapsed(regression.mean_map_interval())}",
         flush=True,
     )
+    print(
+        "  probability cells: "
+        f"unknown={regression.probability_unknown_cells} "
+        f"free={regression.probability_free_cells} "
+        f"partial={regression.probability_partial_cells} "
+        f"occupied={regression.probability_occupied_cells}",
+        flush=True,
+    )
+    print(
+        "  frontier funnel: "
+        f"raw={regression.raw_frontier_candidates} "
+        f"blacklisted={regression.blacklisted_frontier_candidates} "
+        f"unreachable={regression.unreachable_candidates}",
+        flush=True,
+    )
     for name, passed in checks.items():
         print(f"  {'PASS' if passed else 'FAIL'} {name}", flush=True)
     for message in regression.critical_logs:
@@ -267,6 +319,13 @@ def main():
             regression.note_sim_time(
                 regression.get_clock().now().nanoseconds * 1.0e-9
             )
+            rclpy.spin_once(regression, timeout_sec=0.2)
+        # The completion flag arrives on its own topic and can beat the
+        # diagnostics carrying completion_reason. Without this drain the report
+        # says reason='none' for every successful run, which is exactly the
+        # field needed to tell a finished map from a premature stop.
+        drain = time.monotonic() + arguments.completion_drain
+        while rclpy.ok() and time.monotonic() < drain and not regression.completion_reason:
             rclpy.spin_once(regression, timeout_sec=0.2)
         passed = evaluate(regression, arguments)
     except KeyboardInterrupt:

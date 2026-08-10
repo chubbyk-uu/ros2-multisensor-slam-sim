@@ -30,6 +30,7 @@
 #include <tf2_ros/transform_listener.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
+#include "slam_robot_navigation/empty_frontier_counter.hpp"
 #include "slam_robot_navigation/frontier_action_deadline.hpp"
 #include "slam_robot_navigation/frontier_detector.hpp"
 
@@ -86,6 +87,8 @@ public:
       declare_parameter<int>("minimum_goal_free_cell_growth", 100);
     const int maximum_stagnant_goals =
       declare_parameter<int>("maximum_stagnant_goals", 3);
+    completion_map_stale_timeout_ =
+      declare_parameter<double>("completion_map_stale_timeout", 10.0);
     map_topic_ = declare_parameter<std::string>("map_topic", "/map");
     save_snapshot_on_completion_ =
       declare_parameter<bool>("save_snapshot_on_completion", true);
@@ -99,6 +102,8 @@ public:
       !std::isfinite(blacklist_duration_) || blacklist_duration_ <= 0.0 ||
       !std::isfinite(navigation_timeout_) || navigation_timeout_ <= 0.0 ||
       !std::isfinite(action_response_timeout_) || action_response_timeout_ <= 0.0 ||
+      !std::isfinite(completion_map_stale_timeout_) ||
+      completion_map_stale_timeout_ <= 0.0 ||
       map_topic_.empty() || (save_snapshot_on_completion_ && snapshot_service_.empty()) ||
       !std::isfinite(update_rate) || update_rate <= 0.0)
     {
@@ -109,6 +114,9 @@ public:
     completion_empty_cycles_ = static_cast<std::size_t>(completion_empty_cycles);
     minimum_goal_free_cell_growth_ = static_cast<std::size_t>(minimum_goal_free_cell_growth);
     maximum_stagnant_goals_ = static_cast<std::size_t>(maximum_stagnant_goals);
+    empty_frontiers_ = EmptyFrontierCounter(
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(completion_map_stale_timeout_)));
 
     map_subscription_ = create_subscription<nav_msgs::msg::OccupancyGrid>(
       map_topic_, rclcpp::QoS(1).reliable().transient_local(),
@@ -318,14 +326,16 @@ private:
     }
 
     auto detected = detector_.detect(*latest_map_, robot->first, robot->second);
+    raw_frontier_candidates_ = detected.size();
     detected.erase(
       std::remove_if(detected.begin(), detected.end(),
       [this](const auto & candidate) {return blacklisted(candidate);}),
       detected.end());
+    blacklisted_frontier_candidates_ = raw_frontier_candidates_ - detected.size();
     publishMarkers(detected);
     if (detected.empty()) {
-      ++empty_cycles_;
-      if (empty_cycles_ >= completion_empty_cycles_ &&
+      empty_frontiers_.observeEmpty(map_revision_, now);
+      if (empty_frontiers_.count() >= completion_empty_cycles_ &&
         knownFreeCells() >= minimum_known_free_cells_)
       {
         completeExploration("no reachable frontier remains");
@@ -333,7 +343,7 @@ private:
       publishDiagnostics();
       return;
     }
-    empty_cycles_ = 0;
+    empty_frontiers_.observeFrontier();
     if (!compute_path_client_->action_server_is_ready() ||
       !navigate_client_->action_server_is_ready())
     {
@@ -465,13 +475,21 @@ private:
         }
         if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
           ++successful_goals_;
-          const std::size_t current_free_cells = knownFreeCells();
-          const std::size_t growth = current_free_cells > goal_start_free_cells_ ?
-            current_free_cells - goal_start_free_cells_ : 0U;
-          if (growth < minimum_goal_free_cell_growth_) {
-            ++stagnant_goals_;
+          if (map_revision_ == target_map_revision_) {
+            // The map never republished while this goal ran, so both free-cell
+            // counts come from the same message and the measured growth is
+            // zero by construction. That says nothing about whether the robot
+            // explored, so it must not count toward stagnation either way.
+            ++unmeasured_goal_growth_;
           } else {
-            stagnant_goals_ = 0;
+            const std::size_t current_free_cells = knownFreeCells();
+            const std::size_t growth = current_free_cells > goal_start_free_cells_ ?
+              current_free_cells - goal_start_free_cells_ : 0U;
+            if (growth < minimum_goal_free_cell_growth_) {
+              ++stagnant_goals_;
+            } else {
+              stagnant_goals_ = 0;
+            }
           }
         } else {
           if (result.code != rclcpp_action::ResultCode::CANCELED || cancel_with_blacklist_) {
@@ -594,7 +612,12 @@ private:
       keyValue("stagnant_goals", std::to_string(stagnant_goals_)),
       keyValue("unreachable_candidates", std::to_string(unreachable_candidates_)),
       keyValue("blacklisted_goals", std::to_string(blacklist_.size())),
-      keyValue("empty_cycles", std::to_string(empty_cycles_)),
+      keyValue("raw_frontier_candidates", std::to_string(raw_frontier_candidates_)),
+      keyValue(
+        "blacklisted_frontier_candidates",
+        std::to_string(blacklisted_frontier_candidates_)),
+      keyValue("empty_frontier_looks", std::to_string(empty_frontiers_.count())),
+      keyValue("unmeasured_goal_growth", std::to_string(unmeasured_goal_growth_)),
       keyValue("completion_reason", completion_reason_)};
     array.status.push_back(std::move(status));
     diagnostics_publisher_->publish(array);
@@ -648,7 +671,11 @@ private:
   nav_msgs::msg::OccupancyGrid::ConstSharedPtr latest_map_;
   std::size_t map_revision_{0};
   std::size_t target_map_revision_{0};
-  std::size_t empty_cycles_{0};
+  double completion_map_stale_timeout_{10.0};
+  EmptyFrontierCounter empty_frontiers_{std::chrono::seconds(10)};
+  std::size_t unmeasured_goal_growth_{0};
+  std::size_t raw_frontier_candidates_{0U};
+  std::size_t blacklisted_frontier_candidates_{0U};
   std::size_t successful_goals_{0};
   std::size_t failed_goals_{0};
   std::size_t stagnant_goals_{0};

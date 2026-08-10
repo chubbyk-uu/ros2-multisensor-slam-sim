@@ -16,7 +16,8 @@ HeightAwareOccupancyGrid::HeightAwareOccupancyGrid(
     !std::isfinite(parameters_.maximum_obstacle_height) ||
     parameters_.minimum_obstacle_height < 0.0 ||
     parameters_.minimum_obstacle_height >= parameters_.maximum_obstacle_height ||
-    parameters_.keyframes_per_batch == 0U)
+    parameters_.keyframes_per_batch == 0U || parameters_.free_maximum < 0 ||
+    parameters_.occupied_minimum <= parameters_.free_maximum)
   {
     throw std::invalid_argument("height-aware occupancy grid parameters are invalid");
   }
@@ -73,6 +74,27 @@ std::size_t HeightAwareOccupancyGrid::totalKeyframes() const
 slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::snapshot() const
 {
   return grid_.snapshot();
+}
+
+slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::navigationSnapshot() const
+{
+  auto result = grid_.snapshot();
+  for (auto & cell : result.data) {
+    if (cell < 0) {
+      continue;
+    }
+    if (cell <= parameters_.free_maximum) {
+      cell = 0;
+    } else if (cell >= parameters_.occupied_minimum) {
+      cell = 100;
+    } else {
+      // A cell with only partial evidence is deliberately not traversable and
+      // not an obstacle. Publishing it as unknown preserves the standard
+      // frontier boundary and avoids treating a weak obstacle hit as free.
+      cell = -1;
+    }
+  }
+  return result;
 }
 
 void HeightAwareOccupancyGrid::integrate(

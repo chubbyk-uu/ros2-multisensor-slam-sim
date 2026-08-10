@@ -13,14 +13,25 @@ frontier_explorer:
     # the much longer physical navigation deadline.
     action_response_timeout: 15.0
     minimum_known_free_cells: 100
+    # Counted in independent looks, not update_rate ticks: map delivery is
+    # asynchronous, so a tick-based window could take the whole completion
+    # decision from a single stale snapshot.
     completion_empty_cycles: 5
+    # A look also counts once the map has been unchanged this long, because a
+    # finished exploration stops the robot, and a stopped robot produces no
+    # keyframes and therefore no further map. Keep it above the observed
+    # incremental map-delivery interval (well below 1 s in the structured
+    # world), so a map merely between updates is never mistaken for a final one.
+    completion_map_stale_timeout: 10.0
     minimum_goal_free_cell_growth: 100
     maximum_stagnant_goals: 3
     map_topic: /map
     save_snapshot_on_completion: true
     snapshot_service: /scan_to_map_odometry_3d/save_snapshot
     frontier:
-      free_maximum: 20
+      # Must match custom_3d_slam.yaml: Nav2 and the frontier detector consume
+      # the same trinary projection contract.
+      free_maximum: 25
       occupied_minimum: 65
       minimum_cluster_cells: 8
       minimum_clearance: 0.25

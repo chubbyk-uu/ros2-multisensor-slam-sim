@@ -47,6 +47,49 @@ TEST(FrontierDetector, FindsAndRanksSafeFrontierClusters)
   }
 }
 
+TEST(FrontierDetector, DoesNotGuessProbabilisticCellsAsUnknown)
+{
+  // The map producer, not this generic detector, owns probability thresholds.
+  // A raw value of 40 can mean a single free ray or a weakened obstacle hit;
+  // treating it as unknown here would make those meanings indistinguishable.
+  auto map = makeMap();
+  for (std::size_t y = 4; y < 16; ++y) {
+    for (std::size_t x = 4; x < 25; ++x) {
+      if (y == 4 || y == 15 || x == 4 || x == 24) {
+        map.data[y * map.info.width + x] = 40;
+      }
+    }
+  }
+  slam_robot_navigation::FrontierDetectorParameters parameters;
+  parameters.minimum_cluster_cells = 4;
+  parameters.minimum_clearance = 0.2;
+  const auto candidates =
+    slam_robot_navigation::FrontierDetector(parameters).detect(map, 1.0, 1.0);
+
+  EXPECT_TRUE(candidates.empty());
+}
+
+TEST(FrontierDetector, OccupiedNeighboursAreNotAFrontier)
+{
+  // Widening the boundary test must not turn walls into exploration targets.
+  auto map = makeMap();
+  for (std::size_t y = 0; y < map.info.height; ++y) {
+    for (std::size_t x = 0; x < map.info.width; ++x) {
+      auto & cell = map.data[y * map.info.width + x];
+      if (cell < 0) {
+        cell = 100;
+      }
+    }
+  }
+  slam_robot_navigation::FrontierDetectorParameters parameters;
+  parameters.minimum_cluster_cells = 1;
+  parameters.minimum_clearance = 0.0;
+  const auto candidates =
+    slam_robot_navigation::FrontierDetector(parameters).detect(map, 1.0, 1.0);
+
+  EXPECT_TRUE(candidates.empty());
+}
+
 TEST(FrontierDetector, ExposesItsConfiguredFreeThreshold)
 {
   slam_robot_navigation::FrontierDetectorParameters parameters;

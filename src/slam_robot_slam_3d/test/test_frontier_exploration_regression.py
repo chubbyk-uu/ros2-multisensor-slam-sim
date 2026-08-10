@@ -1,6 +1,7 @@
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
+import pytest
 
 MODULE = SourceFileLoader(
     "frontier_exploration_regression",
@@ -26,6 +27,11 @@ def test_default_acceptance_requires_motion_growth_and_success():
 def test_elapsed_formatting_distinguishes_unmeasured_from_zero():
     assert MODULE.format_elapsed(None) == "n/a"
     assert MODULE.format_elapsed(0.0) == "0.0 s"
+
+
+def test_completion_drain_must_not_be_negative():
+    with pytest.raises(SystemExit):
+        MODULE.parse_arguments(["--completion-drain", "-0.1"])
 
 
 def test_mean_map_interval_needs_two_updates():
@@ -87,3 +93,33 @@ def test_completion_records_both_wall_and_simulated_elapsed():
 
     assert regression.completion_sim == 185.0
     assert regression.completion_wall is not None
+
+
+def test_front_end_diagnostics_are_recorded_separately_from_explorer_state():
+    regression = object.__new__(MODULE.ExplorationRegression)
+    regression.probability_unknown_cells = 0
+    regression.probability_free_cells = 0
+    regression.probability_partial_cells = 0
+    regression.probability_occupied_cells = 0
+    status = type(
+        "Status",
+        (),
+        {
+            "name": "custom_slam_3d/scan_to_map_front_end",
+            "values": [
+                type("Value", (), {"key": "occupancy_probability_unknown_cells", "value": "12"})(),
+                type("Value", (), {"key": "occupancy_probability_free_cells", "value": "34"})(),
+                type("Value", (), {"key": "occupancy_probability_partial_cells", "value": "56"})(),
+                type("Value", (), {"key": "occupancy_probability_occupied_cells", "value": "78"})(),
+            ],
+        },
+    )()
+    MODULE.ExplorationRegression.diagnostics_callback(
+        regression, type("Diagnostics", (), {"status": [status]})()
+    )
+    assert (
+        regression.probability_unknown_cells,
+        regression.probability_free_cells,
+        regression.probability_partial_cells,
+        regression.probability_occupied_cells,
+    ) == (12, 34, 56, 78)
