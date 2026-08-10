@@ -144,6 +144,7 @@ public:
   {
     LoopClosureVerifierParameters verifier;
     std::size_t maximum_verification_candidates{3U};
+    std::size_t minimum_constraint_keyframe_interval{30U};
   };
 
   struct PoseGraphRuntimeConfiguration
@@ -525,13 +526,19 @@ private:
       static_cast<int>(parameters.submap_neighbor_keyframes));
     const auto verification_candidates = declare_parameter<int>(
       "loop_closure.verification.maximum_candidates", 3);
-    if (submap_neighbors <= 0 || verification_candidates <= 0) {
+    const auto minimum_constraint_keyframe_interval = declare_parameter<int>(
+      "loop_closure.verification.minimum_constraint_keyframe_interval", 30);
+    if (submap_neighbors <= 0 || verification_candidates <= 0 ||
+      minimum_constraint_keyframe_interval <= 0)
+    {
       throw std::invalid_argument("loop closure verification counts must be positive");
     }
     parameters.submap_neighbor_keyframes =
       static_cast<std::size_t>(submap_neighbors);
     configuration.maximum_verification_candidates =
       static_cast<std::size_t>(verification_candidates);
+    configuration.minimum_constraint_keyframe_interval =
+      static_cast<std::size_t>(minimum_constraint_keyframe_interval);
     parameters.submap_voxel_leaf_size = declare_parameter<double>(
       "loop_closure.verification.submap_voxel_leaf_size",
       parameters.submap_voxel_leaf_size);
@@ -892,7 +899,9 @@ private:
 
   struct LoopClosureTaskResult
   {
+    std::size_t current_keyframe_id{0U};
     std::size_t scan_context_index_size{0U};
+    ScanContextQueryDiagnostics scan_context_diagnostics;
     std::vector<ScanContextCandidate> candidates;
     std::vector<LoopClosureVerificationResult> verifications;
     std::vector<Se2LoopConstraint> accepted_constraints;
@@ -906,14 +915,22 @@ private:
     const GlobalKeyframe current = std::move(pending_loop_keyframes_.front());
     pending_loop_keyframes_.pop_front();
     const auto keyframes = global_keyframes_.snapshot();
+    const bool verification_interval_satisfied =
+      !has_last_accepted_loop_keyframe_ ||
+      (current.id >= last_accepted_loop_keyframe_id_ &&
+      current.id - last_accepted_loop_keyframe_id_ >=
+      loop_closure_configuration_.minimum_constraint_keyframe_interval);
     loop_closure_future_.emplace(std::async(std::launch::async,
-      [this, current, keyframes]() {
+      [this, current, keyframes, verification_interval_satisfied]() {
         LoopClosureTaskResult result;
+        result.current_keyframe_id = current.id;
         result.candidates = scan_context_index_.addAndQuery(current);
+        result.scan_context_diagnostics = scan_context_index_.lastQueryDiagnostics();
         result.scan_context_index_size = scan_context_index_.size();
-        const std::size_t candidate_count = std::min(
+        const std::size_t candidate_count = verification_interval_satisfied ?
+        std::min(
           loop_closure_configuration_.maximum_verification_candidates,
-          result.candidates.size());
+          result.candidates.size()) : 0U;
         result.verifications.reserve(candidate_count);
         for (std::size_t index = 0U; index < candidate_count; ++index) {
           result.verifications.push_back(loop_closure_verifier_.verify(
@@ -930,6 +947,7 @@ private:
           result.accepted_constraints.push_back({
             verification.candidate_keyframe_id, current.id,
             historical.front_end_base_pose.inverse() * current_base_pose});
+          break;
         }
         return result;
       }));
@@ -946,8 +964,28 @@ private:
       const auto result = loop_closure_future_->get();
       loop_closure_future_.reset();
       last_scan_context_candidates_ = result.candidates;
+      last_scan_context_diagnostics_ = result.scan_context_diagnostics;
       last_loop_verification_results_ = result.verifications;
       scan_context_index_size_ = result.scan_context_index_size;
+      loop_retrieval_eligible_count_ +=
+        result.scan_context_diagnostics.eligible_candidates;
+      loop_retrieval_shortlisted_count_ +=
+        result.scan_context_diagnostics.shortlisted_candidates;
+      loop_retrieval_descriptor_rejection_count_ +=
+        result.scan_context_diagnostics.descriptor_rejections;
+      loop_retrieval_distance_at_most_0_05_count_ +=
+        result.scan_context_diagnostics.distance_at_most_0_05;
+      loop_retrieval_distance_at_most_0_10_count_ +=
+        result.scan_context_diagnostics.distance_at_most_0_10;
+      loop_retrieval_distance_at_most_0_15_count_ +=
+        result.scan_context_diagnostics.distance_at_most_0_15;
+      loop_retrieval_candidate_count_ += result.candidates.size();
+      loop_verified_candidate_count_ += result.verifications.size();
+      loop_accepted_candidate_count_ += result.accepted_constraints.size();
+      if (!result.accepted_constraints.empty()) {
+        last_accepted_loop_keyframe_id_ = result.current_keyframe_id;
+        has_last_accepted_loop_keyframe_ = true;
+      }
       pose_graph_submission_state_.enqueue(result.accepted_constraints);
     } catch (const std::exception & error) {
       loop_closure_future_.reset();
@@ -1027,6 +1065,16 @@ private:
     optimized_global_base_poses_ = std::move(snapshot.optimized_base_poses);
     pose_graph_submission_state_.restoreCommitted(
       std::move(snapshot.loop_constraints), restored_keyframes.back().id);
+    const auto & restored_constraints =
+      pose_graph_submission_state_.committedConstraints();
+    if (!restored_constraints.empty()) {
+      last_accepted_loop_keyframe_id_ = std::max_element(
+        restored_constraints.begin(), restored_constraints.end(),
+        [](const auto & first, const auto & second) {
+          return first.target_id < second.target_id;
+        })->target_id;
+      has_last_accepted_loop_keyframe_ = true;
+    }
     for (const auto & keyframe : restored_keyframes) {
       (void)scan_context_index_.addAndQuery(keyframe);
     }
@@ -1406,6 +1454,45 @@ private:
     status.values.push_back(makeValue(
       "scan_context_index_size", std::to_string(scan_context_index_size_)));
     status.values.push_back(makeValue(
+      "loop_retrieval_eligible_candidates",
+      std::to_string(last_scan_context_diagnostics_.eligible_candidates)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_shortlisted_candidates",
+      std::to_string(last_scan_context_diagnostics_.shortlisted_candidates)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_descriptor_rejections",
+      std::to_string(last_scan_context_diagnostics_.descriptor_rejections)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_best_descriptor_distance",
+      std::to_string(last_scan_context_diagnostics_.best_descriptor_distance)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_eligible_total",
+      std::to_string(loop_retrieval_eligible_count_)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_shortlisted_total",
+      std::to_string(loop_retrieval_shortlisted_count_)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_descriptor_rejections_total",
+      std::to_string(loop_retrieval_descriptor_rejection_count_)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_distance_at_most_0_05_total",
+      std::to_string(loop_retrieval_distance_at_most_0_05_count_)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_distance_at_most_0_10_total",
+      std::to_string(loop_retrieval_distance_at_most_0_10_count_)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_distance_at_most_0_15_total",
+      std::to_string(loop_retrieval_distance_at_most_0_15_count_)));
+    status.values.push_back(makeValue(
+      "loop_retrieval_candidates_total",
+      std::to_string(loop_retrieval_candidate_count_)));
+    status.values.push_back(makeValue(
+      "loop_verified_candidates_total",
+      std::to_string(loop_verified_candidate_count_)));
+    status.values.push_back(makeValue(
+      "loop_accepted_candidates_total",
+      std::to_string(loop_accepted_candidate_count_)));
+    status.values.push_back(makeValue(
       "loop_closure_worker_active",
       loop_closure_future_.has_value() ? "true" : "false"));
     status.values.push_back(makeValue(
@@ -1421,6 +1508,10 @@ private:
       "loop_verification_candidate_limit",
       std::to_string(
         loop_closure_configuration_.maximum_verification_candidates)));
+    status.values.push_back(makeValue(
+      "loop_constraint_minimum_keyframe_interval",
+      std::to_string(
+        loop_closure_configuration_.minimum_constraint_keyframe_interval)));
     status.values.push_back(makeValue(
       "loop_closure_failures", std::to_string(loop_closure_failure_count_)));
     status.values.push_back(makeValue(
@@ -1539,8 +1630,20 @@ private:
   bool has_last_global_keyframe_{false};
   double global_accumulated_distance_{0.0};
   std::vector<ScanContextCandidate> last_scan_context_candidates_;
+  ScanContextQueryDiagnostics last_scan_context_diagnostics_;
   std::vector<LoopClosureVerificationResult> last_loop_verification_results_;
   std::size_t scan_context_index_size_{0U};
+  std::size_t loop_retrieval_eligible_count_{0U};
+  std::size_t loop_retrieval_shortlisted_count_{0U};
+  std::size_t loop_retrieval_descriptor_rejection_count_{0U};
+  std::size_t loop_retrieval_distance_at_most_0_05_count_{0U};
+  std::size_t loop_retrieval_distance_at_most_0_10_count_{0U};
+  std::size_t loop_retrieval_distance_at_most_0_15_count_{0U};
+  std::size_t loop_retrieval_candidate_count_{0U};
+  std::size_t loop_verified_candidate_count_{0U};
+  std::size_t loop_accepted_candidate_count_{0U};
+  std::size_t last_accepted_loop_keyframe_id_{0U};
+  bool has_last_accepted_loop_keyframe_{false};
   std::deque<GlobalKeyframe> pending_loop_keyframes_;
   std::size_t dropped_loop_keyframe_count_{0U};
   // Futures are declared after their backends, so they are joined before the

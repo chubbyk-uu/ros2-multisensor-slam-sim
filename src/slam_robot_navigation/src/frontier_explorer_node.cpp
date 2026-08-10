@@ -236,6 +236,8 @@ private:
   {
     if (cancel_with_blacklist_) {
       blacklistCurrentTarget();
+    }
+    if (cancel_counts_as_failure_) {
       ++failed_goals_;
     }
     current_target_.reset();
@@ -247,9 +249,10 @@ private:
 
   // Callers log the cause themselves: a navigation timeout is a fault, while
   // replanning a goal the growing map turned untraversable is routine.
-  void cancelNavigation(bool blacklist_target)
+  void cancelNavigation(bool blacklist_target, bool count_as_failure)
   {
     cancel_with_blacklist_ = blacklist_target;
+    cancel_counts_as_failure_ = count_as_failure;
     state_ = State::kCanceling;
     cancellation_deadline_.arm(
       std::chrono::steady_clock::now(), actionResponseTimeout());
@@ -275,7 +278,7 @@ private:
     if (state_ == State::kNavigating) {
       if (navigation_deadline_.expired(now)) {
         RCLCPP_WARN(get_logger(), "Frontier navigation timed out; canceling goal");
-        cancelNavigation(true);
+        cancelNavigation(true, true);
         return;
       }
     }
@@ -313,7 +316,10 @@ private:
       if (map_revision_ > target_map_revision_ && !targetStillTraversable()) {
         RCLCPP_INFO(
           get_logger(), "Frontier goal became untraversable; canceling and replanning");
-        cancelNavigation(false);
+        // The target is no longer free in the newest map. Blacklist its
+        // neighbourhood so a frontier shifted by one or two cells cannot be
+        // selected again and consume another full navigation timeout.
+        cancelNavigation(true, false);
       }
       publishDiagnostics();
       return;
@@ -492,7 +498,14 @@ private:
             }
           }
         } else {
-          if (result.code != rclcpp_action::ResultCode::CANCELED || cancel_with_blacklist_) {
+          if (result.code == rclcpp_action::ResultCode::CANCELED) {
+            if (cancel_with_blacklist_) {
+              blacklistCurrentTarget();
+            }
+            if (cancel_counts_as_failure_) {
+              ++failed_goals_;
+            }
+          } else {
             ++failed_goals_;
             blacklistCurrentTarget();
           }
@@ -504,6 +517,7 @@ private:
       };
     state_ = State::kNavigating;
     cancel_with_blacklist_ = false;
+    cancel_counts_as_failure_ = false;
     navigation_deadline_.arm(
       std::chrono::steady_clock::now(),
       std::chrono::duration_cast<std::chrono::steady_clock::duration>(
@@ -687,6 +701,7 @@ private:
   std::optional<FrontierCandidate> best_candidate_;
   double best_path_score_{0.0};
   bool cancel_with_blacklist_{false};
+  bool cancel_counts_as_failure_{false};
   FrontierActionDeadline navigation_deadline_;
   FrontierActionDeadline planning_deadline_;
   FrontierActionDeadline cancellation_deadline_;

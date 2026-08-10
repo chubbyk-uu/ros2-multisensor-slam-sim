@@ -32,6 +32,8 @@ def test_map_bounds_tracks_only_selected_cells_in_world_coordinates():
         1.5, -2.0, 2.5, -1.0
     )
     assert MODULE.bounds_area((1.5, -2.0, 2.5, -1.0)) == 1.0
+    assert MODULE.bounds_width((1.5, -2.0, 2.5, -1.0)) == 1.0
+    assert MODULE.bounds_height((1.5, -2.0, 2.5, -1.0)) == 1.0
 
 
 def test_default_acceptance_requires_motion_growth_and_success():
@@ -41,6 +43,10 @@ def test_default_acceptance_requires_motion_growth_and_success():
     assert arguments.minimum_free_cell_growth > 0
     assert arguments.minimum_final_free_cells >= 38000
     assert arguments.minimum_travel_distance >= 35.0
+    assert arguments.maximum_successful_goals < 156
+    assert arguments.maximum_known_bbox_width_m > 0.0
+    assert arguments.maximum_known_bbox_height_m > 0.0
+    assert arguments.minimum_loop_accepted_candidates == 0
     assert "snapshot service is unavailable" in MODULE.CRITICAL_LOG_FRAGMENTS
 
 
@@ -128,6 +134,16 @@ def test_front_end_diagnostics_are_recorded_separately_from_explorer_state():
     regression.pose_graph_commits = 0
     regression.pose_graph_discards = 0
     regression.pose_graph_failures = 0
+    regression.submap_reinitializations = 0
+    regression.loop_retrieval_eligible = 0
+    regression.loop_retrieval_shortlisted = 0
+    regression.loop_retrieval_descriptor_rejections = 0
+    regression.loop_retrieval_distance_at_most_0_05 = 0
+    regression.loop_retrieval_distance_at_most_0_10 = 0
+    regression.loop_retrieval_distance_at_most_0_15 = 0
+    regression.loop_retrieval_candidates = 0
+    regression.loop_verified_candidates = 0
+    regression.loop_accepted_candidates = 0
     status = type(
         "Status",
         (),
@@ -141,6 +157,16 @@ def test_front_end_diagnostics_are_recorded_separately_from_explorer_state():
                 value("pose_graph_commits", "9"),
                 value("pose_graph_discards", "2"),
                 value("pose_graph_failures", "1"),
+                value("submap_reinitializations", "2"),
+                value("loop_retrieval_eligible_total", "100"),
+                value("loop_retrieval_shortlisted_total", "80"),
+                value("loop_retrieval_descriptor_rejections_total", "50"),
+                value("loop_retrieval_distance_at_most_0_05_total", "10"),
+                value("loop_retrieval_distance_at_most_0_10_total", "20"),
+                value("loop_retrieval_distance_at_most_0_15_total", "30"),
+                value("loop_retrieval_candidates_total", "30"),
+                value("loop_verified_candidates_total", "20"),
+                value("loop_accepted_candidates_total", "7"),
             ],
         },
     )()
@@ -158,3 +184,17 @@ def test_front_end_diagnostics_are_recorded_separately_from_explorer_state():
         regression.pose_graph_discards,
         regression.pose_graph_failures,
     ) == (9, 2, 1)
+    assert regression.submap_reinitializations == 2
+    assert (
+        regression.loop_retrieval_distance_at_most_0_05,
+        regression.loop_retrieval_distance_at_most_0_10,
+        regression.loop_retrieval_distance_at_most_0_15,
+    ) == (10, 20, 30)
+    assert (
+        regression.loop_retrieval_eligible,
+        regression.loop_retrieval_shortlisted,
+        regression.loop_retrieval_descriptor_rejections,
+        regression.loop_retrieval_candidates,
+        regression.loop_verified_candidates,
+        regression.loop_accepted_candidates,
+    ) == (100, 80, 50, 30, 20, 7)

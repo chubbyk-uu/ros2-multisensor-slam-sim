@@ -62,6 +62,14 @@ def bounds_area(bounds):
     return (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
 
 
+def bounds_width(bounds):
+    return 0.0 if bounds is None else bounds[2] - bounds[0]
+
+
+def bounds_height(bounds):
+    return 0.0 if bounds is None else bounds[3] - bounds[1]
+
+
 def format_elapsed(seconds):
     return "n/a" if seconds is None else f"{seconds:.1f} s"
 
@@ -81,6 +89,8 @@ class ExplorationRegression(Node):
         self.maximum_free_bounds = None
         self.maximum_known_bounds = None
         self.maximum_known_bbox_area = 0.0
+        self.maximum_known_bbox_width = 0.0
+        self.maximum_known_bbox_height = 0.0
         self.maximum_free_bbox_area = 0.0
         self.successful_goals = 0
         self.failed_goals = 0
@@ -102,6 +112,16 @@ class ExplorationRegression(Node):
         self.pose_graph_commits = 0
         self.pose_graph_discards = 0
         self.pose_graph_failures = 0
+        self.submap_reinitializations = 0
+        self.loop_retrieval_eligible = 0
+        self.loop_retrieval_shortlisted = 0
+        self.loop_retrieval_descriptor_rejections = 0
+        self.loop_retrieval_distance_at_most_0_05 = 0
+        self.loop_retrieval_distance_at_most_0_10 = 0
+        self.loop_retrieval_distance_at_most_0_15 = 0
+        self.loop_retrieval_candidates = 0
+        self.loop_verified_candidates = 0
+        self.loop_accepted_candidates = 0
         # Wall and simulation elapsed are both recorded because the two stacks
         # do not run at the same real-time factor, so an equal wall-clock
         # budget is not an equal simulated budget.
@@ -172,6 +192,12 @@ class ExplorationRegression(Node):
         if bounds_area(known_bounds) > self.maximum_known_bbox_area:
             self.maximum_known_bbox_area = bounds_area(known_bounds)
             self.maximum_known_bounds = known_bounds
+        self.maximum_known_bbox_width = max(
+            self.maximum_known_bbox_width, bounds_width(known_bounds)
+        )
+        self.maximum_known_bbox_height = max(
+            self.maximum_known_bbox_height, bounds_height(known_bounds)
+        )
         if bounds_area(free_bounds) > self.maximum_free_bbox_area:
             self.maximum_free_bbox_area = bounds_area(free_bounds)
             self.maximum_free_bounds = free_bounds
@@ -229,6 +255,36 @@ class ExplorationRegression(Node):
                 self.pose_graph_commits = int(values.get("pose_graph_commits", 0))
                 self.pose_graph_discards = int(values.get("pose_graph_discards", 0))
                 self.pose_graph_failures = int(values.get("pose_graph_failures", 0))
+                self.submap_reinitializations = int(
+                    values.get("submap_reinitializations", 0)
+                )
+                self.loop_retrieval_eligible = int(
+                    values.get("loop_retrieval_eligible_total", 0)
+                )
+                self.loop_retrieval_shortlisted = int(
+                    values.get("loop_retrieval_shortlisted_total", 0)
+                )
+                self.loop_retrieval_descriptor_rejections = int(
+                    values.get("loop_retrieval_descriptor_rejections_total", 0)
+                )
+                self.loop_retrieval_distance_at_most_0_05 = int(
+                    values.get("loop_retrieval_distance_at_most_0_05_total", 0)
+                )
+                self.loop_retrieval_distance_at_most_0_10 = int(
+                    values.get("loop_retrieval_distance_at_most_0_10_total", 0)
+                )
+                self.loop_retrieval_distance_at_most_0_15 = int(
+                    values.get("loop_retrieval_distance_at_most_0_15_total", 0)
+                )
+                self.loop_retrieval_candidates = int(
+                    values.get("loop_retrieval_candidates_total", 0)
+                )
+                self.loop_verified_candidates = int(
+                    values.get("loop_verified_candidates_total", 0)
+                )
+                self.loop_accepted_candidates = int(
+                    values.get("loop_accepted_candidates_total", 0)
+                )
 
     def collision_callback(self, message):
         if (
@@ -286,18 +342,39 @@ def parse_arguments(arguments):
     parser.add_argument("--minimum-final-free-cells", type=int, default=38000)
     parser.add_argument("--minimum-travel-distance", type=float, default=35.0)
     parser.add_argument("--maximum-failed-goals", type=int, default=5)
+    parser.add_argument("--maximum-successful-goals", type=int, default=30)
     parser.add_argument("--maximum-collision-transitions", type=int, default=3)
     parser.add_argument("--maximum-recovery-events", type=int, default=5)
     # The closed structured-loop corridor has less than 216 m2 of physical
     # floor area. 240 m2 leaves measurement margin while rejecting a warped
     # map that fabricates free space outside the world.
     parser.add_argument("--maximum-free-area-m2", type=float, default=240.0)
+    parser.add_argument("--maximum-known-bbox-width-m", type=float, default=28.0)
+    parser.add_argument("--maximum-known-bbox-height-m", type=float, default=16.5)
+    parser.add_argument("--maximum-known-bbox-area-m2", type=float, default=455.0)
+    parser.add_argument("--maximum-submap-reinitializations", type=int, default=1)
+    # A single exploration pass need not revisit a place closely enough to
+    # produce a loop. Positive loop recall belongs to the fixed-bag two-lap
+    # regression; this test still records any loop activity and graph failures.
+    parser.add_argument("--minimum-loop-accepted-candidates", type=int, default=0)
     parser.add_argument("--completion-drain", type=float, default=5.0)
     parsed = parser.parse_args(arguments)
     if parsed.completion_drain < 0.0:
         parser.error("--completion-drain must be non-negative")
     if parsed.maximum_free_area_m2 <= 0.0:
         parser.error("--maximum-free-area-m2 must be positive")
+    if (
+        parsed.maximum_known_bbox_width_m <= 0.0
+        or parsed.maximum_known_bbox_height_m <= 0.0
+        or parsed.maximum_known_bbox_area_m2 <= 0.0
+    ):
+        parser.error("map bounding-box limits must be positive")
+    if parsed.maximum_successful_goals < parsed.minimum_successful_goals:
+        parser.error("--maximum-successful-goals must allow the required minimum")
+    if parsed.maximum_submap_reinitializations < 0:
+        parser.error("--maximum-submap-reinitializations must be non-negative")
+    if parsed.minimum_loop_accepted_candidates < 0:
+        parser.error("--minimum-loop-accepted-candidates must be non-negative")
     return parsed
 
 
@@ -314,14 +391,30 @@ def evaluate(regression, arguments):
         >= arguments.minimum_final_free_cells,
         "free_area_within_structured_world": regression.maximum_free_area
         <= arguments.maximum_free_area_m2,
+        "known_map_width_within_structured_world":
+        regression.maximum_known_bbox_width <= arguments.maximum_known_bbox_width_m,
+        "known_map_height_within_structured_world":
+        regression.maximum_known_bbox_height <= arguments.maximum_known_bbox_height_m,
+        "known_map_bbox_within_structured_world": regression.maximum_known_bbox_area
+        <= arguments.maximum_known_bbox_area_m2,
         "robot_explored_physically": regression.truth_distance
         >= arguments.minimum_travel_distance,
         "failed_goal_budget": regression.failed_goals
         <= arguments.maximum_failed_goals,
+        "successful_goal_budget": regression.successful_goals
+        <= arguments.maximum_successful_goals,
         "collision_monitor_budget": regression.collision_transitions
         <= arguments.maximum_collision_transitions,
         "navigation_recovery_budget": regression.recovery_events
         <= arguments.maximum_recovery_events,
+        "submap_reinitialization_budget": regression.submap_reinitializations
+        <= arguments.maximum_submap_reinitializations,
+        "loop_closure_recalled": regression.loop_accepted_candidates
+        >= arguments.minimum_loop_accepted_candidates,
+        "pose_graph_results_applied":
+        arguments.minimum_loop_accepted_candidates == 0
+        or regression.pose_graph_commits > 0,
+        "no_pose_graph_failures": regression.pose_graph_failures == 0,
         "no_critical_logs": not regression.critical_logs,
     }
     print("RESULT frontier exploration", flush=True)
@@ -335,7 +428,9 @@ def evaluate(regression, arguments):
         f"free bbox={regression.maximum_free_bbox_area:.3f} m2 "
         f"{regression.maximum_free_bounds} "
         f"known bbox={regression.maximum_known_bbox_area:.3f} m2 "
-        f"{regression.maximum_known_bounds}",
+        f"{regression.maximum_known_bounds} "
+        f"maximum known width={regression.maximum_known_bbox_width:.3f} m "
+        f"height={regression.maximum_known_bbox_height:.3f} m",
         flush=True,
     )
     print(
@@ -379,6 +474,25 @@ def evaluate(regression, arguments):
         f"commits={regression.pose_graph_commits} "
         f"discards={regression.pose_graph_discards} "
         f"failures={regression.pose_graph_failures}",
+        flush=True,
+    )
+    print(
+        "  front-end recovery: "
+        f"submap reinitializations={regression.submap_reinitializations}",
+        flush=True,
+    )
+    print(
+        "  loop retrieval funnel: "
+        f"eligible={regression.loop_retrieval_eligible} "
+        f"shortlisted={regression.loop_retrieval_shortlisted} "
+        f"descriptor_rejections={regression.loop_retrieval_descriptor_rejections} "
+        "distance bins: "
+        f"<=0.05={regression.loop_retrieval_distance_at_most_0_05} "
+        f"<=0.10={regression.loop_retrieval_distance_at_most_0_10} "
+        f"<=0.15={regression.loop_retrieval_distance_at_most_0_15} "
+        f"proposals={regression.loop_retrieval_candidates} "
+        f"verified={regression.loop_verified_candidates} "
+        f"accepted={regression.loop_accepted_candidates}",
         flush=True,
     )
     print(

@@ -3,7 +3,11 @@ frontier_explorer:
     use_sim_time: true
     update_rate: 1.0
     evaluation_candidate_limit: 5
-    path_cost_weight: 1.0
+    # Candidate gain is frontier length in metres. Straight-line distance is
+    # only a cheap shortlist preference; the returned Nav2 path is the real
+    # travel cost. Keeping both travel weights small prevents tiny 0.3 m
+    # frontiers from starving larger boundaries elsewhere in the map.
+    path_cost_weight: 0.05
     blacklist_radius: 0.5
     # Must outlive several full navigation timeouts so multiple permanently
     # unreachable residual frontiers cannot rotate back into consideration.
@@ -36,5 +40,5 @@ frontier_explorer:
       minimum_cluster_cells: 8
       minimum_clearance: 0.25
       information_gain_weight: 2.0
-      distance_weight: 1.0
-      clearance_weight: 0.5
+      distance_weight: 0.05
+      clearance_weight: 0.1

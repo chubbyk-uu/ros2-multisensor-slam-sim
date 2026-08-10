@@ -1,5 +1,6 @@
 #include <cmath>
 #include <memory>
+#include <stdexcept>
 
 #include <gtest/gtest.h>
 
@@ -54,6 +55,43 @@ TEST(ScanContextIndex, RetrievesDistantHistoricalPlaceAndEstimatesYaw)
   EXPECT_EQ(candidates.front().keyframe_id, 0U);
   EXPECT_LT(candidates.front().descriptor_distance, 0.05);
   EXPECT_GT(std::abs(candidates.front().predicted_yaw), 0.1);
+  EXPECT_EQ(index.lastQueryDiagnostics().eligible_candidates, 1U);
+  EXPECT_EQ(index.lastQueryDiagnostics().accepted_candidates, 1U);
+  EXPECT_EQ(index.lastQueryDiagnostics().descriptor_rejections, 0U);
+}
+
+TEST(ScanContextIndex, AcceptsScaledAndPartiallyOccludedRevisit)
+{
+  ScanContextParameters parameters;
+  parameters.radial_bins = 10U;
+  parameters.angular_bins = 36U;
+  parameters.minimum_keyframe_separation = 1U;
+  parameters.minimum_travel_distance = 0.0;
+  parameters.maximum_descriptor_distance = 0.15;
+  ScanContextIndex index(parameters);
+
+  index.addAndQuery(makeKeyframe(0U, 0.0, 0.0, 0.0));
+  auto revisit = makeKeyframe(1U, 10.0, 0.0, 0.35);
+  auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  for (std::size_t point_index = 0U;
+    point_index < revisit.filtered_scan->size(); ++point_index)
+  {
+    if (point_index == 2U) {
+      continue;
+    }
+    auto point = revisit.filtered_scan->at(point_index);
+    point.z *= 1.25F;
+    scan->push_back(point);
+  }
+  scan->width = scan->size();
+  scan->height = 1U;
+  scan->is_dense = true;
+  revisit.filtered_scan = scan;
+
+  const auto candidates = index.addAndQuery(revisit);
+  ASSERT_EQ(candidates.size(), 1U);
+  EXPECT_EQ(candidates.front().keyframe_id, 0U);
+  EXPECT_LE(candidates.front().descriptor_distance, 0.15);
 }
 
 TEST(ScanContextIndex, ExcludesTemporalAndShortTravelCandidates)
@@ -87,7 +125,7 @@ TEST(ScanContextIndex, RejectsDissimilarRetrievalProposal)
   parameters.angular_bins = 36U;
   parameters.minimum_keyframe_separation = 1U;
   parameters.minimum_travel_distance = 0.0;
-  parameters.maximum_descriptor_distance = 0.01;
+  parameters.maximum_descriptor_distance = 0.15;
   ScanContextIndex index(parameters);
 
   index.addAndQuery(makeKeyframe(0U, 0.0, 0.0, 0.0));
@@ -100,6 +138,15 @@ TEST(ScanContextIndex, RejectsDissimilarRetrievalProposal)
   }
   different.filtered_scan = modified_scan;
   EXPECT_TRUE(index.addAndQuery(different).empty());
+  EXPECT_EQ(index.lastQueryDiagnostics().descriptor_rejections, 1U);
+  EXPECT_GT(index.lastQueryDiagnostics().best_descriptor_distance, 0.15);
+}
+
+TEST(ScanContextIndex, RejectsDescriptorThresholdOutsideNormalizedRange)
+{
+  ScanContextParameters parameters;
+  parameters.maximum_descriptor_distance = 1.01;
+  EXPECT_THROW(ScanContextIndex index(parameters), std::invalid_argument);
 }
 
 }  // namespace

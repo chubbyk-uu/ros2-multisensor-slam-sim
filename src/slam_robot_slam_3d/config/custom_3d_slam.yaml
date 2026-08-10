@@ -78,10 +78,9 @@
         angular_bins: 60
         minimum_keyframe_separation: 80
         minimum_travel_distance: 8.0
-        # Scan Context is a retrieval proposal, not an unconditional loop
-        # edge source. Recorded structured-world candidates above 0.15 were
-        # visually dissimilar false proposals despite ranking first.
-        maximum_descriptor_distance: 0.15
+        # Unitless, rotation-aligned cosine distance in [0, 1]. Scan Context
+        # is a retrieval proposal; GICP still makes the geometric decision.
+        maximum_descriptor_distance: 0.05
         ring_key_candidate_count: 20
         maximum_candidates: 5
 
@@ -97,6 +96,11 @@
         maximum_correction_translation: 3.0
         maximum_correction_rotation: 1.0
         maximum_candidates: 3
+        # At most one geometrically verified loop edge is retained for a
+        # current keyframe, and accepted edges must be separated in time.
+        # Repeated corridor geometry otherwise creates hundreds of redundant
+        # constraints that overpower the sequential odometry chain.
+        minimum_constraint_keyframe_interval: 30
 
     pose_graph:
       map_frame: map

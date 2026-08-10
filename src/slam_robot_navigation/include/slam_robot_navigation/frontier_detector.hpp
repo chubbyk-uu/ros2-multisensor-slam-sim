@@ -17,9 +17,12 @@ struct FrontierDetectorParameters
   std::int8_t occupied_minimum{65};
   std::size_t minimum_cluster_cells{8};
   double minimum_clearance{0.25};
+  // information_gain is frontier length in metres. These configurable weights
+  // convert length, straight-line travel and clearance into one ranking score;
+  // Nav2 path length is evaluated separately by the explorer.
   double information_gain_weight{2.0};
-  double distance_weight{1.0};
-  double clearance_weight{0.5};
+  double distance_weight{0.05};
+  double clearance_weight{0.1};
 };
 
 struct FrontierCandidate

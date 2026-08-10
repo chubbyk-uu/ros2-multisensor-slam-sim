@@ -18,9 +18,10 @@ struct ScanContextParameters
   std::size_t angular_bins{60U};
   std::size_t minimum_keyframe_separation{80U};
   double minimum_travel_distance{8.0};
-  // Retrieval is only a proposal stage. Do not hand arbitrarily dissimilar
-  // places to geometric verification merely because they rank first.
-  double maximum_descriptor_distance{0.15};
+  // Maximum normalized cosine distance in [0, 1]. Retrieval is only a
+  // proposal stage, so dissimilar places are not handed to GICP merely
+  // because they rank first.
+  double maximum_descriptor_distance{0.05};
   std::size_t ring_key_candidate_count{20U};
   std::size_t maximum_candidates{5U};
 };
@@ -31,6 +32,18 @@ struct ScanContextCandidate
   double descriptor_distance{0.0};
   double ring_key_distance{0.0};
   double predicted_yaw{0.0};
+};
+
+struct ScanContextQueryDiagnostics
+{
+  std::size_t eligible_candidates{0U};
+  std::size_t shortlisted_candidates{0U};
+  std::size_t accepted_candidates{0U};
+  std::size_t descriptor_rejections{0U};
+  std::size_t distance_at_most_0_05{0U};
+  std::size_t distance_at_most_0_10{0U};
+  std::size_t distance_at_most_0_15{0U};
+  double best_descriptor_distance{-1.0};
 };
 
 // Incremental Scan Context-style retrieval index. It ranks visual-place
@@ -44,6 +57,7 @@ public:
   std::vector<ScanContextCandidate> addAndQuery(
     const GlobalKeyframe & keyframe);
   std::size_t size() const;
+  const ScanContextQueryDiagnostics & lastQueryDiagnostics() const;
 
 private:
   struct Descriptor
@@ -60,11 +74,12 @@ private:
   };
 
   Descriptor makeDescriptor(const GlobalKeyframe & keyframe) const;
-  std::vector<ScanContextCandidate> query(const Entry & current) const;
+  std::vector<ScanContextCandidate> query(const Entry & current);
   void validateParameters() const;
 
   ScanContextParameters parameters_;
   std::vector<Entry> entries_;
+  ScanContextQueryDiagnostics last_query_diagnostics_;
 };
 
 }  // namespace slam_robot_slam_3d

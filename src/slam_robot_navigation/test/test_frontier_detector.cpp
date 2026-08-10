@@ -28,6 +28,27 @@ nav_msgs::msg::OccupancyGrid makeMap()
   return map;
 }
 
+nav_msgs::msg::OccupancyGrid makeSeparatedFrontiersMap()
+{
+  nav_msgs::msg::OccupancyGrid map;
+  map.info.resolution = 0.1F;
+  map.info.width = 140;
+  map.info.height = 60;
+  map.data.assign(map.info.width * map.info.height, -1);
+  const auto fill_free = [&map](
+    std::size_t min_x, std::size_t max_x,
+    std::size_t min_y, std::size_t max_y) {
+      for (std::size_t y = min_y; y < max_y; ++y) {
+        for (std::size_t x = min_x; x < max_x; ++x) {
+          map.data[y * map.info.width + x] = 0;
+        }
+      }
+    };
+  fill_free(5U, 10U, 25U, 30U);
+  fill_free(80U, 120U, 10U, 50U);
+  return map;
+}
+
 TEST(FrontierDetector, FindsAndRanksSafeFrontierClusters)
 {
   slam_robot_navigation::FrontierDetectorParameters parameters;
@@ -45,6 +66,20 @@ TEST(FrontierDetector, FindsAndRanksSafeFrontierClusters)
     EXPECT_GE(candidate.cell_x, 4U);
     EXPECT_LE(candidate.cell_x, 24U);
   }
+}
+
+TEST(FrontierDetector, LargerFrontierOutranksTinyNearbyFragment)
+{
+  slam_robot_navigation::FrontierDetectorParameters parameters;
+  parameters.minimum_cluster_cells = 1U;
+  parameters.minimum_clearance = 0.0;
+  slam_robot_navigation::FrontierDetector detector(parameters);
+  const auto candidates = detector.detect(makeSeparatedFrontiersMap(), 0.7, 2.7);
+
+  ASSERT_EQ(candidates.size(), 2U);
+  EXPECT_GT(candidates.front().cluster_cells, candidates.back().cluster_cells);
+  EXPECT_GT(candidates.front().robot_distance, candidates.back().robot_distance);
+  EXPECT_GT(candidates.front().score, candidates.back().score);
 }
 
 TEST(FrontierDetector, DoesNotGuessProbabilisticCellsAsUnknown)

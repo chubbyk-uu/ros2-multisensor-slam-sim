@@ -27,18 +27,27 @@ std::pair<double, std::size_t> alignedDescriptorDistance(
   double best_distance = std::numeric_limits<double>::infinity();
   std::size_t best_shift = 0U;
   for (Eigen::Index shift = 0; shift < current.cols(); ++shift) {
-    double sum_squared_error = 0.0;
-    for (Eigen::Index row = 0; row < current.rows(); ++row) {
-      for (Eigen::Index column = 0; column < current.cols(); ++column) {
-        const Eigen::Index historical_column =
-          (column + shift) % current.cols();
-        const double difference = static_cast<double>(current(row, column)) -
-          static_cast<double>(historical(row, historical_column));
-        sum_squared_error += difference * difference;
+    double similarity_sum = 0.0;
+    std::size_t compared_sectors = 0U;
+    for (Eigen::Index column = 0; column < current.cols(); ++column) {
+      const Eigen::Index historical_column = (column + shift) % current.cols();
+      const auto current_sector = current.col(column);
+      const auto historical_sector = historical.col(historical_column);
+      const double current_norm = current_sector.norm();
+      const double historical_norm = historical_sector.norm();
+      if (current_norm == 0.0 && historical_norm == 0.0) {
+        continue;
+      }
+      ++compared_sectors;
+      if (current_norm > 0.0 && historical_norm > 0.0) {
+        similarity_sum += std::clamp(
+          static_cast<double>(current_sector.dot(historical_sector)) /
+          (current_norm * historical_norm), 0.0, 1.0);
       }
     }
-    const double distance = std::sqrt(
-      sum_squared_error / static_cast<double>(current.size()));
+    const double distance = compared_sectors == 0U ?
+      std::numeric_limits<double>::infinity() :
+      1.0 - similarity_sum / static_cast<double>(compared_sectors);
     if (distance < best_distance) {
       best_distance = distance;
       best_shift = static_cast<std::size_t>(shift);
@@ -80,6 +89,11 @@ std::size_t ScanContextIndex::size() const
   return entries_.size();
 }
 
+const ScanContextQueryDiagnostics & ScanContextIndex::lastQueryDiagnostics() const
+{
+  return last_query_diagnostics_;
+}
+
 ScanContextIndex::Descriptor ScanContextIndex::makeDescriptor(
   const GlobalKeyframe & keyframe) const
 {
@@ -118,8 +132,9 @@ ScanContextIndex::Descriptor ScanContextIndex::makeDescriptor(
 }
 
 std::vector<ScanContextCandidate> ScanContextIndex::query(
-  const Entry & current) const
+  const Entry & current)
 {
+  last_query_diagnostics_ = {};
   struct RingKeyCandidate
   {
     const Entry * entry;
@@ -135,6 +150,7 @@ std::vector<ScanContextCandidate> ScanContextIndex::query(
     {
       continue;
     }
+    ++last_query_diagnostics_.eligible_candidates;
     ring_key_candidates.push_back(
       {&historical, ringKeyDistance(current.descriptor.ring_key,
       historical.descriptor.ring_key)});
@@ -147,13 +163,29 @@ std::vector<ScanContextCandidate> ScanContextIndex::query(
   if (ring_key_candidates.size() > parameters_.ring_key_candidate_count) {
     ring_key_candidates.resize(parameters_.ring_key_candidate_count);
   }
+  last_query_diagnostics_.shortlisted_candidates = ring_key_candidates.size();
 
   std::vector<ScanContextCandidate> candidates;
   candidates.reserve(ring_key_candidates.size());
   for (const auto & ring_key_candidate : ring_key_candidates) {
     const auto [descriptor_distance, shift] = alignedDescriptorDistance(
       current.descriptor.cells, ring_key_candidate.entry->descriptor.cells);
+    if (last_query_diagnostics_.best_descriptor_distance < 0.0 ||
+      descriptor_distance < last_query_diagnostics_.best_descriptor_distance)
+    {
+      last_query_diagnostics_.best_descriptor_distance = descriptor_distance;
+    }
+    if (descriptor_distance <= 0.05) {
+      ++last_query_diagnostics_.distance_at_most_0_05;
+    }
+    if (descriptor_distance <= 0.10) {
+      ++last_query_diagnostics_.distance_at_most_0_10;
+    }
+    if (descriptor_distance <= 0.15) {
+      ++last_query_diagnostics_.distance_at_most_0_15;
+    }
     if (descriptor_distance > parameters_.maximum_descriptor_distance) {
+      ++last_query_diagnostics_.descriptor_rejections;
       continue;
     }
     candidates.push_back({
@@ -171,6 +203,7 @@ std::vector<ScanContextCandidate> ScanContextIndex::query(
   if (candidates.size() > parameters_.maximum_candidates) {
     candidates.resize(parameters_.maximum_candidates);
   }
+  last_query_diagnostics_.accepted_candidates = candidates.size();
   return candidates;
 }
 
@@ -184,6 +217,7 @@ void ScanContextIndex::validateParameters() const
     parameters_.minimum_travel_distance < 0.0 ||
     !std::isfinite(parameters_.maximum_descriptor_distance) ||
     parameters_.maximum_descriptor_distance <= 0.0 ||
+    parameters_.maximum_descriptor_distance > 1.0 ||
     parameters_.ring_key_candidate_count == 0U ||
     parameters_.maximum_candidates == 0U)
   {

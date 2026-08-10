@@ -170,6 +170,9 @@ ros2 launch slam_robot_slam_3d frontier_exploration_regression.launch.py
 ros2 launch slam_robot_slam_3d rtabmap_frontier_exploration_regression.launch.py
 ```
 
+自研探索回归检查覆盖率、地图宽高/面积、目标与恢复预算、子图重启和自动快照；
+固定包双圈回环召回使用 `custom_3d_loop_regression.launch.py` 单独验收。
+
 3D 地图显示、数据库复用、结构化世界、MOLA 对照和完整验收标准见
 [3D 工作流](docs/3d-workflows.md)。
 
