@@ -44,6 +44,8 @@ TEST(SlamSnapshot, RoundTripsAllPersistentState)
   source.optimized_base_poses = {
     Eigen::Isometry3d::Identity(), Eigen::Isometry3d::Identity()};
   source.optimized_base_poses.back().translation().x() = 0.9;
+  source.occupancy_projection.input_voxel_leaf_size = 0.04;
+  source.occupancy_projection.maximum_ray_range = 7.5;
 
   saveSlamSnapshot(path.string(), source);
   const auto restored = loadSlamSnapshot(path.string());
@@ -57,6 +59,8 @@ TEST(SlamSnapshot, RoundTripsAllPersistentState)
   EXPECT_FLOAT_EQ(restored.keyframes[0].registration_scan->front().intensity, 4.0F);
   EXPECT_FLOAT_EQ(restored.keyframes[0].occupancy_scan->front().intensity, 5.0F);
   EXPECT_DOUBLE_EQ(restored.optimized_base_poses[1].translation().x(), 0.9);
+  EXPECT_DOUBLE_EQ(restored.occupancy_projection.input_voxel_leaf_size, 0.04);
+  EXPECT_DOUBLE_EQ(restored.occupancy_projection.maximum_ray_range, 7.5);
   std::filesystem::remove(path);
 }
 

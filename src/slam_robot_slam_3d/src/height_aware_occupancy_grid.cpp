@@ -12,14 +12,9 @@ HeightAwareOccupancyGrid::HeightAwareOccupancyGrid(
   HeightAwareOccupancyGridParameters parameters)
 : parameters_(std::move(parameters)), grid_(parameters_.grid)
 {
-  if (!std::isfinite(parameters_.minimum_obstacle_height) ||
-    !std::isfinite(parameters_.maximum_obstacle_height) ||
-    parameters_.minimum_obstacle_height < 0.0 ||
-    parameters_.minimum_obstacle_height >= parameters_.maximum_obstacle_height ||
-    parameters_.keyframes_per_batch == 0U || parameters_.free_maximum < 0 ||
-    parameters_.occupied_minimum <= parameters_.free_maximum ||
-    !std::isfinite(parameters_.maximum_ray_range) ||
-    parameters_.maximum_ray_range <= 0.0)
+  validateOccupancyProjectionContract(parameters_.projection);
+  if (parameters_.keyframes_per_batch == 0U || parameters_.free_maximum < 0 ||
+    parameters_.occupied_minimum <= parameters_.free_maximum)
   {
     throw std::invalid_argument("height-aware occupancy grid parameters are invalid");
   }
@@ -110,15 +105,10 @@ void HeightAwareOccupancyGrid::integrate(
   const Eigen::Vector3d origin = map_from_sensor.translation();
   for (const auto & point : *keyframe.occupancy_scan) {
     const Eigen::Vector3d endpoint = map_from_sensor * Eigen::Vector3d(point.x, point.y, point.z);
-    if (!endpoint.allFinite()) {
-      continue;
-    }
-    // Measured in the projection plane, because that is the geometry this
-    // grid reasons about: a return 18 m away along the floor carries the same
-    // weight here as one at 2 m, while the sensor's angular spacing means the
-    // far one may be the only sample its whole wall segment ever receives.
-    if ((endpoint.head<2>() - origin.head<2>()).norm() >
-      parameters_.maximum_ray_range)
+    const auto evidence =
+      classifyOccupancyEvidence(point, map_from_sensor, parameters_.projection);
+    if (evidence == OccupancyEvidence::kOutsideRange ||
+      evidence == OccupancyEvidence::kAboveObstacleBand)
     {
       continue;
     }
@@ -126,16 +116,13 @@ void HeightAwareOccupancyGrid::integrate(
       static_cast<float>(origin.x()), static_cast<float>(origin.y())};
     const slam_robot_slam::Point2D endpoint_xy{
       static_cast<float>(endpoint.x()), static_cast<float>(endpoint.y())};
-    if (endpoint.z() < parameters_.minimum_obstacle_height) {
+    if (evidence == OccupancyEvidence::kFreeRay) {
       // A return below the navigation obstacle band is ground evidence.  It
       // cannot occupy a 2D navigation cell, but its observed line of sight
       // establishes free space.  Returns above the band remain excluded:
       // projecting a ceiling or overhang ray into 2D would incorrectly clear
       // an obstacle below it.
       grid_.updateRay(origin_xy, endpoint_xy, false);
-      continue;
-    }
-    if (endpoint.z() > parameters_.maximum_obstacle_height) {
       continue;
     }
     grid_.updateRay(origin_xy, endpoint_xy, true);

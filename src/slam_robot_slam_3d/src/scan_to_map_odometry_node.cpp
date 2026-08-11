@@ -215,6 +215,8 @@ public:
       "global_map.voxel_leaf_size", 0.15);
     const auto grid_batches = declare_parameter<int>("occupancy_grid.keyframes_per_batch", 4);
     const auto grid_resolution = declare_parameter<double>("occupancy_grid.resolution", 0.05);
+    const auto grid_input_voxel_leaf_size = declare_parameter<double>(
+      "occupancy_grid.input_voxel_leaf_size", 0.05);
     const auto grid_min_z = declare_parameter<double>("occupancy_grid.minimum_obstacle_height",
         0.05);
     const auto grid_max_z = declare_parameter<double>("occupancy_grid.maximum_obstacle_height",
@@ -241,6 +243,7 @@ public:
       global_map_keyframes_per_batch <= 0 ||
       !std::isfinite(global_map_voxel_leaf_size) || global_map_voxel_leaf_size <= 0.0 ||
       grid_batches <= 0 || !std::isfinite(grid_resolution) || grid_resolution <= 0.0 ||
+      !std::isfinite(grid_input_voxel_leaf_size) || grid_input_voxel_leaf_size <= 0.0 ||
       !std::isfinite(grid_min_z) || !std::isfinite(grid_max_z) || grid_min_z < 0.0 ||
       grid_min_z >= grid_max_z || grid_free_maximum < 0 || grid_free_maximum > 100 ||
       grid_occupied_minimum <= grid_free_maximum || grid_occupied_minimum > 100 ||
@@ -259,16 +262,22 @@ public:
     occupancy_grid_free_maximum_ = static_cast<std::int8_t>(grid_free_maximum);
     occupancy_grid_occupied_minimum_ =
       static_cast<std::int8_t>(grid_occupied_minimum);
-    occupancy_grid_maximum_ray_range_ = grid_maximum_ray_range;
+    occupancy_projection_contract_ = OccupancyProjectionContract{
+      grid_input_voxel_leaf_size, grid_min_z, grid_max_z,
+      grid_maximum_ray_range, force_planar_motion_};
     global_point_cloud_map_ = std::make_unique<GlobalPointCloudMap>(
       GlobalPointCloudMapParameters{global_map_voxel_leaf_size,
         static_cast<std::size_t>(global_map_keyframes_per_batch)});
     slam_robot_slam::OccupancyGridMapParameters grid_parameters;
     grid_parameters.resolution = grid_resolution;
+    HeightAwareOccupancyGridParameters occupancy_grid_parameters;
+    occupancy_grid_parameters.grid = grid_parameters;
+    occupancy_grid_parameters.projection = occupancy_projection_contract_;
+    occupancy_grid_parameters.keyframes_per_batch = static_cast<std::size_t>(grid_batches);
+    occupancy_grid_parameters.free_maximum = occupancy_grid_free_maximum_;
+    occupancy_grid_parameters.occupied_minimum = occupancy_grid_occupied_minimum_;
     occupancy_grid_ = std::make_unique<HeightAwareOccupancyGrid>(
-      HeightAwareOccupancyGridParameters{grid_parameters, grid_min_z, grid_max_z,
-        static_cast<std::size_t>(grid_batches), grid_maximum_ray_range,
-        occupancy_grid_free_maximum_, occupancy_grid_occupied_minimum_});
+      occupancy_grid_parameters);
     match_failure_recovery_ = std::make_unique<MatchFailureRecovery>(
       static_cast<std::size_t>(failure_limit));
 
@@ -892,17 +901,11 @@ private:
     keyframe.stamp = rclcpp::Time(header.stamp);
     keyframe.registration_scan =
       std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(registration_scan);
-    auto occupancy_scan =
-      std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
-    occupancy_scan->reserve(occupancy_input_scan.size());
-    for (const auto & point : occupancy_input_scan) {
-      if (std::hypot(point.x, point.y) <= occupancy_grid_maximum_ray_range_) {
-        occupancy_scan->push_back(point);
-      }
-    }
-    occupancy_scan->is_dense = true;
+    auto occupancy_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(
+      selectPersistentOccupancyEvidence(
+        occupancy_input_scan, base_to_sensor, occupancy_projection_contract_));
     if (occupancy_scan->empty()) {
-      throw std::runtime_error("occupancy scan is empty after range clipping");
+      throw std::runtime_error("occupancy scan is empty after evidence filtering");
     }
     keyframe.occupancy_scan = std::move(occupancy_scan);
     keyframe.front_end_base_pose = front_end_base_pose;
@@ -1100,15 +1103,26 @@ private:
   void saveSnapshot()
   {
     const auto keyframes = global_keyframes_.snapshot();
-    saveSlamSnapshot(snapshot_path_, {
-        keyframes, pose_graph_submission_state_.committedConstraints(),
-        globalMapBasePoses(keyframes), map_from_local_});
+    SlamSnapshot snapshot;
+    snapshot.keyframes = keyframes;
+    snapshot.loop_constraints = pose_graph_submission_state_.committedConstraints();
+    snapshot.optimized_base_poses = globalMapBasePoses(keyframes);
+    snapshot.map_from_local = map_from_local_;
+    snapshot.occupancy_projection = occupancy_projection_contract_;
+    saveSlamSnapshot(snapshot_path_, snapshot);
     snapshot_size_bytes_ = std::filesystem::file_size(snapshot_path_);
   }
 
   void restoreSnapshot()
   {
     auto snapshot = loadSlamSnapshot(snapshot_path_);
+    if (!occupancyProjectionContractsMatch(
+        snapshot.occupancy_projection, occupancy_projection_contract_))
+    {
+      throw std::runtime_error(
+              "snapshot occupancy projection contract does not match current parameters; "
+              "remap with the current occupancy configuration");
+    }
     snapshot_size_bytes_ = std::filesystem::file_size(snapshot_path_);
     // Mapping resumes in the map frame, because new keyframes are created
     // from estimated_base_pose_, which is seeded below from an optimised pose.
@@ -1676,7 +1690,7 @@ private:
   std::size_t occupancy_grid_keyframes_per_batch_{4U};
   std::int8_t occupancy_grid_free_maximum_{20};
   std::int8_t occupancy_grid_occupied_minimum_{65};
-  double occupancy_grid_maximum_ray_range_{8.0};
+  OccupancyProjectionContract occupancy_projection_contract_;
   std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};

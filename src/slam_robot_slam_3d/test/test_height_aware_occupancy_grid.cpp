@@ -1,3 +1,4 @@
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -18,16 +19,83 @@ HeightAwareOccupancyGridParameters makeParameters(
   std::int8_t occupied_minimum = 65)
 {
   HeightAwareOccupancyGridParameters parameters;
-  parameters.minimum_obstacle_height = 0.05;
-  parameters.maximum_obstacle_height = 0.45;
+  parameters.projection.minimum_obstacle_height = 0.05;
+  parameters.projection.maximum_obstacle_height = 0.45;
   parameters.keyframes_per_batch = 1U;
-  parameters.maximum_ray_range = maximum_ray_range;
+  parameters.projection.maximum_ray_range = maximum_ray_range;
   parameters.free_maximum = free_maximum;
   parameters.occupied_minimum = occupied_minimum;
   return parameters;
 }
 
 }  // namespace
+
+TEST(HeightAwareOccupancyGrid, SelectsOnlyPersistentPlanarEvidence)
+{
+  pcl::PointCloud<pcl::PointXYZI> input;
+  input.push_back(pcl::PointXYZI{1.0F, 0.0F, -0.20F, 1.0F});
+  input.push_back(pcl::PointXYZI{2.0F, 0.0F, 0.20F, 1.0F});
+  input.push_back(pcl::PointXYZI{3.0F, 0.0F, 0.60F, 1.0F});
+  input.push_back(pcl::PointXYZI{9.0F, 0.0F, 0.20F, 1.0F});
+  OccupancyProjectionContract contract;
+  contract.maximum_ray_range = 8.0;
+
+  const auto selected = selectPersistentOccupancyEvidence(
+    input, Eigen::Isometry3d::Identity(), contract);
+
+  ASSERT_EQ(selected.size(), 2U);
+  EXPECT_FLOAT_EQ(selected[0].z, -0.20F);
+  EXPECT_FLOAT_EQ(selected[1].z, 0.20F);
+}
+
+TEST(HeightAwareOccupancyGrid, PreservesAllEvidenceForNonPlanarMotion)
+{
+  pcl::PointCloud<pcl::PointXYZI> input;
+  input.push_back(pcl::PointXYZI{1.0F, 0.0F, 0.60F, 1.0F});
+  input.push_back(pcl::PointXYZI{9.0F, 0.0F, 0.20F, 1.0F});
+  OccupancyProjectionContract contract;
+  contract.force_planar_motion = false;
+
+  const auto selected = selectPersistentOccupancyEvidence(
+    input, Eigen::Isometry3d::Identity(), contract);
+
+  EXPECT_EQ(selected.size(), input.size());
+}
+
+TEST(HeightAwareOccupancyGrid, MeasuresRangeInTheProjectionPlane)
+{
+  pcl::PointCloud<pcl::PointXYZI> input;
+  input.push_back(pcl::PointXYZI{9.0F, 0.0F, 0.0F, 1.0F});
+  OccupancyProjectionContract contract;
+  Eigen::Isometry3d base_from_sensor = Eigen::Isometry3d::Identity();
+  base_from_sensor.linear() =
+    Eigen::AngleAxisd(std::acos(-1.0) / 3.0, Eigen::Vector3d::UnitY()).toRotationMatrix();
+
+  const auto selected = selectPersistentOccupancyEvidence(
+    input, base_from_sensor, contract);
+
+  // Raw sensor x is 9 m, but its projected planar range after the sensor
+  // extrinsic is 4.5 m. The shared classifier must therefore retain it.
+  EXPECT_EQ(selected.size(), 1U);
+}
+
+TEST(HeightAwareOccupancyGrid, ProjectionContractComparisonCoversPersistentSemantics)
+{
+  OccupancyProjectionContract first;
+  auto changed = first;
+  EXPECT_TRUE(occupancyProjectionContractsMatch(first, changed));
+  changed.maximum_ray_range = 10.0;
+  EXPECT_FALSE(occupancyProjectionContractsMatch(first, changed));
+  changed = first;
+  changed.maximum_obstacle_height = 0.50;
+  EXPECT_FALSE(occupancyProjectionContractsMatch(first, changed));
+  changed = first;
+  changed.input_voxel_leaf_size = 0.10;
+  EXPECT_FALSE(occupancyProjectionContractsMatch(first, changed));
+  changed = first;
+  changed.force_planar_motion = false;
+  EXPECT_FALSE(occupancyProjectionContractsMatch(first, changed));
+}
 
 TEST(HeightAwareOccupancyGrid, ProjectsObstacleHitsAndGroundFreeSpace)
 {

@@ -7,6 +7,7 @@
 #include <Eigen/Geometry>
 
 #include "slam_robot_slam_3d/global_keyframe_map.hpp"
+#include "slam_robot_slam_3d/occupancy_projection_contract.hpp"
 #include "slam_robot_slam_3d/se2_pose_graph_backend.hpp"
 
 namespace slam_robot_slam_3d
@@ -23,6 +24,7 @@ struct SlamSnapshot
   // ones in another. The first edge across the join would then carry the whole
   // accumulated correction as if it were a measurement.
   Eigen::Isometry3d map_from_local{Eigen::Isometry3d::Identity()};
+  OccupancyProjectionContract occupancy_projection;
 };
 
 // Versioned binary file.  It is deliberately self-contained: scans remain in

@@ -61,6 +61,38 @@ Eigen::Isometry3d readPose(std::istream & input)
   return pose;
 }
 
+void writeOccupancyProjectionContract(
+  std::ostream & output, const OccupancyProjectionContract & contract)
+{
+  validateOccupancyProjectionContract(contract);
+  writeValue(output, contract.input_voxel_leaf_size);
+  writeValue(output, contract.minimum_obstacle_height);
+  writeValue(output, contract.maximum_obstacle_height);
+  writeValue(output, contract.maximum_ray_range);
+  writeValue(output, static_cast<std::uint8_t>(contract.force_planar_motion ? 1U : 0U));
+}
+
+OccupancyProjectionContract readOccupancyProjectionContract(std::istream & input)
+{
+  OccupancyProjectionContract contract;
+  std::uint8_t force_planar_motion{0U};
+  readValue(input, contract.input_voxel_leaf_size);
+  readValue(input, contract.minimum_obstacle_height);
+  readValue(input, contract.maximum_obstacle_height);
+  readValue(input, contract.maximum_ray_range);
+  readValue(input, force_planar_motion);
+  if (force_planar_motion > 1U) {
+    throw std::runtime_error("invalid snapshot planar-motion contract");
+  }
+  contract.force_planar_motion = force_planar_motion != 0U;
+  try {
+    validateOccupancyProjectionContract(contract);
+  } catch (const std::invalid_argument &) {
+    throw std::runtime_error("invalid snapshot occupancy projection contract");
+  }
+  return contract;
+}
+
 void writePointCloud(
   std::ostream & output,
   const std::shared_ptr<const pcl::PointCloud<pcl::PointXYZI>> & cloud)
@@ -169,6 +201,7 @@ void saveSlamSnapshot(const std::string & path, const SlamSnapshot & snapshot)
   {
     throw std::invalid_argument("snapshot path, keyframes and poses are inconsistent");
   }
+  validateOccupancyProjectionContract(snapshot.occupancy_projection);
   const std::filesystem::path destination(path);
   if (!destination.parent_path().empty()) {
     std::filesystem::create_directories(destination.parent_path());
@@ -180,6 +213,7 @@ void saveSlamSnapshot(const std::string & path, const SlamSnapshot & snapshot)
   }
   writeValue(output, kMagic);
   writeValue(output, kVersion);
+  writeOccupancyProjectionContract(output, snapshot.occupancy_projection);
   writeValue(output, static_cast<std::uint64_t>(snapshot.keyframes.size()));
   for (const auto & keyframe : snapshot.keyframes) {
     writeKeyframe(output, keyframe);
@@ -221,11 +255,12 @@ SlamSnapshot loadSlamSnapshot(const std::string & path)
             "unsupported SLAM snapshot version " + std::to_string(version) +
             "; remap to generate a version 3 snapshot");
   }
+  SlamSnapshot result;
+  result.occupancy_projection = readOccupancyProjectionContract(input);
   readValue(input, keyframe_count);
   if (keyframe_count == 0U || keyframe_count > kMaximumKeyframes) {
     throw std::runtime_error("invalid SLAM snapshot keyframe count");
   }
-  SlamSnapshot result;
   result.keyframes.reserve(static_cast<std::size_t>(keyframe_count));
   for (std::uint64_t id = 0U; id < keyframe_count; ++id) {
     result.keyframes.push_back(readKeyframe(input, static_cast<std::size_t>(id)));

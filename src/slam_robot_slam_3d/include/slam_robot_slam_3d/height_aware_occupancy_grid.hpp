@@ -6,9 +6,9 @@
 #include <vector>
 
 #include <Eigen/Geometry>
-
 #include "slam_robot_slam/occupancy_grid_map.hpp"
 #include "slam_robot_slam_3d/global_keyframe_map.hpp"
+#include "slam_robot_slam_3d/occupancy_projection_contract.hpp"
 
 namespace slam_robot_slam_3d
 {
@@ -16,8 +16,7 @@ namespace slam_robot_slam_3d
 struct HeightAwareOccupancyGridParameters
 {
   slam_robot_slam::OccupancyGridMapParameters grid;
-  double minimum_obstacle_height{0.05};
-  double maximum_obstacle_height{0.45};
+  OccupancyProjectionContract projection;
   std::size_t keyframes_per_batch{4U};
   // Returns past this range are dropped rather than integrated. A 16-beam
   // sensor sees a distant wall only at grazing incidence and with wide
@@ -25,7 +24,6 @@ struct HeightAwareOccupancyGridParameters
   // at all. The projection then shows no obstacle there, exploration reads the
   // gap as unexplored space, and the robot drives at the wall. The front end
   // keeps using the full sensor range; this bound applies to the 2D grid only.
-  double maximum_ray_range{8.0};
   std::int8_t free_maximum{20};
   std::int8_t occupied_minimum{65};
 };

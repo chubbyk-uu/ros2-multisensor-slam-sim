@@ -41,6 +41,7 @@ def cloud_resolutions():
         parameters["voxel_leaf_size"],
         parameters["front_end"]["registration_voxel_leaf_size"],
         parameters["occupancy_grid"]["resolution"],
+        parameters["occupancy_grid"]["input_voxel_leaf_size"],
     )
 
 
@@ -64,8 +65,9 @@ def test_the_thresholds_leave_no_third_category_unaccounted_for():
 
 
 def test_mapping_and_registration_clouds_keep_separate_resolutions():
-    mapping_leaf, registration_leaf, grid_resolution = cloud_resolutions()
+    mapping_leaf, registration_leaf, grid_resolution, persisted_leaf = cloud_resolutions()
 
     assert mapping_leaf == grid_resolution == 0.05
+    assert mapping_leaf == persisted_leaf
     assert registration_leaf == 0.10
     assert registration_leaf > mapping_leaf

@@ -84,6 +84,15 @@ target_link_libraries(
   PUBLIC global_keyframe_map Eigen3::Eigen ${PCL_LIBRARIES}
 )
 
+add_library(occupancy_projection_contract src/occupancy_projection_contract.cpp)
+target_compile_features(occupancy_projection_contract PUBLIC cxx_std_17)
+target_compile_options(occupancy_projection_contract PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(
+  occupancy_projection_contract
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(occupancy_projection_contract PUBLIC Eigen3::Eigen ${PCL_LIBRARIES})
+
 add_library(height_aware_occupancy_grid src/height_aware_occupancy_grid.cpp)
 target_compile_features(height_aware_occupancy_grid PUBLIC cxx_std_17)
 target_compile_options(height_aware_occupancy_grid PRIVATE -Wall -Wextra -Wpedantic)
@@ -91,15 +100,19 @@ target_include_directories(
   height_aware_occupancy_grid
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
+target_link_libraries(
+  height_aware_occupancy_grid
+  PUBLIC global_keyframe_map occupancy_projection_contract
+  slam_robot_slam::occupancy_grid_map Eigen3::Eigen
+)
 
 add_library(slam_snapshot src/slam_snapshot.cpp)
 target_compile_features(slam_snapshot PUBLIC cxx_std_17)
 target_compile_options(slam_snapshot PRIVATE -Wall -Wextra -Wpedantic)
 target_include_directories(slam_snapshot PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-target_link_libraries(slam_snapshot PUBLIC global_keyframe_map Eigen3::Eigen ${PCL_LIBRARIES})
 target_link_libraries(
-  height_aware_occupancy_grid
-  PUBLIC global_keyframe_map slam_robot_slam::occupancy_grid_map Eigen3::Eigen
+  slam_snapshot
+  PUBLIC global_keyframe_map occupancy_projection_contract Eigen3::Eigen ${PCL_LIBRARIES}
 )
 
 add_library(scan_context_index src/scan_context_index.cpp)
