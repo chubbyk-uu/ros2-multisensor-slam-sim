@@ -120,6 +120,64 @@ TEST(FrontierGoalSelector, RejectsInvalidParametersAndScores)
     std::invalid_argument);
 }
 
+TEST(FrontierGoalSelector, ReportsWhichEntryOfTheListWon)
+{
+  slam_robot_navigation::FrontierGoalSelector selector(0.0, 11U);
+
+  const auto selection = selector.select(
+    {scored(1.0, 4.0), scored(2.0, 9.0), scored(3.0, 6.0)});
+
+  ASSERT_TRUE(selection);
+  // Reported as a position, not re-derived by matching the score, so a record
+  // of the decision can mark the winner without comparing doubles.
+  EXPECT_EQ(selection->index, 1U);
+  EXPECT_EQ(selection->candidate.x, 2.0);
+}
+
+TEST(FrontierGoalSelector, ARecordedDecisionCarriesEveryScoreComponent)
+{
+  // The point of the record is replaying a different rule, or different score
+  // weights, against the same decision. That needs the inputs to the score,
+  // not just the score.
+  slam_robot_navigation::FrontierCandidate candidate;
+  candidate.x = 4.03;
+  candidate.y = 0.93;
+  candidate.information_gain = 54.2;
+  candidate.clearance = 0.85;
+  candidate.robot_distance = 3.12;
+  candidate.cluster_cells = 110U;
+  const slam_robot_navigation::ScoredFrontierCandidate scored_candidate{
+    candidate, 109.21, 3.4};
+
+  const auto line =
+    slam_robot_navigation::formatCandidateRecord(7U, 0U, scored_candidate, true);
+
+  EXPECT_EQ(
+    line,
+    "FRONTIER CANDIDATE decision=7 index=0 x=4.030 y=0.930 score=109.210 "
+    "gain=54.200 clearance=0.850 distance=3.120 path=3.400 cells=110 chosen=1");
+}
+
+TEST(FrontierGoalSelector, ARecordedDecisionNamesTheRuleThatProducedIt)
+{
+  const auto line =
+    slam_robot_navigation::formatSelectionRecord(7U, 5U, 2U, 1U, 20260811U, 109.21);
+
+  EXPECT_EQ(
+    line,
+    "FRONTIER SELECTION decision=7 candidates=5 pool=2 rank=1 seed=20260811 "
+    "chosen_score=109.210");
+}
+
+TEST(FrontierGoalSelector, TheDiagnosticScoreListStaysParseable)
+{
+  EXPECT_EQ(
+    slam_robot_navigation::formatCandidateScores(
+      {scored(1.0, 109.21), scored(2.0, 8.9), scored(3.0, -1.5)}),
+    "109.210,8.900,-1.500");
+  EXPECT_EQ(slam_robot_navigation::formatCandidateScores({}), "");
+}
+
 TEST(FrontierGoalSelector, AutomaticSeedIsReported)
 {
   slam_robot_navigation::FrontierGoalSelector selector(0.2, 0U);

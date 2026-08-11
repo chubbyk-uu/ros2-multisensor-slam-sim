@@ -413,12 +413,25 @@ private:
         last_selection_rank_ = selection->rank;
         last_selection_pool_size_ = selection->pool_size;
         last_selection_score_ = selection->score;
-        RCLCPP_INFO(
+        last_selection_candidate_count_ = scored_candidates_.size();
+        last_selection_scores_ = formatCandidateScores(scored_candidates_);
+        ++selection_decisions_;
+        // Written per candidate so the whole decision survives in the run log:
+        // which rule was applied is a parameter choice, and replaying another
+        // one offline needs every candidate the selector actually saw, not
+        // only the one that won.
+        RCLCPP_INFO_STREAM(
           get_logger(),
-          "Selected frontier rank %zu from %zu near-best reachable candidates "
-          "(score %.3f, seed %" PRIu64 ")",
-          selection->rank, selection->pool_size, selection->score,
-          goal_selector_->effectiveSeed());
+          formatSelectionRecord(
+            selection_decisions_, scored_candidates_.size(), selection->pool_size,
+            selection->rank, goal_selector_->effectiveSeed(), selection->score));
+        for (std::size_t index = 0U; index < scored_candidates_.size(); ++index) {
+          RCLCPP_INFO_STREAM(
+            get_logger(),
+            formatCandidateRecord(
+              selection_decisions_, index, scored_candidates_[index],
+              index == selection->index));
+        }
         startNavigation(selection->candidate);
       } else {
         state_ = State::kWaiting;
@@ -465,7 +478,7 @@ private:
         {
           const double length = pathLength(result.result->path);
           const double score = candidate.score - path_cost_weight_ * length;
-          scored_candidates_.push_back({candidate, score});
+          scored_candidates_.push_back({candidate, score, length});
         } else {
           ++unreachable_candidates_;
           blacklistCandidate(candidate);
@@ -698,6 +711,11 @@ private:
         "selection_random_seed", std::to_string(goal_selector_->effectiveSeed())),
       keyValue("last_selection_rank", std::to_string(last_selection_rank_)),
       keyValue("last_selection_pool_size", std::to_string(last_selection_pool_size_)),
+      keyValue(
+        "last_selection_candidate_count",
+        std::to_string(last_selection_candidate_count_)),
+      keyValue("last_selection_scores", last_selection_scores_),
+      keyValue("selection_decisions", std::to_string(selection_decisions_)),
       keyValue("completion_reason", completion_reason_)};
     array.status.push_back(std::move(status));
     diagnostics_publisher_->publish(array);
@@ -790,6 +808,9 @@ private:
   bool path_request_pending_{false};
   std::size_t last_selection_rank_{0U};
   std::size_t last_selection_pool_size_{0U};
+  std::size_t last_selection_candidate_count_{0U};
+  std::size_t selection_decisions_{0U};
+  std::string last_selection_scores_;
   double last_selection_score_{0.0};
   bool cancel_with_blacklist_{false};
   bool cancel_counts_as_failure_{false};

@@ -1298,6 +1298,22 @@ Frontier Exploration 在线验收。探索器在 `321.8 s` 墙钟内自行以
 **路线变化很大，覆盖结果几乎不变。** 这正是随机化应有的效果——它换的是走法，不是
 成果；也说明这批的通过不是靠"每次都重复同一条已知可行轨迹"换来的。
 
+为了让这类问题以后能离线回答，探索器现在把每次决策的**全部候选**写进运行日志和
+诊断：`FRONTIER SELECTION` 一行给出决策序号、候选数、池大小、名次和种子，随后每个
+候选一行 `FRONTIER CANDIDATE`，带 `score` 及其全部分量（`gain`、`clearance`、
+`distance`、`path`、`cells`）和是否被选中。记分量而不只记分数，是因为要回放的不只
+是选择规则（top-k、softmax、不同带宽），还包括不同的评分权重。首批实跑样例：
+
+```text
+FRONTIER SELECTION decision=1 candidates=5 pool=1 rank=1 chosen_score=35.140
+  scores 35.140 / 11.912 / 7.396 / 3.706 / 2.578      最佳领先 3 倍，随机化不参与
+FRONTIER SELECTION decision=2 candidates=3 pool=2 rank=2 chosen_score=6.559
+  scores  6.906 /  6.559 / 0.559                      前两名差 5%，随机选中第 2 名
+```
+
+`decision=2` 同时显示了代价：中选候选 `path=8.576 m`，落选的那个 `6.310 m`——多走
+`2.3 m`。这类代价此前无法测量。
+
 随机化的实际触发率比预期低得多。全批 114 次目标选择的候选池大小分布为：
 
 | 池大小 | 1 | 2 | 3 | 4 |

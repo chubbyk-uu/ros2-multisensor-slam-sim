@@ -5,8 +5,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace slam_robot_navigation
 {
@@ -24,6 +27,53 @@ std::uint64_t makeRandomSeed()
 }
 
 }  // namespace
+
+std::string formatSelectionRecord(
+  std::size_t decision, std::size_t candidate_count, std::size_t pool_size,
+  std::size_t rank, std::uint64_t seed, double chosen_score)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(3)
+         << "FRONTIER SELECTION decision=" << decision
+         << " candidates=" << candidate_count
+         << " pool=" << pool_size
+         << " rank=" << rank
+         << " seed=" << seed
+         << " chosen_score=" << chosen_score;
+  return stream.str();
+}
+
+std::string formatCandidateRecord(
+  std::size_t decision, std::size_t index,
+  const ScoredFrontierCandidate & scored, bool chosen)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(3)
+         << "FRONTIER CANDIDATE decision=" << decision
+         << " index=" << index
+         << " x=" << scored.candidate.x
+         << " y=" << scored.candidate.y
+         << " score=" << scored.score
+         << " gain=" << scored.candidate.information_gain
+         << " clearance=" << scored.candidate.clearance
+         << " distance=" << scored.candidate.robot_distance
+         << " path=" << scored.path_length
+         << " cells=" << scored.candidate.cluster_cells
+         << " chosen=" << (chosen ? 1 : 0);
+  return stream.str();
+}
+
+std::string formatCandidateScores(
+  const std::vector<ScoredFrontierCandidate> & candidates)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(3);
+  for (std::size_t index = 0U; index < candidates.size(); ++index) {
+    if (index != 0U) {stream << ',';}
+    stream << candidates[index].score;
+  }
+  return stream.str();
+}
 
 FrontierGoalSelector::FrontierGoalSelector(
   double top_score_band_fraction, std::uint64_t random_seed)
@@ -72,12 +122,14 @@ std::optional<FrontierGoalSelection> FrontierGoalSelector::select(
   }
 
   std::uniform_int_distribution<std::size_t> distribution(0U, pool.size() - 1U);
-  const auto & selected = candidates[pool[distribution(random_engine_)]];
+  const std::size_t selected_index = pool[distribution(random_engine_)];
+  const auto & selected = candidates[selected_index];
   const std::size_t rank = 1U + static_cast<std::size_t>(std::count_if(
       candidates.begin(), candidates.end(), [&selected](const auto & candidate) {
         return candidate.score > selected.score;
       }));
-  return FrontierGoalSelection{selected.candidate, selected.score, rank, pool.size()};
+  return FrontierGoalSelection{
+    selected.candidate, selected.score, rank, pool.size(), selected_index};
 }
 
 std::uint64_t FrontierGoalSelector::effectiveSeed() const
