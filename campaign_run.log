@@ -1,0 +1,22 @@
+=== campaign run 1/10 -> campaign_logs/run_01.log
+    verdict=PASS exit=0 wall=273.7 s gazebo_teardown_crash=True failed=-
+=== campaign run 2/10 -> campaign_logs/run_02.log
+    verdict=PASS exit=0 wall=345.9 s gazebo_teardown_crash=True failed=-
+=== campaign run 3/10 -> campaign_logs/run_03.log
+    verdict=PASS exit=0 wall=337.2 s gazebo_teardown_crash=True failed=-
+=== campaign run 4/10 -> campaign_logs/run_04.log
+    verdict=PASS exit=0 wall=262.1 s gazebo_teardown_crash=True failed=-
+=== campaign run 5/10 -> campaign_logs/run_05.log
+    verdict=PASS exit=0 wall=277.0 s gazebo_teardown_crash=True failed=-
+=== campaign run 6/10 -> campaign_logs/run_06.log
+    verdict=PASS exit=0 wall=293.9 s gazebo_teardown_crash=True failed=-
+=== campaign run 7/10 -> campaign_logs/run_07.log
+    verdict=PASS exit=0 wall=365.8 s gazebo_teardown_crash=True failed=-
+=== campaign run 8/10 -> campaign_logs/run_08.log
+    verdict=PASS exit=0 wall=362.6 s gazebo_teardown_crash=True failed=-
+=== campaign run 9/10 -> campaign_logs/run_09.log
+    verdict=PASS exit=0 wall=285.3 s gazebo_teardown_crash=True failed=-
+=== campaign run 10/10 -> campaign_logs/run_10.log
+    verdict=PASS exit=0 wall=292.6 s gazebo_teardown_crash=True failed=-
+CAMPAIGN ACCEPTED: 10/10 evaluable runs passed, 0 attributed to the host
+  passes=10 core_failures=0 infra_unstable=0 gazebo_teardown_crashes=10
