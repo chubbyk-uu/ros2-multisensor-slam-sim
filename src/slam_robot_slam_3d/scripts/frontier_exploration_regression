@@ -236,6 +236,7 @@ class ExplorationRegression(Node):
         # pose-graph correction distorting the map.
         self.front_end_error = TrajectoryError()
         self.map_frame_error = TrajectoryError()
+        self.last_map_frame_stamp = None
         self.critical_logs = []
         self.control_starvation_warnings = 0
         self.planner_starvation_warnings = 0
@@ -443,25 +444,29 @@ class ExplorationRegression(Node):
         )
 
     def sample_map_frame_pose(self):
-        """Read map -> base_footprint if it is available.
+        """Read map -> base_footprint at the time of a ground-truth sample.
 
-        Polled rather than driven by a callback because TF carries no message
-        of its own, and missing samples costs only resolution: the distortion
-        being looked for is a metre wide, not a centimetre.
+        Asking for the latest transform instead would compare poses an interval
+        apart: the front end future-dates map -> odom by its transform
+        tolerance so Nav2 can transform goals stamped between scans, so the
+        newest transform carries a stamp ahead of the data behind it. Pairing
+        by that stamp charged the estimate with however far the robot travelled
+        and turned in the meantime, which at a tenth of a second of rotation is
+        several degrees of pure measurement artefact.
         """
+        if not self.truth_samples:
+            return
+        stamp, _ = self.truth_samples[-1]
+        if stamp == self.last_map_frame_stamp:
+            return
         try:
             transform = self.tf_buffer.lookup_transform(
-                "map", "base_footprint", rclpy.time.Time()
+                "map", "base_footprint",
+                rclpy.time.Time(seconds=stamp, nanoseconds=0),
             )
         except tf2_ros.TransformException:
             return
-        self.note_map_frame_pose(transform)
-
-    def note_map_frame_pose(self, transform):
-        stamp = (
-            transform.header.stamp.sec
-            + 1.0e-9 * transform.header.stamp.nanosec
-        )
+        self.last_map_frame_stamp = stamp
         self.map_frame_error.observe(
             stamp, transform_pose2d(transform), self.truth_samples
         )

@@ -254,6 +254,23 @@ def test_trajectory_error_reports_drift_and_keeps_the_peak():
     assert error.maximum_position == pytest.approx(0.4)
 
 
+def test_trajectory_error_charges_a_mispaired_stamp_with_real_motion():
+    # Why the map-frame pose is looked up at the truth timestamp rather than
+    # taken as the newest transform: the front end future-dates map -> odom by
+    # its transform tolerance, so pairing on that stamp compares a pose with
+    # ground truth from a tenth of a second later. During a turn that alone
+    # reads as several degrees of error that the estimate never made.
+    error = MODULE.TrajectoryError(maximum_pair_age=0.2)
+    turning = [
+        (0.0, (0.0, 0.0, 0.0)),
+        (0.1, (0.0, 0.0, 0.06)),
+    ]
+    error.observe(0.0, (0.0, 0.0, 0.0), turning)
+    error.observe(0.0, (0.0, 0.0, 0.0), [turning[1]])
+
+    assert math.degrees(error.maximum_yaw) == pytest.approx(3.44, abs=0.1)
+
+
 def test_trajectory_error_refuses_badly_paired_samples():
     error = MODULE.TrajectoryError(maximum_pair_age=0.05)
     truth = [(0.0, (0.0, 0.0, 0.0))]
