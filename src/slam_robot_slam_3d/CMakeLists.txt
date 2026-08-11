@@ -260,6 +260,9 @@ install(
     scripts/pointcloud_contract_check
     scripts/preprocessing_regression
     scripts/recorded_odom_tf_publisher
+    scripts/recorded_static_tf_publisher
+    scripts/snapshot_resume_probe
+    scripts/snapshot_resume_regression
     scripts/structured_loop_regression
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -434,6 +437,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_frontier_exploration_regression
     test/test_frontier_exploration_regression.py
+  )
+  ament_add_pytest_test(
+    test_snapshot_resume_regression
+    test/test_snapshot_resume_regression.py
   )
 endif()
 

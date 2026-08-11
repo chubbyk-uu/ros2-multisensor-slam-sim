@@ -34,3 +34,5 @@ maps/*.db-journal
 __pycache__/
 *.py[cod]
 campaign_logs/
+snapshot_resume_reports/
+snapshot_resume_reports_run.log

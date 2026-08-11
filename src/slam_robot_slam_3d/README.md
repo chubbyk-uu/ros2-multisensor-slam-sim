@@ -214,6 +214,19 @@ ros2 launch slam_robot_slam_3d custom_3d_loop_regression.launch.py \
 `maximum_front_end_translation_disagreement` 检查图一致性，防止重复走廊把数十米
 的错误匹配写入位姿图。
 
+存档恢复用同一固定包分两段验收：前段建图到 `--split` 并经 `~/save_snapshot`
+保存，后段用全新前端 `load_snapshot:=true` 从该时刻继续放完余下的包：
+
+```bash
+ros2 run slam_robot_slam_3d snapshot_resume_regression \
+  --bag "${SLAM_WS}/bags/structured_3d_reference"
+```
+
+后段按前段写下的锚点度量地图系位姿，因此接缝上的任何跳变都直接显示为误差，
+不会被新原点吸收。两条判据要求两段各自至少提交一次位姿图优化——否则这次运行
+既没有非平凡的坐标修正可重基准，也没有让跨接缝的那条边进过优化器，会判 FAIL
+并提示调整 `--split`，而不是报一个没验证到东西的 PASS。
+
 ### 在线 RTAB-Map
 
 启动 Gazebo 3D 机器人、点云输入检查、RTAB-Map 和专用 RViz：

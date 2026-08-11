@@ -42,6 +42,7 @@
   <exec_depend>rcl_interfaces</exec_depend>
   <depend>rclcpp</depend>
   <exec_depend>rosgraph_msgs</exec_depend>
+  <exec_depend>rosbag2_py</exec_depend>
   <exec_depend>rosbag2_transport</exec_depend>
   <exec_depend>rtabmap_msgs</exec_depend>
   <exec_depend>rtabmap_rviz_plugins</exec_depend>

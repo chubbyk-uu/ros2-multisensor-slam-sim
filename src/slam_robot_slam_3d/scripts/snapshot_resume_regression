@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+
+"""Save a map, restart the front end from it, and require mapping to continue.
+
+The restore path had no end-to-end cover: every launch entry point defaults
+load_snapshot to false, so nothing exercised saving a map, restarting, and
+carrying on. Unit tests pin the pieces — the file format, the rebasing of
+restored poses — but none of them can say whether a resumed session lands in
+the frame the saved one left.
+
+This runs one recorded dataset in two phases against the same fixed bag. The
+recorded phase maps the first part and saves through the service the
+exploration stack uses on completion. The resumed phase starts a fresh front
+end with load_snapshot true and plays the rest. Both phases measure
+map -> base_footprint against ground truth, and the resumed phase measures
+against the recorded phase's anchor, so a restart that resumed in the wrong
+frame shows up as error instead of being absorbed into a new origin.
+
+Two of the checks are about whether the run tested anything rather than whether
+it passed. The join between the two sessions only reaches the optimiser once an
+optimisation commits, and the frame correction is only non-trivial once one has
+committed before the save. A run where neither happened cannot speak to either
+property, so it fails and says to move the split, rather than reporting a pass
+it did not earn.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+LAUNCH_FILE = "snapshot_resume_phase.launch.py"
+
+
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--bag", default=str(Path.cwd() / "bags" / "structured_3d_reference")
+    )
+    parser.add_argument(
+        "--split", type=float, default=240.0,
+        help="Seconds of the dataset the recorded phase maps before saving.",
+    )
+    parser.add_argument(
+        "--window", type=float, default=0.0,
+        help="Seconds the resumed phase plays; 0 plays to the end of the bag.",
+    )
+    parser.add_argument("--rate", type=float, default=1.0)
+    parser.add_argument(
+        "--report-directory", default="snapshot_resume_reports",
+        help="Holds both phase reports, their logs, and the snapshot itself.",
+    )
+    parser.add_argument("--overwrite-report-directory", action="store_true")
+    parser.add_argument("--phase-timeout-seconds", type=float, default=1500.0)
+    parser.add_argument("--settle-seconds", type=float, default=10.0)
+    parser.add_argument(
+        "--minimum-restored-known-cell-ratio", type=float, default=0.90,
+        help="Known cells the resumed phase must rebuild, as a fraction of the "
+             "recorded phase's final map.",
+    )
+    # Set from the first measured run on the reference dataset: the join peaked
+    # at 0.018 m and 0.082 deg, so these keep roughly five times that headroom
+    # while staying two orders of magnitude below the failure they guard, which
+    # displaces the resumed session by the whole accumulated correction.
+    parser.add_argument("--maximum-join-position-error-m", type=float, default=0.10)
+    parser.add_argument("--maximum-join-yaw-error-deg", type=float, default=0.50)
+    # Looser in proportion, on purpose: a difference between two peaks moves
+    # around more than either peak does. Measured growth was 0.003 m and
+    # 0.008 deg.
+    parser.add_argument("--maximum-position-error-growth-m", type=float, default=0.05)
+    parser.add_argument("--maximum-yaw-error-growth-deg", type=float, default=0.30)
+    parser.add_argument("--minimum-map-frame-samples", type=int, default=200)
+    parser.add_argument("--minimum-resumed-map-messages", type=int, default=10)
+    arguments = parser.parse_args(argv)
+    if arguments.split <= 0.0:
+        parser.error("--split must be positive")
+    if arguments.window < 0.0:
+        parser.error("--window cannot be negative")
+    if arguments.rate <= 0.0:
+        parser.error("--rate must be positive")
+    return arguments
+
+
+def phase_command(arguments, phase, report, previous_report, snapshot):
+    command = [
+        "ros2", "launch", "slam_robot_slam_3d", LAUNCH_FILE,
+        f"phase:={phase}",
+        f"bag:={arguments.bag}",
+        f"split:={arguments.split}",
+        f"window:={arguments.window}",
+        f"rate:={arguments.rate}",
+        f"snapshot_path:={snapshot}",
+        f"report:={report}",
+    ]
+    # Passed only when there is one: ros2 launch rejects an empty value rather
+    # than treating it as the argument's default.
+    if previous_report:
+        command.append(f"previous_report:={previous_report}")
+    return command
+
+
+def end_process_group(launch, group, settle_seconds):
+    """Stop a phase and everything it started, and nothing else.
+
+    The group id is the one saved when the launch started, because the case
+    worth cleaning up is the one where the launch exited first and left nodes
+    orphaned behind it. Progress is judged on the group rather than on the
+    parent, and the parent is reaped inside the loop, because a zombie is still
+    a member of its group and still answers signal 0.
+    """
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(group, sig)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + settle_seconds
+        while True:
+            launch.poll()
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+
+
+def run_phase(arguments, phase, report, previous_report, snapshot, log_path):
+    command = phase_command(arguments, phase, report, previous_report, snapshot)
+    print(f"=== {phase} phase -> {log_path}", flush=True)
+    with open(log_path, "w", encoding="utf-8") as handle:
+        launch = subprocess.Popen(
+            command, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True
+        )
+        group = launch.pid
+        try:
+            launch.wait(timeout=arguments.phase_timeout_seconds)
+        except subprocess.TimeoutExpired:
+            print(f"    {phase} phase hit its timeout; stopping it", flush=True)
+        end_process_group(launch, group, arguments.settle_seconds)
+    return launch.returncode
+
+
+def check(name, passed, detail):
+    return {"name": name, "passed": bool(passed), "detail": detail}
+
+
+def evaluate(record, resume, arguments):
+    """Apply the pre-registered criteria to the two phase reports."""
+    checks = []
+    save = record.get("snapshot_save") or {}
+    checks.append(check(
+        "snapshot_written", save.get("success"),
+        f"save service reported {save.get('success')}: {save.get('message')!r}",
+    ))
+    checks.append(check(
+        "phases_measured_enough_poses",
+        (record.get("map_frame_samples") or 0) >= arguments.minimum_map_frame_samples
+        and (resume.get("map_frame_samples") or 0) >= arguments.minimum_map_frame_samples,
+        f"map-frame samples recorded={record.get('map_frame_samples')} "
+        f"resumed={resume.get('map_frame_samples')} "
+        f"minimum={arguments.minimum_map_frame_samples}",
+    ))
+    # A recorded phase that never optimised leaves the saved frame correction at
+    # identity, and rebasing the restored poses by identity changes nothing. The
+    # run would pass without having touched the behaviour under test.
+    checks.append(check(
+        "recorded_phase_committed_an_optimisation",
+        (record.get("pose_graph_commits") or 0) >= 1,
+        f"pose graph commits before the save={record.get('pose_graph_commits')}; "
+        "a later --split gives the first phase time to close a loop",
+    ))
+    restored = resume.get("first_global_keyframes")
+    checks.append(check(
+        "snapshot_restored",
+        resume.get("first_snapshot_loaded")
+        and restored is not None
+        and restored >= (record.get("last_global_keyframes") or 0),
+        f"resumed session started with {restored} keyframes, "
+        f"snapshot_loaded={resume.get('first_snapshot_loaded')}, "
+        f"saved session ended with {record.get('last_global_keyframes')}",
+    ))
+    recorded_cells = record.get("final_known_cells") or 0
+    restored_cells = resume.get("restored_known_cells")
+    checks.append(check(
+        "restored_map_rebuilt",
+        restored_cells is not None
+        and restored_cells >= arguments.minimum_restored_known_cell_ratio * recorded_cells,
+        f"resumed session rebuilt {restored_cells} known cells against "
+        f"{recorded_cells} saved "
+        f"(ratio floor {arguments.minimum_restored_known_cell_ratio})",
+    ))
+    join_position = resume.get("join_peak_position_error_m")
+    join_yaw = resume.get("join_peak_yaw_error_deg")
+    checks.append(check(
+        "resumed_without_a_jump",
+        join_position is not None
+        and join_position <= arguments.maximum_join_position_error_m
+        and join_yaw <= arguments.maximum_join_yaw_error_deg,
+        f"peak error over the join: position={join_position} m yaw={join_yaw} deg "
+        f"(limits {arguments.maximum_join_position_error_m} m, "
+        f"{arguments.maximum_join_yaw_error_deg} deg)",
+    ))
+    # The join edge is a sequential constraint like any other until an
+    # optimisation runs over it. Only then would a join built across two frames
+    # pull the trajectory, so a resumed phase that never optimised has not tried
+    # the case the rebasing exists for.
+    checks.append(check(
+        "resumed_phase_committed_an_optimisation",
+        (resume.get("pose_graph_commits") or 0) >= 1,
+        f"pose graph commits after the restart={resume.get('pose_graph_commits')}; "
+        "an earlier --split leaves the resumed phase more of the bag",
+    ))
+    recorded_peak = record.get("peak_position_error_m")
+    resumed_peak = resume.get("peak_position_error_m")
+    recorded_yaw = record.get("peak_yaw_error_deg")
+    resumed_yaw = resume.get("peak_yaw_error_deg")
+    checks.append(check(
+        "resumed_accuracy_holds",
+        None not in (recorded_peak, resumed_peak, recorded_yaw, resumed_yaw)
+        and resumed_peak <= recorded_peak + arguments.maximum_position_error_growth_m
+        and resumed_yaw <= recorded_yaw + arguments.maximum_yaw_error_growth_deg,
+        f"peak map-frame error recorded={recorded_peak} m / {recorded_yaw} deg, "
+        f"resumed={resumed_peak} m / {resumed_yaw} deg "
+        f"(allowed growth {arguments.maximum_position_error_growth_m} m, "
+        f"{arguments.maximum_yaw_error_growth_deg} deg)",
+    ))
+    # Growth in keyframes is the evidence that mapping resumed; growth in
+    # coverage is not asked for. The reference dataset is two laps of one loop,
+    # so a resumed phase starting partway through re-traverses ground the saved
+    # session already mapped and has no new area to add. Known cells are not
+    # monotonic either: a cell whose log-odds sit in the band between free and
+    # occupied publishes as unknown again. What the map must do is keep being
+    # rebuilt and not collapse.
+    grew_keyframes = (
+        resume.get("last_global_keyframes") is not None
+        and restored is not None
+        and resume["last_global_keyframes"] > restored
+    )
+    kept_map = (
+        resume.get("final_known_cells") is not None
+        and restored_cells
+        and resume["final_known_cells"]
+        >= arguments.minimum_restored_known_cell_ratio * restored_cells
+        and (resume.get("map_messages") or 0) >= arguments.minimum_resumed_map_messages
+    )
+    checks.append(check(
+        "mapping_continued", grew_keyframes and kept_map,
+        f"keyframes {restored} -> {resume.get('last_global_keyframes')}, "
+        f"known cells {restored_cells} -> {resume.get('final_known_cells')} over "
+        f"{resume.get('map_messages')} published maps",
+    ))
+    checks.append(check(
+        "no_pose_graph_failures",
+        (record.get("pose_graph_failures") or 0) == 0
+        and (resume.get("pose_graph_failures") or 0) == 0
+        and (record.get("pose_graph_discards") or 0) == 0
+        and (resume.get("pose_graph_discards") or 0) == 0,
+        f"failures {record.get('pose_graph_failures')}/"
+        f"{resume.get('pose_graph_failures')}, discards "
+        f"{record.get('pose_graph_discards')}/{resume.get('pose_graph_discards')}",
+    ))
+    return checks
+
+
+def report_lines(checks):
+    lines = ["RESULT snapshot save and resume"]
+    for entry in checks:
+        lines.append(
+            f"  {'PASS' if entry['passed'] else 'FAIL'} {entry['name']}: {entry['detail']}"
+        )
+    lines.append(
+        f"  VERDICT {'PASS' if all(entry['passed'] for entry in checks) else 'FAIL'}"
+    )
+    return lines
+
+
+def load_report(path, phase):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError) as error:
+        print(
+            f"ABORTING: the {phase} phase wrote no usable report at {path}: {error}",
+            flush=True,
+        )
+        return None
+
+
+def main(argv=None):
+    arguments = parse_arguments(argv)
+    bag = Path(arguments.bag).expanduser()
+    if not bag.exists():
+        print(f"ABORTING: dataset {bag} does not exist", flush=True)
+        return 3
+    directory = Path(arguments.report_directory)
+    if directory.exists() and not arguments.overwrite_report_directory:
+        print(
+            f"ABORTING: {directory} already holds a run; pass "
+            "--overwrite-report-directory to discard it.",
+            flush=True,
+        )
+        return 3
+    directory.mkdir(parents=True, exist_ok=True)
+    # The snapshot lives with the reports, so a run never touches the one in the
+    # user's home directory and always starts from nothing.
+    snapshot = directory / "custom_slam_3d.snapshot"
+    record_report = directory / "record.json"
+    resume_report = directory / "resume.json"
+    # Everything a previous run left, not just the snapshot: a phase that
+    # writes no report would otherwise be judged on the last run's numbers, and
+    # a stale pass is worse than a missing one.
+    for stale in (snapshot, record_report, resume_report):
+        if stale.exists():
+            stale.unlink()
+
+    run_phase(
+        arguments, "record", record_report, "", snapshot, directory / "record.log"
+    )
+    if not snapshot.exists() or snapshot.stat().st_size == 0:
+        print(
+            f"ABORTING: the recorded phase left no snapshot at {snapshot}; "
+            f"see {directory / 'record.log'}",
+            flush=True,
+        )
+        return 1
+    print(f"    snapshot: {snapshot} ({snapshot.stat().st_size} bytes)", flush=True)
+    run_phase(
+        arguments, "resume", resume_report, record_report, snapshot,
+        directory / "resume.log",
+    )
+
+    record = load_report(record_report, "record")
+    resume = load_report(resume_report, "resume")
+    if record is None or resume is None:
+        return 1
+    checks = evaluate(record, resume, arguments)
+    for line in report_lines(checks):
+        print(line, flush=True)
+    return 0 if all(entry["passed"] for entry in checks) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

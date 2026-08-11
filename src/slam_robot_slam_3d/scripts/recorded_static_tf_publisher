@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+
+"""Rebroadcast a recorded /tf_static for a replay that does not start at the top.
+
+The fixed 3D dataset carries one /tf_static message, written at the head of the
+bag. A player started with --start-offset seeks past it, so the sensor extrinsic
+never arrives and the front end waits for it forever: it restores, publishes its
+map, and then processes no scan at all.
+
+Replaying that one topic from a second player does not fix it reliably. Such a
+player publishes and exits within a second, and a transient-local publisher that
+is gone before discovery completes delivers to nobody -- measured, not assumed.
+Reading the message out of the bag and holding it for the life of the run
+removes the race instead of narrowing it.
+"""
+
+import sys
+
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.serialization import deserialize_message
+import rclpy
+import rosbag2_py
+from tf2_msgs.msg import TFMessage
+from tf2_ros import StaticTransformBroadcaster
+
+
+def recorded_transforms(bag, topic):
+    """Read every transform the bag published on one static topic."""
+    reader = rosbag2_py.SequentialReader()
+    reader.open(
+        rosbag2_py.StorageOptions(uri=bag),
+        rosbag2_py.ConverterOptions(
+            input_serialization_format="cdr", output_serialization_format="cdr"
+        ),
+    )
+    reader.set_filter(rosbag2_py.StorageFilter(topics=[topic]))
+    transforms = []
+    while reader.has_next():
+        _, data, _ = reader.read_next()
+        transforms.extend(deserialize_message(data, TFMessage).transforms)
+    return transforms
+
+
+class RecordedStaticTfPublisher(Node):
+    def __init__(self):
+        super().__init__(
+            "recorded_static_tf_publisher",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
+        bag = self.declare_parameter("bag", "").value
+        if not bag:
+            raise RuntimeError("bag is required")
+        topic = self.declare_parameter("topic", "/tf_static").value
+        transforms = recorded_transforms(bag, topic)
+        if not transforms:
+            raise RuntimeError(f"{bag} recorded no {topic} messages")
+        self.broadcaster = StaticTransformBroadcaster(self)
+        self.broadcaster.sendTransform(transforms)
+        self.get_logger().info(
+            "Republished {} recorded static transforms: {}".format(
+                len(transforms),
+                ", ".join(
+                    f"{item.header.frame_id}->{item.child_frame_id}"
+                    for item in transforms
+                ),
+            )
+        )
+
+
+def main():
+    rclpy.init()
+    node = None
+    try:
+        node = RecordedStaticTfPublisher()
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if node is not None:
+            node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

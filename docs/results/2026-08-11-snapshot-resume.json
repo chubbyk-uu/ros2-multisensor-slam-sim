@@ -1,0 +1,76 @@
+{
+  "dataset": "bags/structured_3d_reference",
+  "split_seconds": 240.0,
+  "rate": 1.0,
+  "verdict": "PASS",
+  "record": {
+    "phase": "record",
+    "truth_messages": 184,
+    "map_frame_samples": 11964,
+    "peak_position_error_m": 0.018965057117822377,
+    "peak_yaw_error_deg": 0.09852962268030398,
+    "final_position_error_m": 0.01386076192034131,
+    "final_yaw_error_deg": 0.013779842007088101,
+    "sim_seconds": 239.66,
+    "wall_seconds": 264.2,
+    "snapshot_save": {
+      "success": true,
+      "message": "snapshot_resume_reports/custom_slam_3d.snapshot"
+    },
+    "anchor": {
+      "estimate": [
+        3.1311597867203916e-14,
+        1.9010533393773358e-18,
+        5.3558172711909456e-05
+      ],
+      "truth": [
+        1.7209272647028527e-10,
+        1.3890526064378423e-18,
+        4.342704505310699e-18
+      ]
+    },
+    "first_global_keyframes": 1,
+    "first_snapshot_loaded": false,
+    "last_global_keyframes": 393,
+    "last_snapshot_loaded": false,
+    "pose_graph_commits": 4,
+    "pose_graph_discards": 0,
+    "pose_graph_failures": 0,
+    "loop_accepted_candidates_total": 4,
+    "submap_reinitializations": 0,
+    "restored_known_cells": 30403,
+    "final_known_cells": 79247,
+    "final_free_cells": 75112,
+    "final_occupied_cells": 4135,
+    "map_messages": 393
+  },
+  "resume": {
+    "phase": "resume",
+    "truth_messages": 166,
+    "map_frame_samples": 6045,
+    "peak_position_error_m": 0.022058182547490094,
+    "peak_yaw_error_deg": 0.10658363833602023,
+    "final_position_error_m": 0.008914161636245949,
+    "final_yaw_error_deg": 0.045303988329174205,
+    "sim_seconds": 121.3,
+    "wall_seconds": 145.7,
+    "snapshot_save": null,
+    "join_peak_position_error_m": 0.018362536357162784,
+    "join_peak_yaw_error_deg": 0.067115737301734,
+    "join_samples": 751,
+    "first_global_keyframes": 393,
+    "first_snapshot_loaded": true,
+    "last_global_keyframes": 581,
+    "last_snapshot_loaded": true,
+    "pose_graph_commits": 6,
+    "pose_graph_discards": 0,
+    "pose_graph_failures": 0,
+    "loop_accepted_candidates_total": 6,
+    "submap_reinitializations": 0,
+    "restored_known_cells": 79260,
+    "final_known_cells": 79223,
+    "final_free_cells": 75300,
+    "final_occupied_cells": 3923,
+    "map_messages": 179
+  }
+}

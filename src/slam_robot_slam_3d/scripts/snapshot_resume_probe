@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+
+"""Measure one phase of the snapshot save/restore regression.
+
+The regression runs this twice over one recorded dataset: once while mapping
+the first part and saving a snapshot, once after restarting the front end from
+that snapshot on the rest of the dataset. Each phase writes a JSON report and
+the driver compares the two.
+
+The measurement that makes the comparison meaningful is the anchor. Every other
+trajectory check in this package anchors an estimate to its own first sample,
+because map and ground truth start from unrelated origins and comparing them
+directly measures the offset rather than the drift. Doing that here would
+defeat the test: a restart that resumed in the wrong frame would have its jump
+absorbed into the second phase's own origin and score perfectly. So the
+recorded phase writes its anchor into its report and the resumed phase measures
+against that one. Any discontinuity the restore introduces is then exactly what
+the numbers show.
+"""
+
+import json
+import math
+from pathlib import Path
+import sys
+import time
+
+from diagnostic_msgs.msg import DiagnosticArray
+from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import Odometry
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_srvs.srv import Trigger
+import tf2_ros
+
+STATUS_NAME = "custom_slam_3d/scan_to_map_front_end"
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def yaw_of(orientation):
+    return math.atan2(
+        2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+        1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
+    )
+
+
+def odometry_pose2d(message):
+    position = message.pose.pose.position
+    return (position.x, position.y, yaw_of(message.pose.pose.orientation))
+
+
+def transform_pose2d(transform):
+    translation = transform.transform.translation
+    return (translation.x, translation.y, yaw_of(transform.transform.rotation))
+
+
+def relative_pose(origin, pose):
+    delta_x = pose[0] - origin[0]
+    delta_y = pose[1] - origin[1]
+    cosine = math.cos(-origin[2])
+    sine = math.sin(-origin[2])
+    return (
+        delta_x * cosine - delta_y * sine,
+        delta_x * sine + delta_y * cosine,
+        normalize_angle(pose[2] - origin[2]),
+    )
+
+
+def pose_error(estimate, truth, estimate_origin, truth_origin):
+    """Compare two trajectories that were each anchored to a common origin."""
+    estimate_relative = relative_pose(estimate_origin, estimate)
+    truth_relative = relative_pose(truth_origin, truth)
+    return (
+        math.hypot(
+            estimate_relative[0] - truth_relative[0],
+            estimate_relative[1] - truth_relative[1],
+        ),
+        abs(normalize_angle(estimate_relative[2] - truth_relative[2])),
+    )
+
+
+def peak(samples, since=None, until=None):
+    """Largest error over a window of (stamp, position, yaw) samples."""
+    window = [
+        sample for sample in samples
+        if (since is None or sample[0] >= since) and (until is None or sample[0] <= until)
+    ]
+    if not window:
+        return None, None, 0
+    return (
+        max(sample[1] for sample in window),
+        max(sample[2] for sample in window),
+        len(window),
+    )
+
+
+def known_cells(message):
+    """Cells the grid claims to have observed, free or occupied."""
+    return len(message.data) - message.data.count(-1)
+
+
+class SnapshotResumeProbe(Node):
+    def __init__(self):
+        super().__init__("snapshot_resume_probe")
+        self.phase = self.declare_parameter("phase", "record").value
+        if self.phase not in ("record", "resume"):
+            raise RuntimeError(f"phase must be record or resume, not {self.phase!r}")
+        self.report_path = self.declare_parameter("report_path", "").value
+        if not self.report_path:
+            raise RuntimeError("report_path is required")
+        self.previous_report_path = self.declare_parameter(
+            "previous_report_path", ""
+        ).value
+        self.timeout_sec = self.declare_parameter("timeout_sec", 900.0).value
+        # Playback end is detected by ground truth going quiet rather than by
+        # watching the player: the phase is over when the data stops, whichever
+        # way the player chose to stop producing it.
+        self.quiet_sec = self.declare_parameter("quiet_sec", 20.0).value
+        self.startup_sec = self.declare_parameter("startup_sec", 120.0).value
+        self.join_sec = self.declare_parameter("join_sec", 15.0).value
+        self.restore_sec = self.declare_parameter("restore_sec", 45.0).value
+        self.maximum_pair_age = self.declare_parameter("maximum_pair_age", 0.05).value
+        self.save_service = self.declare_parameter(
+            "save_service", "/scan_to_map_odometry_3d/save_snapshot"
+        ).value
+
+        self.estimate_origin = None
+        self.truth_origin = None
+        if self.phase == "resume":
+            previous = json.loads(Path(self.previous_report_path).read_text())
+            anchor = previous.get("anchor")
+            if not anchor:
+                raise RuntimeError(
+                    f"{self.previous_report_path} carries no anchor to resume against"
+                )
+            self.estimate_origin = tuple(anchor["estimate"])
+            self.truth_origin = tuple(anchor["truth"])
+
+        self.truth_samples = []
+        self.errors = []
+        self.first_error_stamp = None
+        self.last_truth_wall = None
+        self.last_map_frame_stamp = None
+        self.first_status = None
+        self.last_status = None
+        self.first_sim_stamp = None
+        self.last_sim_stamp = None
+        self.known_cell_samples = []
+        self.final_free_cells = None
+        self.final_occupied_cells = None
+        self.started_wall = time.monotonic()
+        self.snapshot_save = None
+
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        reliable = QoSProfile(depth=50, reliability=ReliabilityPolicy.RELIABLE)
+        self.create_subscription(
+            Odometry, "/ground_truth/odom", self.truth_callback, reliable
+        )
+        self.create_subscription(
+            DiagnosticArray,
+            "/custom_slam_3d/front_end_diagnostics",
+            self.diagnostics_callback,
+            10,
+        )
+        # Latched, to match the publisher: the map rebuilt from the snapshot is
+        # published within a second of the node starting, before this probe can
+        # subscribe, and a volatile subscription would never see it. That grid
+        # is the measurement of what the restore recovered.
+        self.create_subscription(
+            OccupancyGrid,
+            "/map",
+            self.map_callback,
+            QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            ),
+        )
+        self.get_logger().info(f"Probing the {self.phase} phase")
+
+    def truth_callback(self, message):
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        self.truth_samples.append((stamp, odometry_pose2d(message)))
+        # Bounded, because only the samples near the newest transform are ever
+        # paired and the phase runs for minutes.
+        if len(self.truth_samples) > 200:
+            del self.truth_samples[:100]
+        self.last_truth_wall = time.monotonic()
+        if self.first_sim_stamp is None:
+            self.first_sim_stamp = stamp
+        self.last_sim_stamp = stamp
+
+    def diagnostics_callback(self, message):
+        for status in message.status:
+            if status.name != STATUS_NAME:
+                continue
+            values = {value.key: value.value for value in status.values}
+            if self.first_status is None:
+                self.first_status = values
+            self.last_status = values
+
+    def map_callback(self, message):
+        self.known_cell_samples.append(
+            (time.monotonic() - self.started_wall, known_cells(message))
+        )
+        self.final_free_cells = message.data.count(0)
+        self.final_occupied_cells = message.data.count(100)
+
+    def sample_map_frame_pose(self):
+        """Read map -> base_footprint at the time of a ground-truth sample.
+
+        Looked up at the truth stamp rather than taken as the latest transform:
+        the front end future-dates map -> odom by its transform tolerance, so
+        the newest transform is stamped ahead of the data behind it and pairing
+        by that stamp charges the estimate with the motion in between.
+        """
+        if not self.truth_samples:
+            return
+        stamp, truth = self.truth_samples[-1]
+        if stamp == self.last_map_frame_stamp:
+            return
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "map", "base_footprint", rclpy.time.Time(seconds=stamp, nanoseconds=0)
+            )
+        except tf2_ros.TransformException:
+            return
+        self.last_map_frame_stamp = stamp
+        estimate = transform_pose2d(transform)
+        if self.estimate_origin is None:
+            self.estimate_origin = estimate
+            self.truth_origin = truth
+            return
+        position, yaw = pose_error(
+            estimate, truth, self.estimate_origin, self.truth_origin
+        )
+        if self.first_error_stamp is None:
+            self.first_error_stamp = stamp
+        self.errors.append((stamp, position, math.degrees(yaw)))
+
+    def playback_finished(self):
+        if self.last_truth_wall is None:
+            return time.monotonic() - self.started_wall > self.startup_sec
+        return time.monotonic() - self.last_truth_wall > self.quiet_sec
+
+    def request_snapshot(self):
+        """Save through the service the exploration stack uses on completion."""
+        client = self.create_client(Trigger, self.save_service)
+        if not client.wait_for_service(timeout_sec=10.0):
+            self.snapshot_save = {
+                "success": False, "message": f"{self.save_service} never appeared"
+            }
+            return
+        future = client.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(self, future, timeout_sec=120.0)
+        if not future.done():
+            self.snapshot_save = {"success": False, "message": "save timed out"}
+            return
+        response = future.result()
+        self.snapshot_save = {
+            "success": bool(response.success), "message": response.message
+        }
+
+    def report(self):
+        peak_position, peak_yaw, samples = peak(self.errors)
+        report = {
+            "phase": self.phase,
+            "truth_messages": len(self.truth_samples),
+            "map_frame_samples": samples,
+            "peak_position_error_m": peak_position,
+            "peak_yaw_error_deg": peak_yaw,
+            "final_position_error_m": self.errors[-1][1] if self.errors else None,
+            "final_yaw_error_deg": self.errors[-1][2] if self.errors else None,
+            "sim_seconds": None if self.first_sim_stamp is None else round(
+                self.last_sim_stamp - self.first_sim_stamp, 2),
+            "wall_seconds": round(time.monotonic() - self.started_wall, 1),
+            "snapshot_save": self.snapshot_save,
+        }
+        if self.phase == "record":
+            # Only the recorded phase publishes an anchor: the resumed phase
+            # borrows this one so its errors are measured in the same frame.
+            report["anchor"] = (
+                None if self.estimate_origin is None else {
+                    "estimate": list(self.estimate_origin),
+                    "truth": list(self.truth_origin),
+                }
+            )
+        else:
+            join_position, join_yaw, join_samples = peak(
+                self.errors,
+                until=None if self.first_error_stamp is None
+                else self.first_error_stamp + self.join_sec,
+            )
+            report["join_peak_position_error_m"] = join_position
+            report["join_peak_yaw_error_deg"] = join_yaw
+            report["join_samples"] = join_samples
+        for status, when in ((self.first_status, "first"), (self.last_status, "last")):
+            report[f"{when}_global_keyframes"] = (
+                None if status is None else status.get("global_keyframes")
+            )
+            # Diagnostics carry booleans as "true"/"false"; the driver compares
+            # them, so decide their meaning here rather than in two places.
+            report[f"{when}_snapshot_loaded"] = (
+                None if status is None else status.get("snapshot_loaded") == "true"
+            )
+        for key in (
+            "pose_graph_commits", "pose_graph_discards", "pose_graph_failures",
+            "loop_accepted_candidates_total", "submap_reinitializations",
+        ):
+            report[key] = None if self.last_status is None else self.last_status.get(key)
+        # The restored map is whatever the rebuild had reconstructed while the
+        # resumed phase was still early, not the very first grid published,
+        # which can arrive mid-rebuild.
+        restored = [
+            count for elapsed, count in self.known_cell_samples
+            if elapsed <= self.restore_sec
+        ]
+        report["restored_known_cells"] = max(restored) if restored else None
+        report["final_known_cells"] = (
+            self.known_cell_samples[-1][1] if self.known_cell_samples else None
+        )
+        report["final_free_cells"] = self.final_free_cells
+        report["final_occupied_cells"] = self.final_occupied_cells
+        report["map_messages"] = len(self.known_cell_samples)
+        return report
+
+
+def integers(report, *keys):
+    for key in keys:
+        if report.get(key) is not None:
+            report[key] = int(report[key])
+
+
+def main():
+    rclpy.init()
+    probe = None
+    interrupted = False
+    try:
+        probe = SnapshotResumeProbe()
+        while rclpy.ok() and not probe.playback_finished():
+            if time.monotonic() - probe.started_wall > probe.timeout_sec:
+                probe.get_logger().error("probe timed out waiting for the phase to end")
+                break
+            probe.sample_map_frame_pose()
+            rclpy.spin_once(probe, timeout_sec=0.2)
+        if probe.phase == "record":
+            probe.request_snapshot()
+        report = probe.report()
+        integers(
+            report, "first_global_keyframes", "last_global_keyframes",
+            "pose_graph_commits", "pose_graph_discards", "pose_graph_failures",
+            "loop_accepted_candidates_total", "submap_reinitializations",
+        )
+        Path(probe.report_path).write_text(json.dumps(report, indent=2))
+        print(f"PHASE REPORT {probe.phase} -> {probe.report_path}", flush=True)
+        for key, value in sorted(report.items()):
+            print(f"  {key}={value}", flush=True)
+    except KeyboardInterrupt:
+        interrupted = True
+    finally:
+        if probe is not None:
+            probe.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+    return 130 if interrupted else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
