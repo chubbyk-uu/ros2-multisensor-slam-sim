@@ -34,9 +34,16 @@ frontier_explorer:
     snapshot_service: /scan_to_map_odometry_3d/save_snapshot
     frontier:
       # Must match custom_3d_slam.yaml: Nav2 and the frontier detector consume
-      # the same trinary projection contract.
+      # the same trinary projection contract. Pinned by
+      # test_trinary_projection_contract.py, because these drifted apart once
+      # already: occupied_minimum was lowered to 50 on the projection side and
+      # left at 65 here. Nothing broke, since a trinary /map only ever carries
+      # -1, 0 and 100, and both values classify 100 as occupied -- but a
+      # comment claiming the two match while they do not is worse than no
+      # comment, and the pair stops being harmless the moment either side
+      # publishes an intermediate value again.
       free_maximum: 25
-      occupied_minimum: 65
+      occupied_minimum: 50
       minimum_cluster_cells: 8
       minimum_clearance: 0.25
       information_gain_weight: 2.0
