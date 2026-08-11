@@ -33,6 +33,7 @@
 
 #include "slam_robot_slam_3d/local_submap.hpp"
 #include "slam_robot_slam_3d/global_keyframe_map.hpp"
+#include "slam_robot_slam_3d/global_map_pose_selector.hpp"
 #include "slam_robot_slam_3d/global_point_cloud_map.hpp"
 #include "slam_robot_slam_3d/height_aware_occupancy_grid.hpp"
 #include "slam_robot_slam_3d/loop_closure_verifier.hpp"
@@ -1130,21 +1131,8 @@ private:
   std::vector<Eigen::Isometry3d> globalMapBasePoses(
     const std::vector<GlobalKeyframe> & keyframes) const
   {
-    std::vector<Eigen::Isometry3d> poses;
-    poses.reserve(keyframes.size());
-    for (std::size_t index = 0U; index < keyframes.size(); ++index) {
-      // A successful graph task owns a prefix snapshot. Newer keyframes carry
-      // the scan-matched pose the front end computed for them, moved into the
-      // map frame by the same correction the optimisation produced. Rebuilding
-      // them from wheel odometry instead discarded that estimate: with no loop
-      // closure the correction never updates, so the whole map was drawn from
-      // raw odometry and drifted with it. One measured run put 2.717 m of
-      // map-frame pose error against a front end holding 0.031 m.
-      poses.push_back(index < optimized_global_base_poses_.size() ?
-        optimized_global_base_poses_[index] :
-        map_from_local_ * keyframes[index].front_end_base_pose);
-    }
-    return poses;
+    return selectGlobalMapPoses(
+      keyframes, optimized_global_base_poses_, map_from_local_);
   }
 
   void requestGlobalMapRebuild()

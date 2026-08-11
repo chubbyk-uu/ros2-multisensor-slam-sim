@@ -313,6 +313,11 @@ if(BUILD_TESTING)
     global_keyframe_map
   )
   ament_add_gtest(
+    test_global_map_pose_selector
+    test/test_global_map_pose_selector.cpp
+  )
+  target_link_libraries(test_global_map_pose_selector global_keyframe_map)
+  ament_add_gtest(
     test_global_point_cloud_map
     test/test_global_point_cloud_map.cpp
   )
