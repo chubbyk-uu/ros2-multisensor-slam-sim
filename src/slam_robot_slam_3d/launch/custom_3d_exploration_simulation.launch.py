@@ -62,6 +62,9 @@ def generate_launch_description():
             "snapshot_path": LaunchConfiguration("snapshot_path"),
             "load_snapshot": LaunchConfiguration("load_snapshot"),
             "save_on_shutdown": "true",
+            "spawn_x": LaunchConfiguration("spawn_x"),
+            "spawn_y": LaunchConfiguration("spawn_y"),
+            "spawn_yaw": LaunchConfiguration("spawn_yaw"),
             "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
             "wsl_gpu_adapter": LaunchConfiguration("wsl_gpu_adapter"),
         }.items(),
@@ -82,6 +85,9 @@ def generate_launch_description():
     )
     return LaunchDescription(
         [
+            DeclareLaunchArgument("spawn_x", default_value="0.0"),
+            DeclareLaunchArgument("spawn_y", default_value="0.0"),
+            DeclareLaunchArgument("spawn_yaw", default_value="0.0"),
             DeclareLaunchArgument("world", default_value=default_world),
             DeclareLaunchArgument("gui", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),

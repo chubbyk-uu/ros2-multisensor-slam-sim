@@ -205,6 +205,21 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
+                "spawn_x",
+                default_value="0.0",
+                description="Robot spawn x in the world frame.",
+            ),
+            DeclareLaunchArgument(
+                "spawn_y",
+                default_value="0.0",
+                description="Robot spawn y in the world frame.",
+            ),
+            DeclareLaunchArgument(
+                "spawn_yaw",
+                default_value="0.0",
+                description="Robot spawn yaw in radians.",
+            ),
+            DeclareLaunchArgument(
                 "world",
                 default_value=default_world_path,
                 description="Absolute path to the Gazebo Sim world file.",
@@ -394,7 +409,18 @@ def generate_launch_description():
                     {
                         "name": "slam_robot",
                         "topic": "/robot_description",
+                        # Varying where a run begins changes the whole route
+                        # without ever asking the robot to take a goal it knows
+                        # is worse, which is what randomising goal selection
+                        # does. Defaults keep the origin every existing
+                        # measurement was taken from.
+                        "x": ParameterValue(
+                            LaunchConfiguration("spawn_x"), value_type=float),
+                        "y": ParameterValue(
+                            LaunchConfiguration("spawn_y"), value_type=float),
                         "z": 0.03,
+                        "Y": ParameterValue(
+                            LaunchConfiguration("spawn_yaw"), value_type=float),
                     }
                 ],
             ),

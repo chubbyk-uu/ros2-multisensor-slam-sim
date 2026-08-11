@@ -77,6 +77,32 @@ def test_a_timeout_does_not_excuse_a_verdict_that_was_reported():
     assert record["verdict"] == MODULE.FAIL
 
 
+def test_launch_overrides_reach_every_run():
+    arguments = MODULE.parse_arguments(
+        ["-a", "exploration_seed:=0", "-a", "laps:=3"])
+
+    command = MODULE.launch_command(arguments)
+
+    assert command[:4] == [
+        "ros2", "launch", "slam_robot_slam_3d", arguments.launch_file]
+    assert "gui:=false" in command and "rviz:=false" in command
+    assert command[-2:] == ["exploration_seed:=0", "laps:=3"]
+
+
+def test_a_malformed_override_is_refused_rather_than_passed_on():
+    # ros2 launch would reject it anyway, one run at a time, after the
+    # simulator had already started.
+    arguments = MODULE.parse_arguments(["-a", "exploration_seed=0"])
+
+    with pytest.raises(ValueError):
+        MODULE.launch_command(arguments)
+
+
+def test_no_overrides_leaves_the_command_as_it_was():
+    assert MODULE.launch_command(MODULE.parse_arguments([]))[-2:] == [
+        "gui:=false", "rviz:=false"]
+
+
 def runs(passes, fails, infra):
     return (
         [{"verdict": MODULE.PASS, "gazebo_teardown_crash": False}] * passes +

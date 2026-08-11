@@ -100,16 +100,34 @@ def declared_defaults(path):
 
 @pytest.mark.parametrize("regression", REGRESSIONS)
 def test_regressions_pin_a_non_zero_seed(regression):
-    values = [
-        string_of(value)
-        for name, value in dictionary_entries(LAUNCH_DIRECTORY / regression)
-        if name == SEED_ARGUMENT
+    # Written either as a literal or as a declared argument the operator can
+    # override for a sweep. What must hold is the effective default: a
+    # regression that draws a fresh seed is not reproducible, and zero is not
+    # an error value, so nothing would report it.
+    path = LAUNCH_DIRECTORY / regression
+    forwarded = [
+        value for name, value in dictionary_entries(path) if name == SEED_ARGUMENT
     ]
+    assert forwarded, f"{regression} forwards no {SEED_ARGUMENT}"
 
-    assert values, f"{regression} forwards no {SEED_ARGUMENT}"
-    for value in values:
+    defaults = declared_defaults(path)
+    effective = []
+    for value in forwarded:
+        literal = string_of(value)
+        if literal is not None:
+            effective.append(literal)
+            continue
+        configuration = launch_configuration_of(value)
+        assert configuration == SEED_ARGUMENT, (
+            f"{regression} forwards {SEED_ARGUMENT} from something else")
+        assert configuration in defaults, (
+            f"{regression} forwards {SEED_ARGUMENT} without declaring it")
+        effective.append(defaults[configuration])
+
+    for value in effective:
         assert value is not None and value.strip() not in ("", "0"), (
-            f"{regression} must pin a non-zero seed; zero draws a new one every run"
+            f"{regression} must default to a non-zero seed; zero draws a new "
+            "one every run"
         )
 
 

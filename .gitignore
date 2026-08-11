@@ -37,4 +37,6 @@ campaign_logs/
 snapshot_resume_reports/
 snapshot_resume_reports_run.log
 selection_logs/
+band_random_seed_logs/
+band_random_seed.log
 selection_campaign.log

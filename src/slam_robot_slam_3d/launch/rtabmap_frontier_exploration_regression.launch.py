@@ -74,6 +74,10 @@ def generate_launch_description():
                 default_value="true" if running_in_wsl() else "false",
             ),
             DeclareLaunchArgument("wsl_gpu_adapter", default_value="NVIDIA"),
+            # Pinned so the regression is reproducible, declared so a campaign
+            # can sweep it without editing this file. Zero draws a fresh seed
+            # per run, which is a batch-level choice, not a regression one.
+            DeclareLaunchArgument("exploration_seed", default_value="20260811"),
             GroupAction(
                 scoped=True,
                 actions=[
@@ -85,7 +89,7 @@ def generate_launch_description():
                             "rviz": LaunchConfiguration("rviz"),
                             "database_path": LaunchConfiguration("database_path"),
                             "reset_database": "true",
-                            "exploration_seed": "20260811",
+                            "exploration_seed": LaunchConfiguration("exploration_seed"),
                             "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
                             "wsl_gpu_adapter": LaunchConfiguration(
                                 "wsl_gpu_adapter"

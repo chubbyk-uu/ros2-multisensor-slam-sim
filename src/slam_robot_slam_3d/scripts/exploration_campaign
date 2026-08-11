@@ -76,6 +76,25 @@ WALL_OVERSHOOT_PATTERN = re.compile(
     r"west=([0-9.]+) m south=([0-9.]+) m east=([0-9.]+) m north=([0-9.]+) m")
 
 
+def launch_command(arguments):
+    """Build the launch invocation, including any operator overrides.
+
+    Overrides exist so a batch can vary one thing without editing the launch
+    file it is measuring: the seed a regression pins for reproducibility is
+    exactly the kind of value a campaign may want to sweep instead.
+    """
+    command = [
+        "ros2", "launch", "slam_robot_slam_3d", arguments.launch_file,
+        "gui:=false", "rviz:=false",
+    ]
+    for override in arguments.launch_argument:
+        if ":=" not in override:
+            raise ValueError(
+                f"launch argument {override!r} must be written name:=value")
+        command.append(override)
+    return command
+
+
 def leftover_processes():
     if shutil.which("pgrep") is None:
         return []
@@ -224,6 +243,10 @@ def parse_arguments(arguments):
     # stall an unattended batch forever.
     parser.add_argument("--run-timeout-seconds", type=float, default=1500.0)
     parser.add_argument(
+        "--launch-argument", "-a", action="append", default=[],
+        metavar="NAME:=VALUE",
+        help="Extra launch argument for every run; repeatable.")
+    parser.add_argument(
         "--allow-leftover-processes", action="store_true",
         help="Start even if a previous simulation is still running.")
     parsed = parser.parse_args(arguments)
@@ -270,8 +293,7 @@ def main():
             # lines instead would reach any Gazebo or Nav2 the machine happens
             # to be running, including a user's own work in another terminal.
             launch = subprocess.Popen(
-                ["ros2", "launch", "slam_robot_slam_3d", arguments.launch_file,
-                 "gui:=false", "rviz:=false"],
+                launch_command(arguments),
                 stdout=handle, stderr=subprocess.STDOUT, start_new_session=True,
             )
             # start_new_session makes the launch its own group leader, so its

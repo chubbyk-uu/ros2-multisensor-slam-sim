@@ -3,13 +3,21 @@ frontier_explorer:
     use_sim_time: true
     update_rate: 1.0
     evaluation_candidate_limit: 5
-    # Randomise only among reachable candidates scoring within this fraction of
-    # the best score. Measured against the best score itself, not the span
-    # between best and worst: sizing it by the span let the worst candidate set
-    # the width, so {10, 9, 8} admitted only the 10 while {10, 9, 8, 0} admitted
-    # all three. The launch argument exploration_seed controls reproducibility:
-    # zero generates a new run seed, while regressions pass a fixed value.
-    selection_top_score_band_fraction: 0.20
+    # Zero, so selection is plainly the best reachable candidate.
+    #
+    # At 0.20 this took a non-best goal in 4.9% of decisions and bought nothing
+    # observable: fifteen runs, with one fixed seed and with a fresh seed each,
+    # produced the same route. Measured at 2 m tolerance, the first 6-7 goals of
+    # any two runs are the same places, and the first five sit within 1.3 m of
+    # each other. What varies between runs is where along that route the goals
+    # land, which is simulation timing, not the selection rule.
+    #
+    # The mechanism is kept because the width is the part that was wrong, not
+    # the shape: 0.50 engages at 16% and a softmax at T=2.5 is predicted to move
+    # the first divergence from the sixth goal to the second or third. Setting
+    # this to zero costs nothing and reads exactly like the greedy rule it now
+    # is. The launch argument exploration_seed still controls reproducibility.
+    selection_top_score_band_fraction: 0.0
     # Candidate gain is frontier length in metres. Straight-line distance is
     # only a cheap shortlist preference; the returned Nav2 path is the real
     # travel cost. Keeping both travel weights small prevents tiny 0.3 m
