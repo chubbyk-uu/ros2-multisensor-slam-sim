@@ -75,6 +75,9 @@ def generate_launch_description():
         launch_arguments={
             "params_file": LaunchConfiguration("exploration_params_file"),
             "use_sim_time": "true",
+            "selection_random_seed": LaunchConfiguration(
+                "exploration_seed"
+            ),
         }.items(),
     )
     return LaunchDescription(
@@ -93,6 +96,7 @@ def generate_launch_description():
                 "snapshot_path", default_value=default_snapshot
             ),
             DeclareLaunchArgument("load_snapshot", default_value="false"),
+            DeclareLaunchArgument("exploration_seed", default_value="0"),
             DeclareLaunchArgument(
                 "use_wsl_gpu",
                 default_value="true" if running_in_wsl() else "false",

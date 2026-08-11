@@ -54,6 +54,9 @@ def generate_launch_description():
         launch_arguments={
             "params_file": LaunchConfiguration("exploration_params_file"),
             "use_sim_time": "true",
+            "selection_random_seed": LaunchConfiguration(
+                "exploration_seed"
+            ),
             "map_topic": "/rtabmap/map",
             "save_snapshot_on_completion": "false",
         }.items(),
@@ -68,6 +71,7 @@ def generate_launch_description():
                 default_value=str(Path.home() / ".ros" / "rtabmap_3d.db"),
             ),
             DeclareLaunchArgument("reset_database", default_value="true"),
+            DeclareLaunchArgument("exploration_seed", default_value="0"),
             DeclareLaunchArgument(
                 "exploration_params_file",
                 default_value=default_exploration_parameters,

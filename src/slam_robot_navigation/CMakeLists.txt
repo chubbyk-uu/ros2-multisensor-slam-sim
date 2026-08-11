@@ -22,10 +22,22 @@ target_include_directories(frontier_detector PUBLIC
 )
 ament_target_dependencies(frontier_detector nav_msgs)
 
+add_library(frontier_goal_selector src/frontier_goal_selector.cpp)
+target_compile_features(frontier_goal_selector PUBLIC cxx_std_17)
+target_compile_options(frontier_goal_selector PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(frontier_goal_selector PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(frontier_goal_selector frontier_detector)
+
 add_executable(frontier_explorer_node src/frontier_explorer_node.cpp)
 target_compile_features(frontier_explorer_node PUBLIC cxx_std_17)
 target_compile_options(frontier_explorer_node PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(frontier_explorer_node frontier_detector)
+target_link_libraries(
+  frontier_explorer_node
+  frontier_detector
+  frontier_goal_selector
+)
 ament_target_dependencies(frontier_explorer_node
   diagnostic_msgs
   geometry_msgs
@@ -64,6 +76,14 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_frontier_detector test/test_frontier_detector.cpp)
   target_link_libraries(test_frontier_detector frontier_detector)
+  ament_add_gtest(
+    test_frontier_goal_selector
+    test/test_frontier_goal_selector.cpp
+  )
+  target_link_libraries(
+    test_frontier_goal_selector
+    frontier_goal_selector
+  )
   ament_add_gtest(
     test_frontier_action_deadline
     test/test_frontier_action_deadline.cpp

@@ -84,6 +84,7 @@ def generate_launch_description():
                             "rviz": LaunchConfiguration("rviz"),
                             "snapshot_path": LaunchConfiguration("snapshot_path"),
                             "load_snapshot": "false",
+                            "exploration_seed": "20260811",
                             "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
                             "wsl_gpu_adapter": LaunchConfiguration(
                                 "wsl_gpu_adapter"

@@ -2,10 +2,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cinttypes>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -33,6 +34,7 @@
 #include "slam_robot_navigation/empty_frontier_counter.hpp"
 #include "slam_robot_navigation/frontier_action_deadline.hpp"
 #include "slam_robot_navigation/frontier_detector.hpp"
+#include "slam_robot_navigation/frontier_goal_selector.hpp"
 
 namespace slam_robot_navigation
 {
@@ -74,6 +76,10 @@ public:
     const int evaluation_candidate_limit =
       declare_parameter<int>("evaluation_candidate_limit", 5);
     path_cost_weight_ = declare_parameter<double>("path_cost_weight", 1.0);
+    const double selection_top_score_band_fraction =
+      declare_parameter<double>("selection_top_score_band_fraction", 0.20);
+    const std::int64_t selection_random_seed =
+      declare_parameter<std::int64_t>("selection_random_seed", 0);
     blacklist_radius_ = declare_parameter<double>("blacklist_radius", 0.5);
     blacklist_duration_ = declare_parameter<double>("blacklist_duration", 60.0);
     navigation_timeout_ = declare_parameter<double>("navigation_timeout", 120.0);
@@ -99,6 +105,9 @@ public:
       completion_empty_cycles <= 0 || minimum_goal_free_cell_growth <= 0 ||
       maximum_stagnant_goals <= 0 || !std::isfinite(path_cost_weight_) ||
       path_cost_weight_ < 0.0 || !std::isfinite(blacklist_radius_) || blacklist_radius_ <= 0.0 ||
+      !std::isfinite(selection_top_score_band_fraction) ||
+      selection_top_score_band_fraction < 0.0 || selection_top_score_band_fraction > 1.0 ||
+      selection_random_seed < 0 ||
       !std::isfinite(blacklist_duration_) || blacklist_duration_ <= 0.0 ||
       !std::isfinite(navigation_timeout_) || navigation_timeout_ <= 0.0 ||
       !std::isfinite(action_response_timeout_) || action_response_timeout_ <= 0.0 ||
@@ -110,6 +119,9 @@ public:
       throw std::invalid_argument("invalid frontier explorer parameters");
     }
     evaluation_candidate_limit_ = static_cast<std::size_t>(evaluation_candidate_limit);
+    goal_selector_ = std::make_unique<FrontierGoalSelector>(
+      selection_top_score_band_fraction,
+      static_cast<std::uint64_t>(selection_random_seed));
     minimum_known_free_cells_ = static_cast<std::size_t>(minimum_known_free_cells);
     completion_empty_cycles_ = static_cast<std::size_t>(completion_empty_cycles);
     minimum_goal_free_cell_growth_ = static_cast<std::size_t>(minimum_goal_free_cell_growth);
@@ -128,7 +140,10 @@ public:
       "~/complete", rclcpp::QoS(1).reliable().transient_local());
     diagnostics_publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       "~/diagnostics", 10);
-    marker_publisher_ = create_publisher<visualization_msgs::msg::MarkerArray>("~/markers", 10);
+    marker_publisher_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+      "~/markers", rclcpp::QoS(1).reliable().transient_local());
+    status_marker_publisher_ = create_publisher<visualization_msgs::msg::Marker>(
+      "~/status_marker", rclcpp::QoS(1).reliable().transient_local());
     if (save_snapshot_on_completion_) {
       snapshot_client_ = create_client<std_srvs::srv::Trigger>(snapshot_service_);
     }
@@ -142,6 +157,9 @@ public:
       std::chrono::duration<double>(1.0 / update_rate),
       std::bind(&FrontierExplorerNode::tick, this));
     publishCompletion(false);
+    RCLCPP_INFO(
+      get_logger(), "Frontier near-best goal selection seed: %" PRIu64,
+      goal_selector_->effectiveSeed());
   }
 
 private:
@@ -312,6 +330,10 @@ private:
       publishDiagnostics();
       return;
     }
+    if (!running_marker_published_) {
+      publishStatusMarker("EXPLORATION\nRUNNING", 1.0F, 0.8F, 0.1F);
+      running_marker_published_ = true;
+    }
     if (state_ == State::kNavigating) {
       if (map_revision_ > target_map_revision_ && !targetStillTraversable()) {
         RCLCPP_INFO(
@@ -361,8 +383,7 @@ private:
     }
     planning_candidates_ = std::move(detected);
     planning_index_ = 0;
-    best_candidate_.reset();
-    best_path_score_ = -std::numeric_limits<double>::infinity();
+    scored_candidates_.clear();
     state_ = State::kPlanning;
     path_request_pending_ = true;
     active_planning_candidate_.reset();
@@ -387,7 +408,21 @@ private:
   void requestNextPath()
   {
     if (planning_index_ >= planning_candidates_.size()) {
-      if (best_candidate_) {startNavigation(*best_candidate_);} else {state_ = State::kWaiting;}
+      const auto selection = goal_selector_->select(scored_candidates_);
+      if (selection) {
+        last_selection_rank_ = selection->rank;
+        last_selection_pool_size_ = selection->pool_size;
+        last_selection_score_ = selection->score;
+        RCLCPP_INFO(
+          get_logger(),
+          "Selected frontier rank %zu from %zu near-best reachable candidates "
+          "(score %.3f, seed %" PRIu64 ")",
+          selection->rank, selection->pool_size, selection->score,
+          goal_selector_->effectiveSeed());
+        startNavigation(selection->candidate);
+      } else {
+        state_ = State::kWaiting;
+      }
       return;
     }
     const FrontierCandidate candidate = planning_candidates_[planning_index_++];
@@ -430,10 +465,7 @@ private:
         {
           const double length = pathLength(result.result->path);
           const double score = candidate.score - path_cost_weight_ * length;
-          if (score > best_path_score_) {
-            best_path_score_ = score;
-            best_candidate_ = candidate;
-          }
+          scored_candidates_.push_back({candidate, score});
         } else {
           ++unreachable_candidates_;
           blacklistCandidate(candidate);
@@ -525,7 +557,7 @@ private:
     navigate_client_->async_send_goal(goal, options);
     RCLCPP_INFO(
       get_logger(), "Navigating to frontier (%.2f, %.2f), score %.2f",
-      candidate.x, candidate.y, best_path_score_);
+      candidate.x, candidate.y, last_selection_score_);
   }
 
   void blacklistCurrentTarget()
@@ -573,12 +605,24 @@ private:
     // sees complete=true cannot tell "the map is finished" from "every
     // remaining frontier is temporarily blacklisted".
     completion_reason_ = reason;
-    requestSnapshotSave();
     publishCompletion(true);
+    const char * next_step = save_snapshot_on_completion_ ?
+      "Saving the final snapshot now..." : "It is now safe to press Ctrl+C.";
+    const char * marker_next_step = save_snapshot_on_completion_ ?
+      "SAVING SNAPSHOT..." : "PRESS CTRL+C TO EXIT";
+    publishStatusMarker(
+      "EXPLORATION\nCOMPLETE\n" + std::string(marker_next_step), 0.1F, 1.0F, 0.1F);
     RCLCPP_INFO(
-      get_logger(), "Exploration complete (%s) after %zu successful goals and %zu failed goals",
-      reason, successful_goals_, failed_goals_);
+      get_logger(),
+      "\n============================================================\n"
+      "EXPLORATION COMPLETE\n"
+      "Reason: %s\n"
+      "Goals: %zu succeeded, %zu failed\n"
+      "%s\n"
+      "============================================================",
+      reason, successful_goals_, failed_goals_, next_step);
     publishDiagnostics();
+    requestSnapshotSave();
   }
 
   void requestSnapshotSave()
@@ -586,6 +630,9 @@ private:
     if (!save_snapshot_on_completion_) {return;}
     if (!snapshot_client_->service_is_ready()) {
       RCLCPP_ERROR(get_logger(), "Exploration finished but snapshot service is unavailable");
+      publishStatusMarker(
+        "EXPLORATION\nCOMPLETE\nSNAPSHOT SAVE FAILED\nCHECK THE TERMINAL",
+        1.0F, 0.1F, 0.1F);
       return;
     }
     snapshot_client_->async_send_request(
@@ -595,15 +642,30 @@ private:
           const auto response = future.get();
           if (response->success) {
             RCLCPP_INFO(
-              get_logger(), "Final exploration snapshot saved to %s", response->message.c_str());
+              get_logger(),
+              "\n============================================================\n"
+              "FINAL EXPLORATION SNAPSHOT SAVED\n"
+              "Path: %s\n"
+              "It is now safe to inspect the map and press Ctrl+C.\n"
+              "============================================================",
+              response->message.c_str());
+            publishStatusMarker(
+              "EXPLORATION\nCOMPLETE\nSNAPSHOT SAVED\nPRESS CTRL+C TO EXIT",
+              0.1F, 1.0F, 0.1F);
           } else {
             RCLCPP_ERROR(
               get_logger(), "Final exploration snapshot save failed: %s",
               response->message.c_str());
+            publishStatusMarker(
+              "EXPLORATION\nCOMPLETE\nSNAPSHOT SAVE FAILED\nCHECK THE TERMINAL",
+              1.0F, 0.1F, 0.1F);
           }
         } catch (const std::exception & error) {
           RCLCPP_ERROR(
             get_logger(), "Final exploration snapshot request failed: %s", error.what());
+          publishStatusMarker(
+            "EXPLORATION\nCOMPLETE\nSNAPSHOT SAVE FAILED\nCHECK THE TERMINAL",
+            1.0F, 0.1F, 0.1F);
         }
       });
   }
@@ -632,6 +694,10 @@ private:
         std::to_string(blacklisted_frontier_candidates_)),
       keyValue("empty_frontier_looks", std::to_string(empty_frontiers_.count())),
       keyValue("unmeasured_goal_growth", std::to_string(unmeasured_goal_growth_)),
+      keyValue(
+        "selection_random_seed", std::to_string(goal_selector_->effectiveSeed())),
+      keyValue("last_selection_rank", std::to_string(last_selection_rank_)),
+      keyValue("last_selection_pool_size", std::to_string(last_selection_pool_size_)),
       keyValue("completion_reason", completion_reason_)};
     array.status.push_back(std::move(status));
     diagnostics_publisher_->publish(array);
@@ -666,7 +732,29 @@ private:
     marker_publisher_->publish(array);
   }
 
+  void publishStatusMarker(const std::string & text, float red, float green, float blue)
+  {
+    visualization_msgs::msg::Marker marker;
+    marker.header.frame_id = "base_footprint";
+    marker.header.stamp = now();
+    marker.ns = "exploration_status";
+    marker.id = 0;
+    marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    marker.action = visualization_msgs::msg::Marker::ADD;
+    marker.pose.position.z = 2.2;
+    marker.pose.orientation.w = 1.0;
+    marker.frame_locked = true;
+    marker.scale.z = 0.14;
+    marker.color.r = red;
+    marker.color.g = green;
+    marker.color.b = blue;
+    marker.color.a = 1.0F;
+    marker.text = text;
+    status_marker_publisher_->publish(marker);
+  }
+
   FrontierDetector detector_;
+  std::unique_ptr<FrontierGoalSelector> goal_selector_;
   std::size_t evaluation_candidate_limit_{5};
   double path_cost_weight_{1.0};
   double blacklist_radius_{0.5};
@@ -681,6 +769,7 @@ private:
   std::string snapshot_service_{"/scan_to_map_odometry_3d/save_snapshot"};
   std::string completion_reason_;
   bool save_snapshot_on_completion_{true};
+  bool running_marker_published_{false};
   State state_{State::kWaiting};
   nav_msgs::msg::OccupancyGrid::ConstSharedPtr latest_map_;
   std::size_t map_revision_{0};
@@ -696,10 +785,12 @@ private:
   std::size_t goal_start_free_cells_{0};
   std::size_t unreachable_candidates_{0};
   std::vector<FrontierCandidate> planning_candidates_;
+  std::vector<ScoredFrontierCandidate> scored_candidates_;
   std::size_t planning_index_{0};
   bool path_request_pending_{false};
-  std::optional<FrontierCandidate> best_candidate_;
-  double best_path_score_{0.0};
+  std::size_t last_selection_rank_{0U};
+  std::size_t last_selection_pool_size_{0U};
+  double last_selection_score_{0.0};
   bool cancel_with_blacklist_{false};
   bool cancel_counts_as_failure_{false};
   FrontierActionDeadline navigation_deadline_;
@@ -718,6 +809,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr completion_publisher_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_publisher_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_publisher_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr status_marker_publisher_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr snapshot_client_;
   rclcpp_action::Client<ComputePath>::SharedPtr compute_path_client_;
   rclcpp_action::Client<Navigate>::SharedPtr navigate_client_;

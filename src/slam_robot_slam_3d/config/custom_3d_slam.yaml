@@ -123,7 +123,7 @@
     # batches.  This topic is visualisation/mapping output, not a front-end
     # registration target.
     global_map:
-      voxel_leaf_size: 0.15
+      voxel_leaf_size: 0.10
       rebuild_keyframes_per_batch: 4
       rebuild_keyframe_interval: 10
 

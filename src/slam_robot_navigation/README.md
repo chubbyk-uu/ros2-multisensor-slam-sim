@@ -86,10 +86,16 @@ ros2 launch slam_robot_navigation frontier_exploration.launch.py \
   map_topic:=/map
 ```
 
-主要输出为 `/frontier_explorer/markers`、`/frontier_explorer/diagnostics` 和
+主要输出为候选 `/frontier_explorer/markers`、持久完成提示
+`/frontier_explorer/status_marker`、`/frontier_explorer/diagnostics` 和
 transient-local `/frontier_explorer/complete`。`map_topic`、候选数、评分权重、
 黑名单、超时与完成判据集中在 `config/frontier_exploration.yaml`。默认在连续
 若干周期没有未拉黑的可达候选，或连续成功目标未带来最低自由区增长时结束；
 900 秒空间黑名单确保永久不可达候选不会在导航超时后立即重新进入候选集。自研
 3D SLAM 默认在完成时调用快照服务；接 RTAB-Map 时关闭该调用，由 RTAB-Map
 数据库自身负责持久化。
+
+通过 Nav2 路径验证的候选会按最终分数划出顶部区间，再从区间内随机选择目标；
+`selection_random_seed:=0` 每次生成新种子，传入非零种子可复现选择序列，正式
+回归固定使用非零种子。完成时当前终端先显示醒目提示，快照保存成功后再次提示
+可以安全按 `Ctrl+C`；同样的状态以持久 `TEXT_VIEW_FACING` Marker 显示在 RViz。

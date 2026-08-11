@@ -1,0 +1,92 @@
+// Copyright 2026 Jerry
+
+#include <gtest/gtest.h>
+
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <vector>
+
+#include "slam_robot_navigation/frontier_goal_selector.hpp"
+
+namespace
+{
+
+slam_robot_navigation::ScoredFrontierCandidate scored(double x, double score)
+{
+  slam_robot_navigation::FrontierCandidate candidate;
+  candidate.x = x;
+  return {candidate, score};
+}
+
+TEST(FrontierGoalSelector, RestrictsRandomChoiceToTopScoreBand)
+{
+  slam_robot_navigation::FrontierGoalSelector selector(0.25, 42U);
+  const std::vector<slam_robot_navigation::ScoredFrontierCandidate> candidates{
+    scored(1.0, 10.0), scored(2.0, 9.0), scored(3.0, 0.0)};
+  bool selected_first = false;
+  bool selected_second = false;
+  for (int iteration = 0; iteration < 50; ++iteration) {
+    const auto selection = selector.select(candidates);
+    ASSERT_TRUE(selection);
+    EXPECT_EQ(selection->pool_size, 2U);
+    EXPECT_NE(selection->candidate.x, 3.0);
+    selected_first = selected_first || selection->candidate.x == 1.0;
+    selected_second = selected_second || selection->candidate.x == 2.0;
+  }
+  EXPECT_TRUE(selected_first);
+  EXPECT_TRUE(selected_second);
+}
+
+TEST(FrontierGoalSelector, ZeroBandAlwaysChoosesTheBestCandidate)
+{
+  slam_robot_navigation::FrontierGoalSelector selector(0.0, 7U);
+  const auto selection = selector.select({scored(1.0, -2.0), scored(2.0, -1.0)});
+
+  ASSERT_TRUE(selection);
+  EXPECT_EQ(selection->candidate.x, 2.0);
+  EXPECT_EQ(selection->rank, 1U);
+  EXPECT_EQ(selection->pool_size, 1U);
+}
+
+TEST(FrontierGoalSelector, FixedSeedReproducesTheSelectionSequence)
+{
+  slam_robot_navigation::FrontierGoalSelector first(1.0, 1234U);
+  slam_robot_navigation::FrontierGoalSelector second(1.0, 1234U);
+  const std::vector<slam_robot_navigation::ScoredFrontierCandidate> candidates{
+    scored(1.0, 3.0), scored(2.0, 2.0), scored(3.0, 1.0)};
+  for (int iteration = 0; iteration < 20; ++iteration) {
+    const auto first_selection = first.select(candidates);
+    const auto second_selection = second.select(candidates);
+    ASSERT_TRUE(first_selection);
+    ASSERT_TRUE(second_selection);
+    EXPECT_EQ(first_selection->candidate.x, second_selection->candidate.x);
+  }
+}
+
+TEST(FrontierGoalSelector, RejectsInvalidParametersAndScores)
+{
+  EXPECT_THROW(
+    slam_robot_navigation::FrontierGoalSelector(-0.1, 1U), std::invalid_argument);
+  EXPECT_THROW(
+    slam_robot_navigation::FrontierGoalSelector(1.1, 1U), std::invalid_argument);
+  EXPECT_THROW(
+    slam_robot_navigation::FrontierGoalSelector(
+      std::numeric_limits<double>::quiet_NaN(), 1U),
+    std::invalid_argument);
+
+  slam_robot_navigation::FrontierGoalSelector selector(0.2, 1U);
+  EXPECT_FALSE(selector.select({}));
+  EXPECT_THROW(
+    selector.select({scored(1.0, std::numeric_limits<double>::infinity())}),
+    std::invalid_argument);
+}
+
+TEST(FrontierGoalSelector, AutomaticSeedIsReported)
+{
+  slam_robot_navigation::FrontierGoalSelector selector(0.2, 0U);
+  EXPECT_NE(selector.effectiveSeed(), 0U);
+}
+
+}  // namespace

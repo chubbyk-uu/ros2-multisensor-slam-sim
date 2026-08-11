@@ -158,8 +158,9 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 ```
 
 该入口从未知地图开始，探索器只向 Nav2 发送标准导航目标，不发布速度；完成后
-自动保存 `~/.ros/custom_slam_3d.snapshot`。使用 RTAB-Map 成熟基线运行同一
-探索策略：
+自动保存 `~/.ros/custom_slam_3d.snapshot`。日常运行只在评分接近的可达目标中
+随机选择，既保留探索效率又避免每次固定路线；终端和 RViz 会在完成及快照保存
+成功时明确提示，此后再按 `Ctrl+C`。使用 RTAB-Map 成熟基线运行同一探索策略：
 
 ```bash
 ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py

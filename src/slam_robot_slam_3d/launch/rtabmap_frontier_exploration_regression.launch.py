@@ -85,6 +85,7 @@ def generate_launch_description():
                             "rviz": LaunchConfiguration("rviz"),
                             "database_path": LaunchConfiguration("database_path"),
                             "reset_database": "true",
+                            "exploration_seed": "20260811",
                             "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
                             "wsl_gpu_adapter": LaunchConfiguration(
                                 "wsl_gpu_adapter"
