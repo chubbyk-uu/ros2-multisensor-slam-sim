@@ -75,6 +75,27 @@ ros2 run tf2_ros tf2_echo map odom
 
 平面机器人运行时，`map -> odom` 的 Z、roll、pitch 应保持接近零。
 
+## 从固定包中途回放时前端不处理任何扫描
+
+症状很像 SLAM 失效，其实是回放问题：节点正常启动（有快照时还会报告恢复成功
+并发布一次地图），随后只反复打印
+
+```text
+Waiting for 3D LiDAR static transform: "lidar_3d_link" ... does not exist
+```
+
+固定包里 `/tf_static` 只有开头那一条，`ros2 bag play --start-offset` 会跳过它。
+前端拿不到雷达外参就不会处理扫描，而地图、TF、诊断看起来都"有输出"，因此容易
+误判成配准或恢复出了问题。确认方式：
+
+```bash
+ros2 run tf2_ros tf2_echo base_link lidar_3d_link
+```
+
+中途回放时用 `recorded_static_tf_publisher` 从包里读出该消息并常驻广播；
+`snapshot_resume_phase.launch.py` 已经这样做。另起一个只放该话题的播放器不能
+解决——它发布后 1 s 内退出，transient_local 发布者在发现完成前消失。
+
 ## 3D RViz 看起来像二维地图
 
 Nav2 的路径规划仍基于二维栅格，但局部避障可以使用 3D 点云的安全高度投影。

@@ -109,6 +109,16 @@ ros2 launch slam_robot_slam play_slam_data.launch.py \
 RTAB-Map 地图/图和任何自研输出均不录制，防止回放时泄漏旧估计结果。
 `/ground_truth/odom` 只允许用于路线控制和离线评分。
 
+两条回放约束由此而来，都是消费方必须知道的：
+
+- **`/tf_static` 全包只有一条，位于 `t≈0.008 s`。** 从头回放没问题；用
+  `--start-offset` 从中途开始会直接跳过它，传感器外参永远不到，前端一帧扫描
+  都不处理。需要中途回放时用 `recorded_static_tf_publisher` 从包里读出该消息
+  并常驻广播——再起一个只放该话题的播放器不可靠，它发布后 1 s 内退出，
+  transient_local 发布者在发现完成前消失，实测无人收到。
+- **动态 `/tf` 没有录制**，`odom -> base_footprint` 需要用
+  `recorded_odom_tf_publisher` 从 `/odom` 重建，否则 TF 树在 `odom` 以下断开。
+
 生成固定参考包：
 
 ```bash
