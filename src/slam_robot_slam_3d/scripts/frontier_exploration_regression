@@ -582,6 +582,13 @@ def parse_arguments(arguments):
     # produce a loop. Positive loop recall belongs to the fixed-bag two-lap
     # regression; this test still records any loop activity and graph failures.
     parser.add_argument("--minimum-loop-accepted-candidates", type=int, default=0)
+    # Ten runs on the corrected map-pose path measured 0.012-0.091 m and
+    # 0.103-0.263 deg. These sit a few times above that while staying an order
+    # of magnitude below the 2.717 m and 13.285 deg a run produced when the map
+    # was still being rebuilt from wheel odometry. Judged as core criteria: a
+    # distorted map is the algorithm's problem, not the host's.
+    parser.add_argument("--maximum-map-frame-position-error-m", type=float, default=0.30)
+    parser.add_argument("--maximum-map-frame-yaw-error-deg", type=float, default=1.50)
     parser.add_argument("--completion-drain", type=float, default=5.0)
     parsed = parser.parse_args(arguments)
     if parsed.completion_drain < 0.0:
@@ -680,6 +687,14 @@ def evaluate(regression, arguments):
         arguments.minimum_loop_accepted_candidates == 0
         or regression.pose_graph_commits > 0,
         "no_pose_graph_failures": regression.pose_graph_failures == 0,
+        # Absent measurements fail rather than pass: a run that never paired a
+        # pose with ground truth has not shown the map to be sound.
+        "map_frame_position_error": regression.map_frame_error.samples > 0 and
+        regression.map_frame_error.maximum_position
+        <= arguments.maximum_map_frame_position_error_m,
+        "map_frame_yaw_error": regression.map_frame_error.samples > 0 and
+        math.degrees(regression.map_frame_error.maximum_yaw)
+        <= arguments.maximum_map_frame_yaw_error_deg,
         "no_critical_logs": not regression.critical_logs,
     }
     print("RESULT frontier exploration", flush=True)

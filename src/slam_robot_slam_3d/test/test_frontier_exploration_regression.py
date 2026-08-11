@@ -52,6 +52,19 @@ def test_default_acceptance_requires_motion_growth_and_success():
     assert "snapshot service is unavailable" in MODULE.CRITICAL_LOG_FRAGMENTS
 
 
+def test_map_frame_error_limits_separate_normal_runs_from_a_drifted_map():
+    arguments = MODULE.parse_arguments([])
+
+    # Ten runs measured 0.012-0.091 m and 0.103-0.263 deg once the map was
+    # rebuilt from scan-matched poses.
+    assert arguments.maximum_map_frame_position_error_m > 0.091
+    assert arguments.maximum_map_frame_yaw_error_deg > 0.263
+    # The run that exposed the defect reached 2.717 m and 13.285 deg, so the
+    # limits must still catch it by a wide margin.
+    assert arguments.maximum_map_frame_position_error_m < 2.717 / 5.0
+    assert arguments.maximum_map_frame_yaw_error_deg < 13.285 / 5.0
+
+
 def test_elapsed_formatting_distinguishes_unmeasured_from_zero():
     assert MODULE.format_elapsed(None) == "n/a"
     assert MODULE.format_elapsed(0.0) == "0.0 s"
