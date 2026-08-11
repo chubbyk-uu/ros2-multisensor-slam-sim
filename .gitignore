@@ -33,3 +33,4 @@ maps/*.db-journal
 # Python caches used by launch and helper scripts
 __pycache__/
 *.py[cod]
+campaign_logs/

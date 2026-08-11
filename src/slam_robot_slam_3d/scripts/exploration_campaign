@@ -44,6 +44,27 @@ VERDICT_PATTERN = re.compile(r"VERDICT (PASS|FAIL|INFRA_UNSTABLE)\s*$", re.M)
 FAILED_CHECK_PATTERN = re.compile(r"(?:^|\s)FAIL ([a-z_]+)\s*$", re.M)
 GAZEBO_CRASH_PATTERN = re.compile(r"\[gazebo-\d+\]: process has died.*exit code -\d+")
 
+# Pulled into the summary so a batch can be re-read without the logs and
+# without hand transcription. Documented run tables were previously copied out
+# by eye, which is neither checkable nor reproducible.
+MEASUREMENT_PATTERNS = {
+    "free_cells": r"free cells:.*?maximum=(\d+)",
+    "known_bbox_width_m": r"maximum known width=([0-9.]+) m",
+    "known_bbox_height_m": r"maximum known width=[0-9.]+ m height=([0-9.]+)",
+    "control_starvation_per_minute": r"control starvation=\d+ \(([0-9.]+)/min\)",
+    "planner_starvation_per_minute": r"planner starvation=\d+ \(([0-9.]+)/min\)",
+    "successful_goals": r"goals: succeeded=(\d+)",
+    "failed_goals": r"goals: succeeded=\d+ failed=(\d+)",
+    "truth_distance_m": r"truth distance=([0-9.]+)",
+    "pose_graph_commits": r"pose graph: commits=(\d+)",
+    "submap_reinitializations": r"submap reinitializations=(\d+)",
+    "loop_accepted_candidates": r"proposals=\d+ verified=\d+ accepted=(\d+)",
+    "completion_wall_s": r"completion: reason=.*? wall=([0-9.]+)",
+}
+HOST_HEALTHY_PATTERN = re.compile(r"healthy=(yes|no)")
+WALL_OVERSHOOT_PATTERN = re.compile(
+    r"west=([0-9.]+) m south=([0-9.]+) m east=([0-9.]+) m north=([0-9.]+) m")
+
 
 def leftover_processes():
     if shutil.which("pgrep") is None:
@@ -68,7 +89,7 @@ def parse_run(text, exit_code):
     match = VERDICT_PATTERN.search(text)
     reported = match.group(1) if match else None
     verdict = {v: k for k, v in VERDICT_NAMES.items()}.get(reported)
-    return {
+    record = {
         "verdict": verdict if verdict is not None else FAIL,
         "verdict_reported": reported,
         "exit_code": exit_code,
@@ -76,49 +97,83 @@ def parse_run(text, exit_code):
         "gazebo_teardown_crash": bool(GAZEBO_CRASH_PATTERN.search(text)),
         "failed_checks": FAILED_CHECK_PATTERN.findall(text),
     }
+    for name, pattern in MEASUREMENT_PATTERNS.items():
+        found = re.search(pattern, text, re.S)
+        record[name] = float(found.group(1)) if found else None
+    healthy = HOST_HEALTHY_PATTERN.search(text)
+    record["host_healthy"] = None if healthy is None else healthy.group(1) == "yes"
+    overshoot = WALL_OVERSHOOT_PATTERN.search(text)
+    # Kept per side. The one map distortion seen so far pushed north and south
+    # out together, which a single width or height cannot distinguish from one
+    # wall smearing.
+    record["wall_overshoot_m"] = None if overshoot is None else {
+        side: float(value) for side, value
+        in zip(("west", "south", "east", "north"), overshoot.groups())
+    }
+    return record
 
 
 def judge(runs, arguments):
-    """Apply the pre-registered rule and say why, in one place."""
+    """Apply the pre-registered rule and say why, in one place.
+
+    Runs attributed to the host leave the denominator rather than counting
+    against the algorithm. Judging passes out of the full batch looks stricter
+    but is not: with no core failure the pass count is just the batch size
+    minus the host-attributed runs, so two of those would reject the algorithm
+    for something already decided to be the machine's fault. That also made
+    the environment budget unreachable, since the pass count condemned the
+    batch one run before the budget was spent.
+    """
     total = len(runs)
     passes = sum(1 for run in runs if run["verdict"] == PASS)
     fails = [run for run in runs if run["verdict"] == FAIL]
     infra = sum(1 for run in runs if run["verdict"] == INFRA_UNSTABLE)
-    if infra > arguments.maximum_infra_unstable_for_valid_batch:
+    evaluable = total - infra
+    if evaluable < arguments.minimum_evaluable_runs:
         return "BATCH_INVALID", (
-            f"{infra}/{total} runs were INFRA_UNSTABLE; this host was too "
-            "unstable to say anything about the algorithm"
+            f"only {evaluable}/{total} runs were evaluable ({infra} attributed "
+            "to the host); this batch cannot say anything about the algorithm"
         )
     if fails:
-        return "REJECTED", f"{len(fails)}/{total} runs failed a core criterion"
-    if passes < arguments.minimum_passes:
         return "REJECTED", (
-            f"only {passes}/{total} runs passed, below the required "
-            f"{arguments.minimum_passes}"
+            f"{len(fails)}/{evaluable} evaluable runs failed a core criterion"
         )
-    return "ACCEPTED", f"{passes}/{total} passed with {infra} attributed to the host"
+    return "ACCEPTED", (
+        f"{passes}/{evaluable} evaluable runs passed, {infra} attributed to "
+        "the host"
+    )
 
 
 def parse_arguments(arguments):
     parser = argparse.ArgumentParser()
     parser.add_argument("--runs", type=int, default=10)
-    parser.add_argument("--minimum-passes", type=int, default=9)
-    # Two environment-attributed runs are tolerated as noise; beyond that the
-    # batch says more about the machine than the code, so it is void rather
-    # than a rejection of the algorithm.
-    parser.add_argument(
-        "--maximum-infra-unstable-for-valid-batch", type=int, default=2)
+    # How many runs must survive host attribution for the batch to mean
+    # anything. Every evaluable run then has to pass: a core failure is a core
+    # failure regardless of how many siblings it had.
+    parser.add_argument("--minimum-evaluable-runs", type=int, default=8)
     parser.add_argument("--launch-file", default="frontier_exploration_regression.launch.py")
+    # Relative to the working directory on purpose, so a batch survives the
+    # session that produced it. Thirty runs were once written to a scratch
+    # directory and lost, leaving hand-copied tables as the only record.
     parser.add_argument("--log-directory", default="campaign_logs")
+    # A batch is the evidence for a claim, so it must not be able to erase the
+    # batch it is being compared against. Reusing a directory is opt-in.
+    parser.add_argument("--overwrite-log-directory", action="store_true")
     parser.add_argument("--settle-seconds", type=float, default=15.0)
+    # Bounds a hung launch. A regression that stops reporting eventually hits
+    # its own wall timeout, but a launch that hangs outside it would otherwise
+    # stall an unattended batch forever.
+    parser.add_argument("--run-timeout-seconds", type=float, default=1500.0)
     parser.add_argument(
         "--allow-leftover-processes", action="store_true",
         help="Start even if a previous simulation is still running.")
     parsed = parser.parse_args(arguments)
     if parsed.runs <= 0:
         parser.error("--runs must be positive")
-    if parsed.minimum_passes > parsed.runs:
-        parser.error("--minimum-passes cannot exceed --runs")
+    if parsed.minimum_evaluable_runs > parsed.runs:
+        parser.error("--minimum-evaluable-runs cannot exceed --runs")
+    if parsed.minimum_evaluable_runs <= 0:
+        parser.error("--minimum-evaluable-runs must be positive")
     return parsed
 
 
@@ -133,6 +188,15 @@ def main():
         )
         return 3
     log_directory = Path(arguments.log_directory)
+    existing = sorted(log_directory.glob("run_*.log"))
+    if existing and not arguments.overwrite_log_directory:
+        print(
+            f"REFUSING TO START: {log_directory} already holds "
+            f"{len(existing)} run logs. Choose another --log-directory, or "
+            "pass --overwrite-log-directory to discard them.",
+            flush=True,
+        )
+        return 3
     log_directory.mkdir(parents=True, exist_ok=True)
 
     runs = []
@@ -140,14 +204,21 @@ def main():
         log_path = log_directory / f"run_{index:02d}.log"
         print(f"=== campaign run {index}/{arguments.runs} -> {log_path}", flush=True)
         started = time.monotonic()
+        timed_out = False
         with open(log_path, "w", encoding="utf-8") as handle:
-            completed = subprocess.run(
-                ["ros2", "launch", "slam_robot_slam_3d", arguments.launch_file,
-                 "gui:=false", "rviz:=false"],
-                stdout=handle, stderr=subprocess.STDOUT, check=False,
-            )
+            try:
+                completed_returncode = subprocess.run(
+                    ["ros2", "launch", "slam_robot_slam_3d", arguments.launch_file,
+                     "gui:=false", "rviz:=false"],
+                    stdout=handle, stderr=subprocess.STDOUT, check=False,
+                    timeout=arguments.run_timeout_seconds,
+                ).returncode
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                completed_returncode = None
         text = log_path.read_text(encoding="utf-8", errors="replace")
-        record = parse_run(text, completed.returncode)
+        record = parse_run(text, completed_returncode)
+        record["launch_timed_out"] = timed_out
         record["index"] = index
         record["wall_seconds"] = round(time.monotonic() - started, 1)
         record["log"] = str(log_path)
@@ -161,6 +232,17 @@ def main():
             flush=True,
         )
         time.sleep(arguments.settle_seconds)
+        # Checked between runs, not only before the batch. A run that failed to
+        # tear down would otherwise share the machine with the next one, which
+        # is exactly the contention these measurements are meant to exclude.
+        remaining = leftover_processes()
+        if remaining:
+            print(
+                f"    WARNING: {remaining} still running after run {index}; "
+                "the next run shares this machine with it",
+                flush=True,
+            )
+            record["left_processes_running"] = remaining
 
     outcome, reason = judge(runs, arguments)
     summary = {
@@ -174,13 +256,11 @@ def main():
             1 for run in runs if run["gazebo_teardown_crash"]),
         "criteria": {
             "runs": arguments.runs,
-            "minimum_passes": arguments.minimum_passes,
-            "maximum_infra_unstable_for_valid_batch":
-                arguments.maximum_infra_unstable_for_valid_batch,
+            "minimum_evaluable_runs": arguments.minimum_evaluable_runs,
         },
     }
     (log_directory / "campaign_summary.json").write_text(
-        json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"CAMPAIGN {outcome}: {reason}", flush=True)
     print(
         f"  passes={summary['passes']} core_failures={summary['core_failures']} "
