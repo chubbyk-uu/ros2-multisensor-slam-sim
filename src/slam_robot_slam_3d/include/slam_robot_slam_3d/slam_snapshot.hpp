@@ -16,6 +16,13 @@ struct SlamSnapshot
   std::vector<GlobalKeyframe> keyframes;
   std::vector<Se2LoopConstraint> loop_constraints;
   std::vector<Eigen::Isometry3d> optimized_base_poses;
+  // Where the map frame sat relative to the front end's own frame when this
+  // was written. Keyframes store front_end_base_pose in that frame, and the
+  // pose graph builds its edges from differences between those poses, so
+  // resuming without it would leave restored keyframes in one frame and new
+  // ones in another. The first edge across the join would then carry the whole
+  // accumulated correction as if it were a measurement.
+  Eigen::Isometry3d map_from_local{Eigen::Isometry3d::Identity()};
 };
 
 // Versioned binary file.  It is deliberately self-contained: scans remain in

@@ -11,7 +11,7 @@ namespace slam_robot_slam_3d
 namespace
 {
 constexpr std::uint64_t kMagic = 0x534C414D33445331ULL;
-constexpr std::uint32_t kVersion = 1U;
+constexpr std::uint32_t kVersion = 2U;
 constexpr std::uint64_t kMaximumKeyframes = 1000000U;
 constexpr std::uint64_t kMaximumPointsPerKeyframe = 10000000U;
 constexpr std::uint64_t kMaximumConstraints = 10000000U;
@@ -170,6 +170,7 @@ void saveSlamSnapshot(const std::string & path, const SlamSnapshot & snapshot)
   for (const auto & pose : snapshot.optimized_base_poses) {
     writePose(output, pose);
   }
+  writePose(output, snapshot.map_from_local);
   output.flush();
   if (!output) {
     throw std::runtime_error("failed to write SLAM snapshot");
@@ -222,6 +223,7 @@ SlamSnapshot loadSlamSnapshot(const std::string & path)
   for (std::uint64_t index = 0U; index < keyframe_count; ++index) {
     result.optimized_base_poses.push_back(readPose(input));
   }
+  result.map_from_local = readPose(input);
   return result;
 }
 }  // namespace slam_robot_slam_3d

@@ -1067,12 +1067,26 @@ private:
     const auto keyframes = global_keyframes_.snapshot();
     saveSlamSnapshot(snapshot_path_, {
         keyframes, pose_graph_submission_state_.committedConstraints(),
-        globalMapBasePoses(keyframes)});
+        globalMapBasePoses(keyframes), map_from_local_});
   }
 
   void restoreSnapshot()
   {
     auto snapshot = loadSlamSnapshot(snapshot_path_);
+    // Bring the restored front-end poses into the map frame, so that mapping
+    // resumes with one frame rather than two. New keyframes are created from
+    // estimated_base_pose_, which is seeded below from an optimised pose and
+    // is therefore in the map frame; leaving the restored ones in the frame
+    // they were written in would make the pose graph's first edge across the
+    // join carry the whole accumulated correction as if it were a measurement.
+    //
+    // A rigid transform applied to every pose leaves all relative poses
+    // unchanged, and relative poses are what the graph's edges are built from,
+    // so nothing the optimisation already knows is disturbed or counted twice.
+    for (auto & keyframe : snapshot.keyframes) {
+      keyframe.front_end_base_pose =
+        snapshot.map_from_local * keyframe.front_end_base_pose;
+    }
     const auto restored_keyframes = snapshot.keyframes;
     global_keyframes_.replace(std::move(snapshot.keyframes));
     optimized_global_base_poses_ = std::move(snapshot.optimized_base_poses);

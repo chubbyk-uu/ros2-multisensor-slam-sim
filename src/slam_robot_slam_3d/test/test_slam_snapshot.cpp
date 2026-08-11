@@ -59,4 +59,23 @@ TEST(SlamSnapshot, RejectsEmptyState)
 {
   EXPECT_THROW(saveSlamSnapshot("unused", {}), std::invalid_argument);
 }
+
+TEST(SlamSnapshot, RoundTripsTheFrontEndFrameCorrection)
+{
+  // Without this the frame the keyframes were written in is lost, and mapping
+  // resumed from the snapshot mixes those poses with new ones expressed in the
+  // map frame.
+  const std::string path = "/tmp/slam_robot_snapshot_map_from_local.bin";
+  SlamSnapshot snapshot;
+  snapshot.keyframes.push_back(makeKeyframe(0U, 0.0));
+  snapshot.optimized_base_poses.push_back(Eigen::Isometry3d::Identity());
+  snapshot.map_from_local.translation() = Eigen::Vector3d(1.5, -2.5, 0.0);
+
+  saveSlamSnapshot(path, snapshot);
+  const auto restored = loadSlamSnapshot(path);
+
+  EXPECT_NEAR(restored.map_from_local.translation().x(), 1.5, 1.0e-9);
+  EXPECT_NEAR(restored.map_from_local.translation().y(), -2.5, 1.0e-9);
+}
+
 }  // namespace slam_robot_slam_3d
