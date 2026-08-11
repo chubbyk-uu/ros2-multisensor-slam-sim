@@ -732,6 +732,14 @@ private:
           message->header, scan, estimated_base_pose_, odom_pose,
           base_to_lidar, &match_result);
       }
+      // Track the front end every scan instead of only when an optimisation
+      // commits. A commit needs an accepted loop closure, and an exploration
+      // pass often produces none, so map -> odom stayed frozen at its initial
+      // value and consumers followed raw wheel odometry for the whole run.
+      // Composing through map_from_local_ keeps whatever correction the last
+      // optimisation established.
+      map_from_odom_ = planarPose(
+        map_from_local_ * estimated_base_pose_ * odom_pose.inverse());
       last_odom_pose_ = odom_pose;
       publishOutputs(
         *message, odometry, scan, lidar_pose, &match_result,
@@ -1031,6 +1039,7 @@ private:
       active_pose_graph_task_id_.reset();
       if (optimization.success && pose_graph_submission_state_.completeSuccess(task_id)) {
         map_from_odom_ = optimization.map_from_odom;
+        map_from_local_ = optimization.map_from_local;
         optimized_global_base_poses_ = optimization.optimized_base_poses;
         requestGlobalMapRebuild();
         requestOccupancyGridFullRebuild();
@@ -1124,11 +1133,16 @@ private:
     std::vector<Eigen::Isometry3d> poses;
     poses.reserve(keyframes.size());
     for (std::size_t index = 0U; index < keyframes.size(); ++index) {
-      // A successful graph task owns a prefix snapshot.  Newer keyframes use
-      // the latest committed map->odom correction until the next optimization.
+      // A successful graph task owns a prefix snapshot. Newer keyframes carry
+      // the scan-matched pose the front end computed for them, moved into the
+      // map frame by the same correction the optimisation produced. Rebuilding
+      // them from wheel odometry instead discarded that estimate: with no loop
+      // closure the correction never updates, so the whole map was drawn from
+      // raw odometry and drifted with it. One measured run put 2.717 m of
+      // map-frame pose error against a front end holding 0.031 m.
       poses.push_back(index < optimized_global_base_poses_.size() ?
         optimized_global_base_poses_[index] :
-        map_from_odom_ * keyframes[index].odom_base_pose);
+        map_from_local_ * keyframes[index].front_end_base_pose);
     }
     return poses;
   }
@@ -1655,6 +1669,11 @@ private:
   std::optional<std::future<Se2PoseGraphBackendResult>> pose_graph_future_;
   std::optional<std::uint64_t> active_pose_graph_task_id_;
   Eigen::Isometry3d map_from_odom_{Eigen::Isometry3d::Identity()};
+  // Maps the front end's own frame onto the map frame. The optimisation owns
+  // it; everything the map frame publishes or rebuilds derives from it, so the
+  // scan-matched estimate reaches consumers between optimisations instead of
+  // only at one.
+  Eigen::Isometry3d map_from_local_{Eigen::Isometry3d::Identity()};
   std::vector<Eigen::Isometry3d> optimized_global_base_poses_;
   std::unique_ptr<GlobalPointCloudMap> global_point_cloud_map_;
   std::unique_ptr<HeightAwareOccupancyGrid> occupancy_grid_;

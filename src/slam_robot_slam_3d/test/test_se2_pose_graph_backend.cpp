@@ -35,6 +35,34 @@ TEST(Se2PoseGraphBackend, UsesLoopConstraintToCorrectLatestLocalPose)
   EXPECT_LT(result.optimized_base_poses.back().translation().x(), 2.8);
 }
 
+TEST(Se2PoseGraphBackend, MapFromLocalCarriesFrontEndPosesIntoTheMapFrame)
+{
+  // The correction the map rebuild depends on. Applying it to the newest
+  // keyframe's own front-end pose must land on that keyframe's optimised pose,
+  // because keyframes past the optimised prefix are placed exactly that way.
+  // Placing them from wheel odometry instead is what let a map drift with the
+  // odometry whenever no loop closure updated the correction.
+  const std::vector<GlobalKeyframe> keyframes{
+    makeKeyframe(0U, 0.0), makeKeyframe(1U, 1.0),
+    makeKeyframe(2U, 2.0), makeKeyframe(3U, 3.0)};
+  Se2LoopConstraint loop;
+  loop.source_id = 0U;
+  loop.target_id = 3U;
+
+  const auto result =
+    Se2PoseGraphBackend(Se2PoseGraphBackendParameters{}).optimize(keyframes, {loop});
+
+  ASSERT_TRUE(result.success);
+  const Eigen::Isometry3d placed =
+    result.map_from_local * keyframes.back().front_end_base_pose;
+  EXPECT_NEAR(
+    placed.translation().x(), result.optimized_base_poses.back().translation().x(),
+    1.0e-9);
+  EXPECT_NEAR(
+    placed.translation().y(), result.optimized_base_poses.back().translation().y(),
+    1.0e-9);
+}
+
 TEST(Se2PoseGraphBackend, ProjectsMapToOdomCorrectionToSe2)
 {
   std::vector<GlobalKeyframe> keyframes{
