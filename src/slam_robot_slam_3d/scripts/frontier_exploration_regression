@@ -6,6 +6,7 @@ import argparse
 import math
 import sys
 import time
+from collections import deque
 
 from diagnostic_msgs.msg import DiagnosticArray
 from nav2_msgs.msg import CollisionMonitorState
@@ -13,10 +14,12 @@ from nav_msgs.msg import OccupancyGrid, Odometry
 from rcl_interfaces.msg import Log
 import rclpy
 from rclpy.node import Node
+import rclpy.time
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.utilities import remove_ros_args
 from std_msgs.msg import Bool
+import tf2_ros
 
 
 CRITICAL_LOG_FRAGMENTS = (
@@ -41,6 +44,85 @@ OUTER_WALL_MINIMUM_X = -1.6
 OUTER_WALL_MAXIMUM_X = 25.6
 OUTER_WALL_MINIMUM_Y = -1.6
 OUTER_WALL_MAXIMUM_Y = 13.6
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def yaw_of(orientation):
+    return math.atan2(
+        2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+        1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
+    )
+
+
+def odometry_pose2d(message):
+    position = message.pose.pose.position
+    return (position.x, position.y, yaw_of(message.pose.pose.orientation))
+
+
+def transform_pose2d(transform):
+    translation = transform.transform.translation
+    return (translation.x, translation.y, yaw_of(transform.transform.rotation))
+
+
+def relative_pose(origin, pose):
+    """Express pose in the frame of origin.
+
+    Both estimates and ground truth start from arbitrary but fixed offsets, so
+    comparing them directly measures the offset rather than the drift. Anchoring
+    each to its own first sample removes it without assuming the two frames were
+    ever aligned.
+    """
+    delta_x = pose[0] - origin[0]
+    delta_y = pose[1] - origin[1]
+    cosine = math.cos(-origin[2])
+    sine = math.sin(-origin[2])
+    return (
+        delta_x * cosine - delta_y * sine,
+        delta_x * sine + delta_y * cosine,
+        normalize_angle(pose[2] - origin[2]),
+    )
+
+
+class TrajectoryError:
+    """Position and yaw error of one pose estimate against ground truth."""
+
+    def __init__(self, maximum_pair_age=0.05):
+        self.maximum_pair_age = maximum_pair_age
+        self.estimate_origin = None
+        self.truth_origin = None
+        self.samples = 0
+        self.latest_position = None
+        self.latest_yaw = None
+        self.maximum_position = 0.0
+        self.maximum_yaw = 0.0
+
+    def observe(self, stamp, estimate, truth_samples):
+        if not truth_samples:
+            return
+        truth_stamp, truth = min(
+            truth_samples, key=lambda sample: abs(sample[0] - stamp)
+        )
+        if abs(truth_stamp - stamp) > self.maximum_pair_age:
+            return
+        if self.estimate_origin is None:
+            self.estimate_origin = estimate
+            self.truth_origin = truth
+            return
+        estimate_relative = relative_pose(self.estimate_origin, estimate)
+        truth_relative = relative_pose(self.truth_origin, truth)
+        self.latest_position = math.hypot(
+            estimate_relative[0] - truth_relative[0],
+            estimate_relative[1] - truth_relative[1],
+        )
+        self.latest_yaw = abs(
+            normalize_angle(estimate_relative[2] - truth_relative[2])
+        )
+        self.maximum_position = max(self.maximum_position, self.latest_position)
+        self.maximum_yaw = max(self.maximum_yaw, self.latest_yaw)
+        self.samples += 1
 
 
 def known_free_cells(message):
@@ -114,6 +196,10 @@ def format_elapsed(seconds):
     return "n/a" if seconds is None else f"{seconds:.1f} s"
 
 
+def format_metres(value):
+    return "n/a" if value is None else f"{value:.3f} m"
+
+
 class ExplorationRegression(Node):
     def __init__(self):
         super().__init__(
@@ -141,6 +227,15 @@ class ExplorationRegression(Node):
         self.truth_distance = 0.0
         self.previous_truth = None
         self.truth_bounds = None
+        # Ground truth arrives faster than either estimate, so keep a short
+        # window to pair against by stamp rather than by arrival order.
+        self.truth_samples = deque(maxlen=400)
+        # Two estimates, because they fail differently. laser_odom is the front
+        # end alone; map -> base_footprint is what Nav2 and the explorer act on
+        # and what the projection is rebuilt from, so only the second can show a
+        # pose-graph correction distorting the map.
+        self.front_end_error = TrajectoryError()
+        self.map_frame_error = TrajectoryError()
         self.critical_logs = []
         self.control_starvation_warnings = 0
         self.planner_starvation_warnings = 0
@@ -211,6 +306,11 @@ class ExplorationRegression(Node):
         self.create_subscription(
             Odometry, "/ground_truth/odom", self.truth_callback, 50
         )
+        self.create_subscription(
+            Odometry, "/custom_slam_3d/laser_odom", self.front_end_callback, 50
+        )
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.create_subscription(Log, "/rosout", self.log_callback, 100)
 
     def map_callback(self, message):
@@ -336,7 +436,41 @@ class ExplorationRegression(Node):
             self.collision_transitions += 1
         self.last_collision_action = message.action_type
 
+    def front_end_callback(self, message):
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        self.front_end_error.observe(
+            stamp, odometry_pose2d(message), self.truth_samples
+        )
+
+    def sample_map_frame_pose(self):
+        """Read map -> base_footprint if it is available.
+
+        Polled rather than driven by a callback because TF carries no message
+        of its own, and missing samples costs only resolution: the distortion
+        being looked for is a metre wide, not a centimetre.
+        """
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "map", "base_footprint", rclpy.time.Time()
+            )
+        except tf2_ros.TransformException:
+            return
+        self.note_map_frame_pose(transform)
+
+    def note_map_frame_pose(self, transform):
+        stamp = (
+            transform.header.stamp.sec
+            + 1.0e-9 * transform.header.stamp.nanosec
+        )
+        self.map_frame_error.observe(
+            stamp, transform_pose2d(transform), self.truth_samples
+        )
+
     def truth_callback(self, message):
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        self.truth_samples.append(
+            (stamp, odometry_pose2d(message))
+        )
         current = (
             message.pose.pose.position.x,
             message.pose.pose.position.y,
@@ -586,6 +720,20 @@ def evaluate(regression, arguments):
         f"  truth bbox={bounds_area(regression.truth_bounds):.3f} m2",
         flush=True,
     )
+    # Reported, not yet judged. A limit set before any distribution exists is
+    # the mistake this campaign process was built to avoid, so these numbers
+    # first have to be collected across a batch.
+    for label, error in (
+        ("front end", regression.front_end_error),
+        ("map frame", regression.map_frame_error),
+    ):
+        print(
+            f"  {label} error: samples={error.samples} "
+            f"position final={format_metres(error.latest_position)} "
+            f"peak={error.maximum_position:.3f} m "
+            f"yaw peak={math.degrees(error.maximum_yaw):.3f} deg",
+            flush=True,
+        )
     print(
         f"  completion: reason={regression.completion_reason or 'none'!r} "
         f"wall={format_elapsed(regression.completion_wall)} "
@@ -679,6 +827,7 @@ def main():
             regression.note_sim_time(
                 regression.get_clock().now().nanoseconds * 1.0e-9
             )
+            regression.sample_map_frame_pose()
             rclpy.spin_once(regression, timeout_sec=0.2)
         # The completion flag arrives on its own topic and can beat the
         # diagnostics carrying completion_reason. Without this drain the report

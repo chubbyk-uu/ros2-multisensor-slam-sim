@@ -60,6 +60,14 @@ MEASUREMENT_PATTERNS = {
     "submap_reinitializations": r"submap reinitializations=(\d+)",
     "loop_accepted_candidates": r"proposals=\d+ verified=\d+ accepted=(\d+)",
     "completion_wall_s": r"completion: reason=.*? wall=([0-9.]+)",
+    "front_end_peak_position_error_m":
+        r"front end error:.*?peak=([0-9.]+) m",
+    "front_end_peak_yaw_error_deg":
+        r"front end error:.*?yaw peak=([0-9.]+) deg",
+    "map_frame_peak_position_error_m":
+        r"map frame error:.*?peak=([0-9.]+) m",
+    "map_frame_peak_yaw_error_deg":
+        r"map frame error:.*?yaw peak=([0-9.]+) deg",
 }
 HOST_HEALTHY_PATTERN = re.compile(r"healthy=(yes|no)")
 WALL_OVERSHOOT_PATTERN = re.compile(

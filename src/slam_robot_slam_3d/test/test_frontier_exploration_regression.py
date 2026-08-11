@@ -1,4 +1,5 @@
 from importlib.machinery import SourceFileLoader
+import math
 from pathlib import Path
 import time
 
@@ -212,6 +213,55 @@ def test_map_shape_limits_leave_more_margin_than_the_observed_spread():
     assert arguments.maximum_known_bbox_area_m2 >= 451.0 + 20.0
     # Still far below the 20.10 m height a warped map produced.
     assert arguments.maximum_known_bbox_height_m < 20.0
+
+
+def test_relative_pose_removes_a_fixed_frame_offset():
+    # The estimate and ground truth start from different, fixed offsets. What
+    # matters is drift accumulated since the start, not the offset itself.
+    origin = (10.0, -5.0, math.pi / 2)
+    moved = (10.0, -3.0, math.pi / 2)
+
+    forward = MODULE.relative_pose(origin, moved)
+
+    # Two metres along the frame's own heading, none sideways, no rotation.
+    assert forward[0] == pytest.approx(2.0)
+    assert forward[1] == pytest.approx(0.0, abs=1e-9)
+    assert forward[2] == pytest.approx(0.0)
+
+
+def test_trajectory_error_is_zero_when_the_estimate_tracks_truth():
+    error = MODULE.TrajectoryError()
+    truth = [(0.0, (0.0, 0.0, 0.0)), (1.0, (1.0, 0.0, 0.0))]
+    # A different frame origin, same motion.
+    error.observe(0.0, (100.0, 100.0, 0.0), truth)
+    error.observe(1.0, (101.0, 100.0, 0.0), truth)
+
+    assert error.samples == 1
+    assert error.latest_position == pytest.approx(0.0, abs=1e-9)
+    assert error.maximum_yaw == pytest.approx(0.0, abs=1e-9)
+
+
+def test_trajectory_error_reports_drift_and_keeps_the_peak():
+    error = MODULE.TrajectoryError()
+    truth = [(0.0, (0.0, 0.0, 0.0)), (1.0, (1.0, 0.0, 0.0)), (2.0, (2.0, 0.0, 0.0))]
+    error.observe(0.0, (0.0, 0.0, 0.0), truth)
+    error.observe(1.0, (1.0, 0.4, 0.0), truth)
+    error.observe(2.0, (2.0, 0.1, 0.0), truth)
+
+    assert error.latest_position == pytest.approx(0.1)
+    # The peak survives a later recovery, which is what a transient distortion
+    # looks like once a loop closure pulls the estimate back.
+    assert error.maximum_position == pytest.approx(0.4)
+
+
+def test_trajectory_error_refuses_badly_paired_samples():
+    error = MODULE.TrajectoryError(maximum_pair_age=0.05)
+    truth = [(0.0, (0.0, 0.0, 0.0))]
+    error.observe(10.0, (0.0, 0.0, 0.0), truth)
+
+    # Nothing anchored, because no truth sample was close enough in time.
+    assert error.estimate_origin is None
+    assert error.samples == 0
 
 
 def value(key, text):
