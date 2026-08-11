@@ -87,18 +87,28 @@ def leftover_processes():
     return found
 
 
-def parse_run(text, exit_code):
+def parse_run(text, exit_code, timed_out=False):
     """Prefer the reported verdict over the exit code.
 
     They agree in normal operation. When the launch wrapper masks the child's
     status they do not, and silently trusting the exit code would turn a
     reported FAIL into a campaign pass.
+
+    A run killed on its timeout never reaches its own scoring, so it has no
+    verdict to report. Charging that to the algorithm would repeat the mistake
+    of blaming the code for the machine: a launch that hangs says nothing about
+    exploration, so it belongs with the environment. A missing verdict for any
+    other reason still fails, because a run that did not report cannot be
+    assumed to have passed.
     """
     match = VERDICT_PATTERN.search(text)
     reported = match.group(1) if match else None
     verdict = {v: k for k, v in VERDICT_NAMES.items()}.get(reported)
+    if verdict is None:
+        verdict = INFRA_UNSTABLE if timed_out else FAIL
     record = {
-        "verdict": verdict if verdict is not None else FAIL,
+        "verdict": verdict,
+        "launch_timed_out": timed_out,
         "verdict_reported": reported,
         "exit_code": exit_code,
         "verdict_missing": reported is None,
@@ -225,8 +235,7 @@ def main():
                 timed_out = True
                 completed_returncode = None
         text = log_path.read_text(encoding="utf-8", errors="replace")
-        record = parse_run(text, completed_returncode)
-        record["launch_timed_out"] = timed_out
+        record = parse_run(text, completed_returncode, timed_out)
         record["index"] = index
         record["wall_seconds"] = round(time.monotonic() - started, 1)
         record["log"] = str(log_path)
@@ -243,14 +252,26 @@ def main():
         # Checked between runs, not only before the batch. A run that failed to
         # tear down would otherwise share the machine with the next one, which
         # is exactly the contention these measurements are meant to exclude.
+        # Warning alone was not enough: contention usually surfaces as a host
+        # attribution, but it can just as well produce a core failure, and that
+        # would be recorded against the algorithm.
         remaining = leftover_processes()
         if remaining:
+            print(f"    {remaining} still running after run {index}; stopping it",
+                  flush=True)
+            for pattern in remaining:
+                subprocess.run(["pkill", "-f", pattern], check=False)
+            time.sleep(arguments.settle_seconds)
+            remaining = leftover_processes()
+        if remaining:
+            record["left_processes_running"] = remaining
             print(
-                f"    WARNING: {remaining} still running after run {index}; "
-                "the next run shares this machine with it",
+                f"ABORTING: {remaining} survived cleanup after run {index}. "
+                "Every later run would share this machine with it, so the "
+                "batch stops here rather than recording contaminated samples.",
                 flush=True,
             )
-            record["left_processes_running"] = remaining
+            break
 
     outcome, reason = judge(runs, arguments)
     summary = {

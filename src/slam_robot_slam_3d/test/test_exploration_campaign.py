@@ -56,6 +56,24 @@ def test_missing_verdict_is_treated_as_a_failure_not_a_pass():
     assert record["verdict_missing"]
 
 
+def test_a_hung_launch_is_the_environment_not_an_algorithm_failure():
+    # A run killed on its timeout never reaches its own scoring, so it has no
+    # verdict to report. Calling that a core failure would blame exploration
+    # for the machine hanging, the same error as counting a starved run against
+    # it.
+    record = MODULE.parse_run("no verdict here", None, timed_out=True)
+
+    assert record["verdict"] == MODULE.INFRA_UNSTABLE
+    assert record["launch_timed_out"]
+
+
+def test_a_timeout_does_not_excuse_a_verdict_that_was_reported():
+    # The run scored itself before the clock ran out; that verdict stands.
+    record = MODULE.parse_run(f"{PREFIX}   VERDICT FAIL\n", None, timed_out=True)
+
+    assert record["verdict"] == MODULE.FAIL
+
+
 def runs(passes, fails, infra):
     return (
         [{"verdict": MODULE.PASS, "gazebo_teardown_crash": False}] * passes +
