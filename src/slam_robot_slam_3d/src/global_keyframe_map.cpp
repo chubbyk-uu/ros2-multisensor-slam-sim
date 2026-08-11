@@ -16,7 +16,8 @@ std::size_t GlobalKeyframeMap::add(GlobalKeyframe keyframe)
   validateKeyframe(keyframe);
   std::unique_lock<std::shared_mutex> lock(mutex_);
   keyframe.id = keyframes_.size();
-  point_count_ += keyframe.filtered_scan->size();
+  point_count_ += keyframe.registration_scan->size();
+  occupancy_point_count_ += keyframe.occupancy_scan->size();
   keyframes_.push_back(std::move(keyframe));
   return keyframes_.back().id;
 }
@@ -30,16 +31,19 @@ std::vector<GlobalKeyframe> GlobalKeyframeMap::snapshot() const
 void GlobalKeyframeMap::replace(std::vector<GlobalKeyframe> keyframes)
 {
   std::size_t points = 0U;
+  std::size_t occupancy_points = 0U;
   for (std::size_t index = 0U; index < keyframes.size(); ++index) {
     if (keyframes[index].id != index) {
       throw std::invalid_argument("loaded global keyframes must use contiguous ids");
     }
     validateKeyframe(keyframes[index]);
-    points += keyframes[index].filtered_scan->size();
+    points += keyframes[index].registration_scan->size();
+    occupancy_points += keyframes[index].occupancy_scan->size();
   }
   std::unique_lock<std::shared_mutex> lock(mutex_);
   keyframes_ = std::move(keyframes);
   point_count_ = points;
+  occupancy_point_count_ = occupancy_points;
 }
 
 std::size_t GlobalKeyframeMap::size() const
@@ -54,13 +58,24 @@ std::size_t GlobalKeyframeMap::pointCount() const
   return point_count_;
 }
 
+std::size_t GlobalKeyframeMap::occupancyPointCount() const
+{
+  std::shared_lock<std::shared_mutex> lock(mutex_);
+  return occupancy_point_count_;
+}
+
 void GlobalKeyframeMap::validateKeyframe(const GlobalKeyframe & keyframe)
 {
-  if (!keyframe.filtered_scan || keyframe.filtered_scan->empty()) {
-    throw std::invalid_argument("global keyframe scan must not be empty");
+  if (!keyframe.registration_scan || keyframe.registration_scan->empty() ||
+    !keyframe.occupancy_scan || keyframe.occupancy_scan->empty())
+  {
+    throw std::invalid_argument("global keyframe scans must not be empty");
   }
   if (!std::all_of(
-      keyframe.filtered_scan->begin(), keyframe.filtered_scan->end(),
+      keyframe.registration_scan->begin(), keyframe.registration_scan->end(),
+      [](const auto & point) {return pcl::isFinite(point);}) ||
+    !std::all_of(
+      keyframe.occupancy_scan->begin(), keyframe.occupancy_scan->end(),
       [](const auto & point) {return pcl::isFinite(point);}) ||
     !keyframe.front_end_base_pose.matrix().allFinite() ||
     !keyframe.odom_base_pose.matrix().allFinite() ||

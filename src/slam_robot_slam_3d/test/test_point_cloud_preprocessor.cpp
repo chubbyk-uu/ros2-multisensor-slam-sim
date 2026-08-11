@@ -87,6 +87,23 @@ TEST(PointCloudPreprocessor, DownsamplesPointsWithinOneVoxel)
   EXPECT_TRUE(output.is_dense);
 }
 
+TEST(PointCloudPreprocessor, DerivesCoarserRegistrationCloudFromMappingCloud)
+{
+  pcl::PointCloud<pcl::PointXYZI> mapping_cloud;
+  mapping_cloud.push_back(makePoint(1.01F, 0.01F, 0.01F));
+  mapping_cloud.push_back(makePoint(1.06F, 0.01F, 0.01F));
+  mapping_cloud.push_back(makePoint(1.16F, 0.01F, 0.01F));
+
+  const auto registration_cloud =
+    voxelDownsamplePointCloud(mapping_cloud, 0.10);
+
+  EXPECT_LT(registration_cloud.size(), mapping_cloud.size());
+  EXPECT_TRUE(registration_cloud.is_dense);
+  EXPECT_THROW(
+    (void)voxelDownsamplePointCloud(mapping_cloud, 0.0),
+    std::invalid_argument);
+}
+
 TEST(PointCloudPreprocessor, EmptyInputProducesDenseEmptyOutput)
 {
   PointCloudPreprocessor preprocessor(PointCloudPreprocessorParameters{});

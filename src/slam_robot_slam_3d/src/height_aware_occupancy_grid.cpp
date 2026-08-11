@@ -103,12 +103,12 @@ slam_robot_slam::OccupancyGridSnapshot HeightAwareOccupancyGrid::navigationSnaps
 void HeightAwareOccupancyGrid::integrate(
   const GlobalKeyframe & keyframe, const Eigen::Isometry3d & pose)
 {
-  if (!keyframe.filtered_scan || !pose.matrix().allFinite()) {
+  if (!keyframe.occupancy_scan || !pose.matrix().allFinite()) {
     throw std::invalid_argument("occupancy keyframe is invalid");
   }
   const Eigen::Isometry3d map_from_sensor = pose * keyframe.base_to_sensor;
   const Eigen::Vector3d origin = map_from_sensor.translation();
-  for (const auto & point : *keyframe.filtered_scan) {
+  for (const auto & point : *keyframe.occupancy_scan) {
     const Eigen::Vector3d endpoint = map_from_sensor * Eigen::Vector3d(point.x, point.y, point.z);
     if (!endpoint.allFinite()) {
       continue;

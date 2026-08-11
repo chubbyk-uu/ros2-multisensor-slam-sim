@@ -18,7 +18,10 @@ GlobalKeyframe makeKeyframe(std::size_t id, double x)
   GlobalKeyframe keyframe;
   keyframe.id = id;
   keyframe.stamp = rclcpp::Time(static_cast<std::int64_t>(1000 + id), RCL_ROS_TIME);
-  keyframe.filtered_scan = cloud;
+  keyframe.registration_scan = cloud;
+  auto occupancy_cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  occupancy_cloud->push_back(pcl::PointXYZI{1.05F, 2.0F, 0.3F, 5.0F});
+  keyframe.occupancy_scan = occupancy_cloud;
   keyframe.front_end_base_pose.translation().x() = x;
   keyframe.odom_base_pose.translation().x() = x + 0.1;
   keyframe.base_to_sensor.translation().z() = 0.2;
@@ -51,7 +54,8 @@ TEST(SlamSnapshot, RoundTripsAllPersistentState)
   EXPECT_DOUBLE_EQ(restored.keyframes[1].front_end_base_pose.translation().x(), 1.0);
   EXPECT_DOUBLE_EQ(restored.keyframes[1].pose_covariance(0, 0), 0.123);
   EXPECT_EQ(restored.keyframes[1].correspondence_count, 42U);
-  EXPECT_FLOAT_EQ(restored.keyframes[0].filtered_scan->front().intensity, 4.0F);
+  EXPECT_FLOAT_EQ(restored.keyframes[0].registration_scan->front().intensity, 4.0F);
+  EXPECT_FLOAT_EQ(restored.keyframes[0].occupancy_scan->front().intensity, 5.0F);
   EXPECT_DOUBLE_EQ(restored.optimized_base_poses[1].translation().x(), 0.9);
   std::filesystem::remove(path);
 }
@@ -82,40 +86,45 @@ TEST(SlamSnapshot, RoundTripsTheFrontEndFrameCorrection)
 }
 
 
-TEST(SlamSnapshot, RecoversTheFrameCorrectionFromAVersionOneFile)
+void expectLegacyVersionRejected(std::uint32_t legacy_version)
 {
-  // Version 1 files exist in users' home directories and the restore path is a
-  // documented feature, so they must keep loading. The correction they never
-  // stored is recoverable: the last pose entry is that keyframe's pose in the
-  // map frame, so composing it with the inverse of the same keyframe's
-  // front-end pose recovers the transform between the frames.
   const auto path = (std::filesystem::temp_directory_path() /
-    "slam_robot_slam_3d_snapshot_v1.bin").string();
+    ("slam_robot_slam_3d_snapshot_v" + std::to_string(legacy_version) + ".bin")).string();
   SlamSnapshot source;
-  source.keyframes = {makeKeyframe(0U, 0.0), makeKeyframe(1U, 1.0)};
-  source.optimized_base_poses = {
-    Eigen::Isometry3d::Identity(), Eigen::Isometry3d::Identity()};
-  source.optimized_base_poses.back().translation() =
-    Eigen::Vector3d(4.0, -3.0, 0.0);
-  source.map_from_local.translation() = Eigen::Vector3d(9.0, 9.0, 0.0);
+  source.keyframes = {makeKeyframe(0U, 0.0)};
+  source.optimized_base_poses = {Eigen::Isometry3d::Identity()};
   saveSlamSnapshot(path, source);
 
-  // Rewrite the version field in place, then truncate the trailing correction
-  // so the file matches what version 1 actually wrote.
   std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
   file.seekp(sizeof(std::uint64_t));
-  const std::uint32_t one = 1U;
-  file.write(reinterpret_cast<const char *>(&one), sizeof(one));
+  file.write(
+    reinterpret_cast<const char *>(&legacy_version), sizeof(legacy_version));
   file.close();
-  const auto size = std::filesystem::file_size(path);
-  std::filesystem::resize_file(path, size - 16U * sizeof(double));
+  EXPECT_THROW(loadSlamSnapshot(path), std::runtime_error);
+  std::filesystem::remove(path);
+}
 
-  const auto restored = loadSlamSnapshot(path);
+TEST(SlamSnapshot, RejectsVersionOneSnapshots)
+{
+  expectLegacyVersionRejected(1U);
+}
 
-  // keyframes.back() sits at x = 1.0 and its map pose at x = 4.0, so the
-  // frames differ by 3.0 in x and -3.0 in y.
-  EXPECT_NEAR(restored.map_from_local.translation().x(), 3.0, 1.0e-9);
-  EXPECT_NEAR(restored.map_from_local.translation().y(), -3.0, 1.0e-9);
+TEST(SlamSnapshot, RejectsVersionTwoSnapshots)
+{
+  expectLegacyVersionRejected(2U);
+}
+
+TEST(SlamSnapshot, RejectsTruncatedVersionThreeSnapshots)
+{
+  const auto path = (std::filesystem::temp_directory_path() /
+    "slam_robot_slam_3d_snapshot_truncated.bin").string();
+  SlamSnapshot source;
+  source.keyframes = {makeKeyframe(0U, 0.0)};
+  source.optimized_base_poses = {Eigen::Isometry3d::Identity()};
+  saveSlamSnapshot(path, source);
+  std::filesystem::resize_file(path, std::filesystem::file_size(path) / 2U);
+
+  EXPECT_THROW(loadSlamSnapshot(path), std::runtime_error);
   std::filesystem::remove(path);
 }
 

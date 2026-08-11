@@ -49,8 +49,9 @@ GlobalKeyframe makeKeyframe(
 {
   GlobalKeyframe keyframe;
   keyframe.id = id;
-  keyframe.filtered_scan =
+  keyframe.registration_scan =
     std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(scan);
+  keyframe.occupancy_scan = keyframe.registration_scan;
   keyframe.accumulated_distance = static_cast<double>(id) * 10.0;
   return keyframe;
 }

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <deque>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <future>
 #include <memory>
@@ -40,6 +41,7 @@
 #include "slam_robot_slam_3d/match_failure_recovery.hpp"
 #include "slam_robot_slam_3d/odometry_interpolator.hpp"
 #include "slam_robot_slam_3d/pose_graph_submission_state.hpp"
+#include "slam_robot_slam_3d/point_cloud_preprocessor.hpp"
 #include "slam_robot_slam_3d/scan_context_index.hpp"
 #include "slam_robot_slam_3d/scan_to_map_matcher.hpp"
 #include "slam_robot_slam_3d/se2_pose_graph_backend.hpp"
@@ -195,6 +197,8 @@ public:
       "front_end.keyframe_translation", 0.25);
     keyframe_rotation_ = declare_parameter<double>(
       "front_end.keyframe_rotation", 0.15);
+    registration_voxel_leaf_size_ = declare_parameter<double>(
+      "front_end.registration_voxel_leaf_size", 0.10);
     const auto buffer_size = declare_parameter<int>(
       "front_end.maximum_odom_buffer_size", 200);
     const auto pending_cloud_limit = declare_parameter<int>(
@@ -229,7 +233,9 @@ public:
       !std::isfinite(maximum_odom_age_) ||
       maximum_odom_age_ <= 0.0 || !std::isfinite(keyframe_translation_) ||
       keyframe_translation_ <= 0.0 || !std::isfinite(keyframe_rotation_) ||
-      keyframe_rotation_ <= 0.0 || buffer_size <= 1 ||
+      keyframe_rotation_ <= 0.0 ||
+      !std::isfinite(registration_voxel_leaf_size_) ||
+      registration_voxel_leaf_size_ <= 0.0 || buffer_size <= 1 ||
       pending_cloud_limit <= 0 || failure_limit <= 0 ||
       pending_loop_keyframe_limit <= 0 || global_map_keyframe_interval <= 0 ||
       global_map_keyframes_per_batch <= 0 ||
@@ -253,6 +259,7 @@ public:
     occupancy_grid_free_maximum_ = static_cast<std::int8_t>(grid_free_maximum);
     occupancy_grid_occupied_minimum_ =
       static_cast<std::int8_t>(grid_occupied_minimum);
+    occupancy_grid_maximum_ray_range_ = grid_maximum_ray_range;
     global_point_cloud_map_ = std::make_unique<GlobalPointCloudMap>(
       GlobalPointCloudMapParameters{global_map_voxel_leaf_size,
         static_cast<std::size_t>(global_map_keyframes_per_batch)});
@@ -357,8 +364,10 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "3D GICP front end %s + %s -> /custom_slam_3d/laser_odom; %s TF publishing %s -> %s",
+      "3D GICP front end %s + %s -> /custom_slam_3d/laser_odom; "
+      "registration voxel %.3f m; %s TF publishing %s -> %s",
       input_topic_.c_str(), odom_topic_.c_str(),
+      registration_voxel_leaf_size_,
       publish_map_to_odom_tf_ ? "standard" : "disabled", map_frame_.c_str(),
       odom_frame_.c_str());
   }
@@ -658,8 +667,16 @@ private:
         transformToEigen(base_to_lidar_message.transform);
       const Eigen::Isometry3d odom_pose = poseToEigen(odometry.pose.pose);
 
-      pcl::PointCloud<pcl::PointXYZI> scan;
-      pcl::fromROSMsg(*message, scan);
+      pcl::PointCloud<pcl::PointXYZI> occupancy_input_scan;
+      pcl::fromROSMsg(*message, occupancy_input_scan);
+      const pcl::PointCloud<pcl::PointXYZI> registration_scan =
+        voxelDownsamplePointCloud(
+        occupancy_input_scan, registration_voxel_leaf_size_);
+      if (registration_scan.empty()) {
+        throw std::runtime_error("registration scan is empty after voxel filtering");
+      }
+      latest_occupancy_input_points_ = occupancy_input_scan.size();
+      latest_registration_points_ = registration_scan.size();
       if (!initialized_ && snapshot_loaded_) {
         last_odom_pose_ = odom_pose;
         map_from_odom_ = planarPose(estimated_base_pose_ * odom_pose.inverse());
@@ -671,13 +688,15 @@ private:
         last_odom_pose_ = odom_pose;
         const Eigen::Isometry3d lidar_pose =
           estimated_base_pose_ * base_to_lidar;
-        local_submap_.addKeyframe(scan, lidar_pose);
+        local_submap_.addKeyframe(registration_scan, lidar_pose);
         addGlobalKeyframe(
-          message->header, scan, estimated_base_pose_, odom_pose,
+          message->header, registration_scan, occupancy_input_scan,
+          estimated_base_pose_, odom_pose,
           base_to_lidar, nullptr);
         initialized_ = true;
         publishOutputs(
-          *message, odometry, scan, lidar_pose, nullptr, true, false, started);
+          *message, odometry, registration_scan, lidar_pose, nullptr, true,
+          false, started);
         return;
       }
 
@@ -691,7 +710,8 @@ private:
       const Eigen::Isometry3d predicted_lidar_pose =
         predicted_base_pose * base_to_lidar;
       const auto match_result = matcher_.match(
-        scan, local_submap_.cloud(), local_submap_.version(), predicted_lidar_pose);
+        registration_scan, local_submap_.cloud(), local_submap_.version(),
+        predicted_lidar_pose);
 
       Eigen::Isometry3d lidar_pose = predicted_lidar_pose;
       bool keyframe_added = false;
@@ -709,7 +729,7 @@ private:
           (keyframe_delta.translation().norm() >= keyframe_translation_ ||
           rotationMagnitude(keyframe_delta) >= keyframe_rotation_))
         {
-          local_submap_.addKeyframe(scan, lidar_pose);
+          local_submap_.addKeyframe(registration_scan, lidar_pose);
           last_keyframe_base_pose_ = estimated_base_pose_;
           keyframe_added = true;
         }
@@ -719,7 +739,7 @@ private:
           match_failure_recovery_->observe(match_result.status))
         {
           local_submap_.clear();
-          local_submap_.addKeyframe(scan, lidar_pose);
+          local_submap_.addKeyframe(registration_scan, lidar_pose);
           last_keyframe_base_pose_ = estimated_base_pose_;
           keyframe_added = true;
           submap_reinitialized = true;
@@ -730,7 +750,8 @@ private:
       }
       if (keyframe_added && operation_mode_ == "mapping") {
         addGlobalKeyframe(
-          message->header, scan, estimated_base_pose_, odom_pose,
+          message->header, registration_scan, occupancy_input_scan,
+          estimated_base_pose_, odom_pose,
           base_to_lidar, &match_result);
       }
       // Track the front end every scan instead of only when an optimisation
@@ -743,7 +764,7 @@ private:
         map_from_local_ * estimated_base_pose_ * odom_pose.inverse());
       last_odom_pose_ = odom_pose;
       publishOutputs(
-        *message, odometry, scan, lidar_pose, &match_result,
+        *message, odometry, registration_scan, lidar_pose, &match_result,
         keyframe_added, submap_reinitialized, started);
     } catch (const tf2::TransformException & error) {
       RCLCPP_WARN_THROTTLE(
@@ -854,7 +875,8 @@ private:
 
   void addGlobalKeyframe(
     const std_msgs::msg::Header & header,
-    const pcl::PointCloud<pcl::PointXYZI> & scan,
+    const pcl::PointCloud<pcl::PointXYZI> & registration_scan,
+    const pcl::PointCloud<pcl::PointXYZI> & occupancy_input_scan,
     const Eigen::Isometry3d & front_end_base_pose,
     const Eigen::Isometry3d & odom_base_pose,
     const Eigen::Isometry3d & base_to_sensor,
@@ -868,8 +890,21 @@ private:
     }
     GlobalKeyframe keyframe;
     keyframe.stamp = rclcpp::Time(header.stamp);
-    keyframe.filtered_scan =
-      std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(scan);
+    keyframe.registration_scan =
+      std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(registration_scan);
+    auto occupancy_scan =
+      std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+    occupancy_scan->reserve(occupancy_input_scan.size());
+    for (const auto & point : occupancy_input_scan) {
+      if (std::hypot(point.x, point.y) <= occupancy_grid_maximum_ray_range_) {
+        occupancy_scan->push_back(point);
+      }
+    }
+    occupancy_scan->is_dense = true;
+    if (occupancy_scan->empty()) {
+      throw std::runtime_error("occupancy scan is empty after range clipping");
+    }
+    keyframe.occupancy_scan = std::move(occupancy_scan);
     keyframe.front_end_base_pose = front_end_base_pose;
     keyframe.odom_base_pose = odom_base_pose;
     keyframe.base_to_sensor = base_to_sensor;
@@ -1062,17 +1097,19 @@ private:
     startPoseGraphOptimization(global_keyframes_.snapshot());
   }
 
-  void saveSnapshot() const
+  void saveSnapshot()
   {
     const auto keyframes = global_keyframes_.snapshot();
     saveSlamSnapshot(snapshot_path_, {
         keyframes, pose_graph_submission_state_.committedConstraints(),
         globalMapBasePoses(keyframes), map_from_local_});
+    snapshot_size_bytes_ = std::filesystem::file_size(snapshot_path_);
   }
 
   void restoreSnapshot()
   {
     auto snapshot = loadSlamSnapshot(snapshot_path_);
+    snapshot_size_bytes_ = std::filesystem::file_size(snapshot_path_);
     // Mapping resumes in the map frame, because new keyframes are created
     // from estimated_base_pose_, which is seeded below from an optimised pose.
     rebaseFrontEndPoses(snapshot.keyframes, snapshot.map_from_local);
@@ -1112,7 +1149,7 @@ private:
         restored_keyframes.size() - local_submap_.parameters().maximum_keyframes : 0U;
       for (std::size_t index = first; index < restored_keyframes.size(); ++index) {
         local_submap_.addKeyframe(
-          *restored_keyframes[index].filtered_scan,
+          *restored_keyframes[index].registration_scan,
           optimized_global_base_poses_[index] * restored_keyframes[index].base_to_sensor);
       }
     }
@@ -1425,7 +1462,17 @@ private:
     status.values.push_back(makeValue(
       "snapshot_loaded", snapshot_loaded_ ? "true" : "false"));
     status.values.push_back(makeValue(
+      "snapshot_size_bytes", std::to_string(snapshot_size_bytes_)));
+    status.values.push_back(makeValue(
       "global_keyframe_points", std::to_string(global_keyframes_.pointCount())));
+    status.values.push_back(makeValue(
+      "global_keyframe_occupancy_points",
+      std::to_string(global_keyframes_.occupancyPointCount())));
+    status.values.push_back(makeValue(
+      "registration_scan_points", std::to_string(latest_registration_points_)));
+    status.values.push_back(makeValue(
+      "occupancy_input_scan_points",
+      std::to_string(latest_occupancy_input_points_)));
     status.values.push_back(makeValue(
       "global_map_rebuild_active",
       global_point_cloud_map_ != nullptr && global_point_cloud_map_->active() ?
@@ -1620,6 +1667,7 @@ private:
   bool force_planar_motion_{true};
   double keyframe_translation_{0.25};
   double keyframe_rotation_{0.15};
+  double registration_voxel_leaf_size_{0.10};
   std::size_t maximum_odom_buffer_size_{200U};
   std::size_t maximum_pending_clouds_{5U};
   std::size_t maximum_pending_loop_keyframes_{100U};
@@ -1628,6 +1676,7 @@ private:
   std::size_t occupancy_grid_keyframes_per_batch_{4U};
   std::int8_t occupancy_grid_free_maximum_{20};
   std::int8_t occupancy_grid_occupied_minimum_{65};
+  double occupancy_grid_maximum_ray_range_{8.0};
   std::unique_ptr<MatchFailureRecovery> match_failure_recovery_;
   bool initialized_{false};
   Eigen::Isometry3d estimated_base_pose_{Eigen::Isometry3d::Identity()};
@@ -1683,6 +1732,9 @@ private:
   std::size_t occupancy_probability_free_cells_{0U};
   std::size_t occupancy_probability_partial_cells_{0U};
   std::size_t occupancy_probability_occupied_cells_{0U};
+  std::size_t latest_registration_points_{0U};
+  std::size_t latest_occupancy_input_points_{0U};
+  std::uintmax_t snapshot_size_bytes_{0U};
   std::size_t pose_graph_commit_count_{0U};
   std::size_t pose_graph_discard_count_{0U};
   std::size_t pose_graph_failure_count_{0U};

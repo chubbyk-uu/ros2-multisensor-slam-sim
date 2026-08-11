@@ -4,21 +4,17 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 #include <system_error>
+
+#include <pcl/common/point_tests.h>
 
 namespace slam_robot_slam_3d
 {
 namespace
 {
 constexpr std::uint64_t kMagic = 0x534C414D33445331ULL;
-constexpr std::uint32_t kVersion = 2U;
-// Version 1 stored no frame correction. It is still readable because the value
-// can be recovered exactly from what it did store: the last entry of the pose
-// array is that keyframe's pose in the map frame, so composing it with the
-// inverse of the same keyframe's front-end pose gives the transform between
-// the two frames. That is what resuming needs, whether or not the entry came
-// from an optimisation or from dead reckoning past one.
-constexpr std::uint32_t kMinimumReadableVersion = 1U;
+constexpr std::uint32_t kVersion = 3U;
 constexpr std::uint64_t kMaximumKeyframes = 1000000U;
 constexpr std::uint64_t kMaximumPointsPerKeyframe = 10000000U;
 constexpr std::uint64_t kMaximumConstraints = 10000000U;
@@ -65,13 +61,53 @@ Eigen::Isometry3d readPose(std::istream & input)
   return pose;
 }
 
+void writePointCloud(
+  std::ostream & output,
+  const std::shared_ptr<const pcl::PointCloud<pcl::PointXYZI>> & cloud)
+{
+  if (!cloud || cloud->empty() || cloud->size() > kMaximumPointsPerKeyframe) {
+    throw std::invalid_argument("snapshot keyframe cloud must not be empty");
+  }
+  writeValue(output, static_cast<std::uint64_t>(cloud->size()));
+  for (const auto & point : *cloud) {
+    if (!pcl::isFinite(point)) {
+      throw std::invalid_argument("snapshot keyframe cloud must be finite");
+    }
+    writeValue(output, point.x);
+    writeValue(output, point.y);
+    writeValue(output, point.z);
+    writeValue(output, point.intensity);
+  }
+}
+
+std::shared_ptr<const pcl::PointCloud<pcl::PointXYZI>> readPointCloud(
+  std::istream & input)
+{
+  std::uint64_t point_count{0U};
+  readValue(input, point_count);
+  if (point_count == 0U || point_count > kMaximumPointsPerKeyframe) {
+    throw std::runtime_error("invalid snapshot keyframe point count");
+  }
+  auto cloud = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
+  cloud->resize(static_cast<std::size_t>(point_count));
+  for (auto & point : *cloud) {
+    readValue(input, point.x);
+    readValue(input, point.y);
+    readValue(input, point.z);
+    readValue(input, point.intensity);
+    if (!pcl::isFinite(point)) {
+      throw std::runtime_error("snapshot keyframe cloud is not finite");
+    }
+  }
+  cloud->width = static_cast<std::uint32_t>(cloud->size());
+  cloud->height = 1U;
+  cloud->is_dense = true;
+  return cloud;
+}
+
 void writeKeyframe(std::ostream & output, const GlobalKeyframe & keyframe)
 {
-  if (!keyframe.filtered_scan || keyframe.filtered_scan->empty()) {
-    throw std::invalid_argument("snapshot keyframe scan must not be empty");
-  }
   const auto stamp = keyframe.stamp.nanoseconds();
-  const auto points = static_cast<std::uint64_t>(keyframe.filtered_scan->size());
   const std::uint8_t flags =
     (keyframe.match_accepted ? 1U : 0U) |
     (keyframe.translation_degenerate ? 2U : 0U) |
@@ -90,13 +126,8 @@ void writeKeyframe(std::ostream & output, const GlobalKeyframe & keyframe)
   writeValue(output, flags);
   writeValue(output, static_cast<std::uint64_t>(keyframe.correspondence_count));
   writeValue(output, keyframe.rmse);
-  writeValue(output, points);
-  for (const auto & point : *keyframe.filtered_scan) {
-    writeValue(output, point.x);
-    writeValue(output, point.y);
-    writeValue(output, point.z);
-    writeValue(output, point.intensity);
-  }
+  writePointCloud(output, keyframe.registration_scan);
+  writePointCloud(output, keyframe.occupancy_scan);
 }
 
 GlobalKeyframe readKeyframe(std::istream & input, std::size_t id)
@@ -105,7 +136,6 @@ GlobalKeyframe readKeyframe(std::istream & input, std::size_t id)
   std::int64_t stamp{0};
   std::uint8_t flags{0U};
   std::uint64_t correspondences{0U};
-  std::uint64_t point_count{0U};
   readValue(input, stamp);
   keyframe.front_end_base_pose = readPose(input);
   keyframe.odom_base_pose = readPose(input);
@@ -119,24 +149,10 @@ GlobalKeyframe readKeyframe(std::istream & input, std::size_t id)
   readValue(input, flags);
   readValue(input, correspondences);
   readValue(input, keyframe.rmse);
-  readValue(input, point_count);
-  if (point_count == 0U || point_count > kMaximumPointsPerKeyframe) {
-    throw std::runtime_error("invalid snapshot keyframe counts");
-  }
-  auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
-  scan->resize(static_cast<std::size_t>(point_count));
-  for (auto & point : *scan) {
-    readValue(input, point.x);
-    readValue(input, point.y);
-    readValue(input, point.z);
-    readValue(input, point.intensity);
-  }
-  scan->width = static_cast<std::uint32_t>(scan->size());
-  scan->height = 1U;
-  scan->is_dense = true;
   keyframe.id = id;
   keyframe.stamp = rclcpp::Time(stamp, RCL_ROS_TIME);
-  keyframe.filtered_scan = scan;
+  keyframe.registration_scan = readPointCloud(input);
+  keyframe.occupancy_scan = readPointCloud(input);
   keyframe.match_accepted = (flags & 1U) != 0U;
   keyframe.translation_degenerate = (flags & 2U) != 0U;
   keyframe.planar_degenerate = (flags & 4U) != 0U;
@@ -197,12 +213,17 @@ SlamSnapshot loadSlamSnapshot(const std::string & path)
   std::uint64_t keyframe_count{0U};
   readValue(input, magic);
   readValue(input, version);
+  if (magic != kMagic) {
+    throw std::runtime_error("invalid SLAM snapshot magic");
+  }
+  if (version != kVersion) {
+    throw std::runtime_error(
+            "unsupported SLAM snapshot version " + std::to_string(version) +
+            "; remap to generate a version 3 snapshot");
+  }
   readValue(input, keyframe_count);
-  if (magic != kMagic || version < kMinimumReadableVersion ||
-    version > kVersion || keyframe_count == 0U ||
-    keyframe_count > kMaximumKeyframes)
-  {
-    throw std::runtime_error("unsupported or invalid SLAM snapshot");
+  if (keyframe_count == 0U || keyframe_count > kMaximumKeyframes) {
+    throw std::runtime_error("invalid SLAM snapshot keyframe count");
   }
   SlamSnapshot result;
   result.keyframes.reserve(static_cast<std::size_t>(keyframe_count));
@@ -231,12 +252,7 @@ SlamSnapshot loadSlamSnapshot(const std::string & path)
   for (std::uint64_t index = 0U; index < keyframe_count; ++index) {
     result.optimized_base_poses.push_back(readPose(input));
   }
-  if (version >= 2U) {
-    result.map_from_local = readPose(input);
-  } else {
-    result.map_from_local = result.optimized_base_poses.back() *
-      result.keyframes.back().front_end_base_pose.inverse();
-  }
+  result.map_from_local = readPose(input);
   return result;
 }
 }  // namespace slam_robot_slam_3d

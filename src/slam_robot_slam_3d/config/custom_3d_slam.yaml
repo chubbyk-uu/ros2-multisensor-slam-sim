@@ -4,11 +4,11 @@
     input_topic: /lidar_3d/points
     output_topic: /custom_slam_3d/points_filtered
 
-    # Match the simulated sensor's useful range and reduce the 720x16 scan
-    # before scan-to-local-map registration.
+    # Preserve mapping-grade samples here. The front end derives its separate
+    # 0.10 m registration cloud from this time-aligned 0.05 m product.
     minimum_range: 0.25
     maximum_range: 20.0
-    voxel_leaf_size: 0.10
+    voxel_leaf_size: 0.05
 
     # Axis-aligned robot envelope expressed in lidar_3d_link. Returns inside
     # this volume cannot be external obstacles or useful map structure.
@@ -61,6 +61,7 @@
       force_planar_motion: true
       keyframe_translation: 0.25
       keyframe_rotation: 0.15
+      registration_voxel_leaf_size: 0.10
       maximum_odom_buffer_size: 200
       maximum_pending_clouds: 5
       maximum_consecutive_match_failures: 5

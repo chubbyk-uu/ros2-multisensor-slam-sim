@@ -22,7 +22,8 @@ GlobalKeyframe makeKeyframe(
   scan->is_dense = true;
   GlobalKeyframe keyframe;
   keyframe.id = id;
-  keyframe.filtered_scan = scan;
+  keyframe.registration_scan = scan;
+  keyframe.occupancy_scan = scan;
   return keyframe;
 }
 

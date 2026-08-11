@@ -13,7 +13,7 @@ struct PointCloudPreprocessorParameters
 {
   double minimum_range{0.25};
   double maximum_range{20.0};
-  double voxel_leaf_size{0.10};
+  double voxel_leaf_size{0.05};
   bool self_filter_enabled{true};
   double self_min_x{-0.30};
   double self_max_x{0.30};
@@ -31,6 +31,9 @@ struct PointCloudPreprocessingStatistics
   std::size_t self_filter_passed_points{0U};
   std::size_t output_points{0U};
 };
+
+pcl::PointCloud<pcl::PointXYZI> voxelDownsamplePointCloud(
+  const pcl::PointCloud<pcl::PointXYZI> & input, double voxel_leaf_size);
 
 class PointCloudPreprocessor
 {

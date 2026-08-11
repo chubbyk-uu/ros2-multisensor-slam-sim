@@ -25,7 +25,7 @@ void GlobalPointCloudMap::begin(
     throw std::invalid_argument("global map rebuild snapshot is inconsistent");
   }
   for (std::size_t index = 0U; index < keyframes.size(); ++index) {
-    if (keyframes[index].id != index || !keyframes[index].filtered_scan ||
+    if (keyframes[index].id != index || !keyframes[index].registration_scan ||
       !optimized_base_poses[index].matrix().allFinite())
     {
       throw std::invalid_argument("global map rebuild input is invalid");
@@ -110,7 +110,7 @@ void GlobalPointCloudMap::insertScan(
   const Eigen::Isometry3d map_from_sensor =
     optimized_base_pose * keyframe.base_to_sensor;
   const double inverse_leaf_size = 1.0 / parameters_.voxel_leaf_size;
-  for (const auto & point : *keyframe.filtered_scan) {
+  for (const auto & point : *keyframe.registration_scan) {
     if (!pcl::isFinite(point)) {
       continue;
     }

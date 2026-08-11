@@ -60,8 +60,9 @@ ros2 launch slam_robot_slam_3d custom_3d_preprocessing.launch.py
 ```
 
 节点订阅 `/lidar_3d/points`，依次执行有限值检查、欧氏量程裁剪、雷达坐标系下
-的机器人本体包围盒裁剪和 PCL `VoxelGrid` 体素降采样，再发布
-`/custom_slam_3d/points_filtered`。默认参数集中在
+的机器人本体包围盒裁剪和 `0.05 m` PCL `VoxelGrid` 体素降采样，再发布
+建图级 `/custom_slam_3d/points_filtered`。前端从同一消息内部派生 `0.10 m`
+注册点云，因此无需增加第二个 ROS 话题或做时间同步。默认参数集中在
 `config/custom_3d_slam.yaml`，不发布 TF，也不与 RTAB-Map 或 MOLA 争用
 `map -> odom`。
 
@@ -80,7 +81,7 @@ ros2 run slam_robot_slam_3d preprocessing_regression \
 
 ### 自研 scan-to-local-map 前端
 
-首版前端使用 PCL Generalized ICP（GICP）将每帧过滤点云配准到最近 12 个
+首版前端使用 PCL Generalized ICP（GICP）将每帧 `0.10 m` 注册点云配准到最近 12 个
 关键帧组成的有界局部子图。`/odom`（默认轮速 + IMU EKF）只提供帧间运动
 初值；匹配结果还必须通过收敛、对应点数、RMSE 和相对初值最大修正量门限。
 子图带单调版本号；版本不变时匹配器复用 PCL GICP 的目标点云和目标协方差，
@@ -105,7 +106,8 @@ ros2 run slam_robot_slam_3d front_end_regression
 `/custom_slam_3d/map_cloud` 和逐帧 `/custom_slam_3d/front_end_diagnostics`。
 `map_cloud` 由不可变全局关键帧按最近一次成功的位姿图优化结果后台分批重放，
 使用 `global_map.voxel_leaf_size` 增量体素化；新请求只保留最新快照，因此不会
-阻塞 10 Hz 前端或形成无界重建队列。同一快照还会以
+阻塞 10 Hz 前端或形成无界重建队列。同一关键帧另存距离裁剪后的 `0.05 m`
+占据点云，并以
 `occupancy_grid.minimum_obstacle_height` 到
 `occupancy_grid.maximum_obstacle_height` 的高度带重放射线，持续发布标准
 `/map` `nav_msgs/OccupancyGrid`；它保留未知空间，不把未观测的点云空洞误判为
@@ -123,9 +125,10 @@ ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py
 它不启动 RTAB-Map、Map Server 或 AMCL：自研 SLAM 独占 `map -> odom`，Nav2
 订阅 `/map`，局部代价地图继续订阅实时 `/lidar_3d/points` 高度带避障。
 
-自研状态默认原子保存到 `~/.ros/custom_slam_3d.snapshot`。快照包含过滤后的
-关键帧扫描、传感器外参、前端/轮速位姿、协方差、已提交回环约束和优化位姿；
-不依赖启动目录，也不会提交到 Git。正常退出在线导航入口时自动保存：
+自研状态默认原子保存到 `~/.ros/custom_slam_3d.snapshot`。版本 3 快照包含每个
+关键帧的注册/占据两份扫描、传感器外参、前端/轮速位姿、协方差、已提交回环约束
+和优化位姿；版本 1/2 不再兼容，会要求重新建图，而不会静默降级。快照不依赖
+启动目录，也不会提交到 Git。正常退出在线导航入口时自动保存：
 
 ```bash
 # 新建地图（默认），退出时保存
@@ -144,10 +147,8 @@ ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py \
 scan-to-map 匹配。它还不支持在地图任意位置启动后的全局重定位；这需要后续
 Scan Context 初始位姿搜索，不能用“成功加载地图”冒充已经完成。
 
-快照当前为版本 2，比版本 1 多存一项前端坐标系修正。版本 1 文件仍然可读：
-恢复所需的是"让接缝一致"的刚体变换，即把最后一个关键帧的前端位姿映射到它的
-优化位姿，因此可由 `optimized.back() * front_end.back().inverse()` 推出，与该
-条目来自优化前缀还是里程计后缀无关。
+快照当前为版本 3。版本 1/2 只保存一份关键帧点云，无法恢复当前注册/占据点云
+分工，因此明确拒绝并要求重新建图；项目目前没有需要维护的外部旧快照用户。
 
 恢复时会把全部历史关键帧的前端位姿刚体变换到地图系。关键帧存的是前端自身
 坐标系下的位姿，而恢复后新建的关键帧在地图系；不做这一步，跨越接缝的第一条

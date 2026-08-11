@@ -30,7 +30,8 @@ GlobalKeyframe makeKeyframe(
 
   GlobalKeyframe keyframe;
   keyframe.id = id;
-  keyframe.filtered_scan = scan;
+  keyframe.registration_scan = scan;
+  keyframe.occupancy_scan = scan;
   keyframe.accumulated_distance = accumulated_distance;
   keyframe.front_end_base_pose.translation().x() = position_x;
   keyframe.base_to_sensor.translation().z() = 0.6;
@@ -74,19 +75,19 @@ TEST(ScanContextIndex, AcceptsScaledAndPartiallyOccludedRevisit)
   auto revisit = makeKeyframe(1U, 10.0, 0.0, 0.35);
   auto scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>();
   for (std::size_t point_index = 0U;
-    point_index < revisit.filtered_scan->size(); ++point_index)
+    point_index < revisit.registration_scan->size(); ++point_index)
   {
     if (point_index == 2U) {
       continue;
     }
-    auto point = revisit.filtered_scan->at(point_index);
+    auto point = revisit.registration_scan->at(point_index);
     point.z *= 1.25F;
     scan->push_back(point);
   }
   scan->width = scan->size();
   scan->height = 1U;
   scan->is_dense = true;
-  revisit.filtered_scan = scan;
+  revisit.registration_scan = scan;
 
   const auto candidates = index.addAndQuery(revisit);
   ASSERT_EQ(candidates.size(), 1U);
@@ -131,12 +132,12 @@ TEST(ScanContextIndex, RejectsDissimilarRetrievalProposal)
   index.addAndQuery(makeKeyframe(0U, 0.0, 0.0, 0.0));
   auto different = makeKeyframe(1U, 10.0, 0.0, 0.0);
   auto modified_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(
-    *different.filtered_scan);
+    *different.registration_scan);
   for (auto & point : *modified_scan) {
     point.x *= 1.8F;
     point.y *= 1.8F;
   }
-  different.filtered_scan = modified_scan;
+  different.registration_scan = modified_scan;
   EXPECT_TRUE(index.addAndQuery(different).empty());
   EXPECT_EQ(index.lastQueryDiagnostics().descriptor_rejections, 1U);
   EXPECT_GT(index.lastQueryDiagnostics().best_descriptor_distance, 0.15);

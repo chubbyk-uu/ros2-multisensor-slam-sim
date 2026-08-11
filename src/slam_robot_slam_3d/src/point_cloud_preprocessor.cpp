@@ -10,6 +10,24 @@
 namespace slam_robot_slam_3d
 {
 
+pcl::PointCloud<pcl::PointXYZI> voxelDownsamplePointCloud(
+  const pcl::PointCloud<pcl::PointXYZI> & input, double voxel_leaf_size)
+{
+  if (!std::isfinite(voxel_leaf_size) || voxel_leaf_size <= 0.0) {
+    throw std::invalid_argument("voxel leaf size must be finite and positive");
+  }
+  pcl::PointCloud<pcl::PointXYZI> output;
+  if (!input.empty()) {
+    pcl::VoxelGrid<pcl::PointXYZI> voxel_filter;
+    const auto leaf_size = static_cast<float>(voxel_leaf_size);
+    voxel_filter.setLeafSize(leaf_size, leaf_size, leaf_size);
+    voxel_filter.setInputCloud(input.makeShared());
+    voxel_filter.filter(output);
+  }
+  output.is_dense = true;
+  return output;
+}
+
 PointCloudPreprocessor::PointCloudPreprocessor(
   PointCloudPreprocessorParameters parameters)
 : parameters_(std::move(parameters))
@@ -58,15 +76,8 @@ pcl::PointCloud<pcl::PointXYZI> PointCloudPreprocessor::process(
   }
   filtered->is_dense = true;
 
-  pcl::PointCloud<pcl::PointXYZI> output;
-  if (!filtered->empty()) {
-    pcl::VoxelGrid<pcl::PointXYZI> voxel_filter;
-    const auto leaf_size = static_cast<float>(parameters_.voxel_leaf_size);
-    voxel_filter.setLeafSize(leaf_size, leaf_size, leaf_size);
-    voxel_filter.setInputCloud(filtered);
-    voxel_filter.filter(output);
-  }
-  output.is_dense = true;
+  pcl::PointCloud<pcl::PointXYZI> output =
+    voxelDownsamplePointCloud(*filtered, parameters_.voxel_leaf_size);
   result_statistics.output_points = output.size();
 
   if (statistics != nullptr) {

@@ -53,8 +53,8 @@ LoopClosureVerificationResult LoopClosureVerifier::verify(
   const GlobalKeyframe * current = findKeyframe(keyframes, current_keyframe_id);
   const GlobalKeyframe * historical = findKeyframe(
     keyframes, candidate.keyframe_id);
-  if (current == nullptr || historical == nullptr || !current->filtered_scan ||
-    !historical->filtered_scan)
+  if (current == nullptr || historical == nullptr || !current->registration_scan ||
+    !historical->registration_scan)
   {
     return result;
   }
@@ -65,7 +65,7 @@ LoopClosureVerificationResult LoopClosureVerifier::verify(
   const std::size_t last_id = historical->id + parameters_.submap_neighbor_keyframes;
   for (const auto & keyframe : keyframes) {
     if (keyframe.id < first_id || keyframe.id > last_id ||
-      !keyframe.filtered_scan)
+      !keyframe.registration_scan)
     {
       continue;
     }
@@ -73,7 +73,7 @@ LoopClosureVerificationResult LoopClosureVerifier::verify(
     const Eigen::Isometry3d sensor_pose =
       keyframe.front_end_base_pose * keyframe.base_to_sensor;
     pcl::transformPointCloud(
-      *keyframe.filtered_scan, transformed, sensor_pose.matrix().cast<float>());
+      *keyframe.registration_scan, transformed, sensor_pose.matrix().cast<float>());
     combined_target += transformed;
   }
   pcl::VoxelGrid<pcl::PointXYZI> voxel_filter;
@@ -90,7 +90,7 @@ LoopClosureVerificationResult LoopClosureVerifier::verify(
   const Eigen::Isometry3d initial_pose =
     historical_sensor_pose * yawRotation(candidate.predicted_yaw);
   const auto registration = matcher_.match(
-    *current->filtered_scan, target, ++target_version_, initial_pose);
+    *current->registration_scan, target, ++target_version_, initial_pose);
   result.current_sensor_pose = registration.pose;
   result.correspondence_count = registration.correspondence_count;
   result.rmse = registration.rmse;
@@ -112,7 +112,7 @@ LoopClosureVerificationResult LoopClosureVerifier::verify(
     return result;
   }
   result.overlap_ratio = static_cast<double>(result.correspondence_count) /
-    static_cast<double>(current->filtered_scan->size());
+    static_cast<double>(current->registration_scan->size());
   if (result.overlap_ratio < parameters_.minimum_overlap_ratio) {
     result.status = LoopClosureVerificationStatus::kInsufficientOverlap;
   } else if (registration.degenerate) {

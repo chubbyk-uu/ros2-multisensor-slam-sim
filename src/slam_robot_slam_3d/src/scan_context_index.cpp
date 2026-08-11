@@ -67,7 +67,7 @@ ScanContextIndex::ScanContextIndex(ScanContextParameters parameters)
 std::vector<ScanContextCandidate> ScanContextIndex::addAndQuery(
   const GlobalKeyframe & keyframe)
 {
-  if (!keyframe.filtered_scan || keyframe.filtered_scan->empty() ||
+  if (!keyframe.registration_scan || keyframe.registration_scan->empty() ||
     !keyframe.front_end_base_pose.matrix().allFinite() ||
     !keyframe.base_to_sensor.matrix().allFinite() ||
     !std::isfinite(keyframe.accumulated_distance))
@@ -101,7 +101,7 @@ ScanContextIndex::Descriptor ScanContextIndex::makeDescriptor(
   result.cells = Eigen::MatrixXf::Zero(
     static_cast<Eigen::Index>(parameters_.radial_bins),
     static_cast<Eigen::Index>(parameters_.angular_bins));
-  for (const auto & point : *keyframe.filtered_scan) {
+  for (const auto & point : *keyframe.registration_scan) {
     if (!pcl::isFinite(point)) {
       continue;
     }

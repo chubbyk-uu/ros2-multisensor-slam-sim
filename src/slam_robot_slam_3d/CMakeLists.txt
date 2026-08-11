@@ -203,6 +203,7 @@ target_compile_options(
 )
 target_link_libraries(
   scan_to_map_odometry_node
+  point_cloud_preprocessor
   local_submap
   global_keyframe_map
   global_point_cloud_map

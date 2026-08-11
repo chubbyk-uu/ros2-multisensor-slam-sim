@@ -34,6 +34,16 @@ def projection_thresholds():
     return grid["free_maximum"], grid["occupied_minimum"]
 
 
+def cloud_resolutions():
+    document = yaml.safe_load(PROJECTION_CONFIG.read_text())
+    parameters = document["/**"]["ros__parameters"]
+    return (
+        parameters["voxel_leaf_size"],
+        parameters["front_end"]["registration_voxel_leaf_size"],
+        parameters["occupancy_grid"]["resolution"],
+    )
+
+
 def detector_thresholds():
     document = yaml.safe_load(DETECTOR_CONFIG.read_text())
     frontier = document["frontier_explorer"]["ros__parameters"]["frontier"]
@@ -51,3 +61,11 @@ def test_the_thresholds_leave_no_third_category_unaccounted_for():
     free_maximum, occupied_minimum = projection_thresholds()
 
     assert 0 <= free_maximum < occupied_minimum <= 100
+
+
+def test_mapping_and_registration_clouds_keep_separate_resolutions():
+    mapping_leaf, registration_leaf, grid_resolution = cloud_resolutions()
+
+    assert mapping_leaf == grid_resolution == 0.05
+    assert registration_leaf == 0.10
+    assert registration_leaf > mapping_leaf

@@ -28,7 +28,9 @@ GlobalKeyframe makeKeyframe(double offset)
 
   GlobalKeyframe keyframe;
   keyframe.stamp = rclcpp::Time(std::int64_t{123456789}, RCL_ROS_TIME);
-  keyframe.filtered_scan = scan;
+  keyframe.registration_scan = scan;
+  keyframe.occupancy_scan =
+    std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(*scan);
   keyframe.front_end_base_pose.translation().x() = offset;
   keyframe.odom_base_pose.translation().x() = offset + 0.1;
   keyframe.accumulated_distance = offset;
@@ -45,6 +47,7 @@ TEST(GlobalKeyframeMap, AssignsIdsAndPreservesImmutableSnapshotData)
   EXPECT_EQ(map.add(makeKeyframe(2.0)), 1U);
   EXPECT_EQ(map.size(), 2U);
   EXPECT_EQ(map.pointCount(), 6U);
+  EXPECT_EQ(map.occupancyPointCount(), 6U);
 
   const auto snapshot = map.snapshot();
   ASSERT_EQ(snapshot.size(), 2U);
@@ -54,7 +57,7 @@ TEST(GlobalKeyframeMap, AssignsIdsAndPreservesImmutableSnapshotData)
   EXPECT_EQ(snapshot[1].correspondence_count, 100U);
   EXPECT_DOUBLE_EQ(snapshot[1].front_end_base_pose.translation().x(), 2.0);
   EXPECT_DOUBLE_EQ(snapshot[1].odom_base_pose.translation().x(), 2.1);
-  EXPECT_EQ(snapshot[0].filtered_scan.use_count(), 2L);
+  EXPECT_EQ(snapshot[0].registration_scan.use_count(), 2L);
 }
 
 TEST(GlobalKeyframeMap, RejectsInvalidData)
@@ -62,7 +65,7 @@ TEST(GlobalKeyframeMap, RejectsInvalidData)
   GlobalKeyframeMap map;
   auto empty_scan = makeKeyframe(0.0);
   std::const_pointer_cast<pcl::PointCloud<pcl::PointXYZI>>(
-    empty_scan.filtered_scan)->clear();
+    empty_scan.registration_scan)->clear();
   EXPECT_THROW(map.add(std::move(empty_scan)), std::invalid_argument);
 
   auto invalid_pose = makeKeyframe(0.0);
@@ -72,9 +75,13 @@ TEST(GlobalKeyframeMap, RejectsInvalidData)
 
   auto invalid_scan = makeKeyframe(0.0);
   auto mutable_scan = std::const_pointer_cast<pcl::PointCloud<pcl::PointXYZI>>(
-    invalid_scan.filtered_scan);
+    invalid_scan.registration_scan);
   mutable_scan->front().z = std::numeric_limits<float>::quiet_NaN();
   EXPECT_THROW(map.add(std::move(invalid_scan)), std::invalid_argument);
+
+  auto missing_occupancy_scan = makeKeyframe(0.0);
+  missing_occupancy_scan.occupancy_scan.reset();
+  EXPECT_THROW(map.add(std::move(missing_occupancy_scan)), std::invalid_argument);
 }
 
 TEST(GlobalKeyframeMap, ReplacesStateWithAValidatedSnapshot)
@@ -88,6 +95,7 @@ TEST(GlobalKeyframeMap, ReplacesStateWithAValidatedSnapshot)
   map.replace(replacement);
   EXPECT_EQ(map.size(), 2U);
   EXPECT_EQ(map.pointCount(), 6U);
+  EXPECT_EQ(map.occupancyPointCount(), 6U);
   EXPECT_DOUBLE_EQ(map.snapshot().back().front_end_base_pose.translation().x(), 3.0);
 }
 
