@@ -44,7 +44,21 @@ frontier_explorer:
       # publishes an intermediate value again.
       free_maximum: 25
       occupied_minimum: 50
+      # Load-bearing beyond "a boundary this small is not worth driving to".
+      # The projection publishes cells whose log-odds land between free_maximum
+      # and occupied_minimum as unknown, and a free cell observed exactly twice
+      # lands there, so open floor carries scattered single-cell unknowns: one
+      # measured run held 120 of them against RTAB-Map's 5 on the same world,
+      # and they raised the frontier count to 479 over 194 clusters averaging
+      # 2.5 cells. Every one of those was rejected here. Lowering this without
+      # cleaning up the projection first sends the robot after boundaries that
+      # do not exist.
       minimum_cluster_cells: 8
+      # Also the detector's reachability proxy, which makes it sensitive to how
+      # completely obstacles are marked: the 0.05-0.45 m band leaves gaps in
+      # outlines seen only from far away, and a gap raises the clearance around
+      # it. The one candidate that survived both filters in that run scored
+      # 0.255 m for exactly that reason.
       minimum_clearance: 0.25
       information_gain_weight: 2.0
       distance_weight: 0.05
