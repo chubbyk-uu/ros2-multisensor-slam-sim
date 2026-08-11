@@ -39,41 +39,52 @@ CANDIDATE_PATTERN = re.compile(
 
 
 def parse_decisions(text, source=""):
-    """Group the candidate lines of one run by the decision they belong to."""
-    decisions = {}
-    for match in SELECTION_PATTERN.finditer(text):
-        decisions[int(match.group(1))] = {
-            "source": source,
-            "decision": int(match.group(1)),
-            "expected_candidates": int(match.group(2)),
-            "pool": int(match.group(3)),
-            "rank": int(match.group(4)),
-            "seed": int(match.group(5)),
-            "chosen_score": float(match.group(6)),
-            "candidates": [],
-        }
-    for match in CANDIDATE_PATTERN.finditer(text):
-        decision = decisions.get(int(match.group(1)))
-        if decision is None:
+    """Read decisions in the order they were written.
+
+    Keyed on position rather than on the decision number, because that number
+    restarts at one in every run: keying on it silently collapsed three
+    concatenated runs into a single decision, which is exactly what happens
+    when several runs are pooled for analysis.
+    """
+    decisions = []
+    current = None
+    for line in text.splitlines():
+        header = SELECTION_PATTERN.search(line)
+        if header is not None:
+            current = {
+                "source": source,
+                "decision": int(header.group(1)),
+                "expected_candidates": int(header.group(2)),
+                "pool": int(header.group(3)),
+                "rank": int(header.group(4)),
+                "seed": int(header.group(5)),
+                "chosen_score": float(header.group(6)),
+                "candidates": [],
+            }
+            decisions.append(current)
             continue
-        decision["candidates"].append({
-            "index": int(match.group(2)),
-            "x": float(match.group(3)),
-            "y": float(match.group(4)),
-            "score": float(match.group(5)),
-            "gain": float(match.group(6)),
-            "clearance": float(match.group(7)),
-            "distance": float(match.group(8)),
-            "path": float(match.group(9)),
-            "cells": int(match.group(10)),
-            "chosen": match.group(11) == "1",
+        entry = CANDIDATE_PATTERN.search(line)
+        if entry is None or current is None:
+            continue
+        # A candidate whose decision number does not match the header it
+        # follows belongs to a record that was interleaved or truncated.
+        if int(entry.group(1)) != current["decision"]:
+            continue
+        current["candidates"].append({
+            "index": int(entry.group(2)),
+            "x": float(entry.group(3)),
+            "y": float(entry.group(4)),
+            "score": float(entry.group(5)),
+            "gain": float(entry.group(6)),
+            "clearance": float(entry.group(7)),
+            "distance": float(entry.group(8)),
+            "path": float(entry.group(9)),
+            "cells": int(entry.group(10)),
+            "chosen": entry.group(11) == "1",
         })
-    complete = []
-    for decision in decisions.values():
-        # A run killed mid-decision can leave a header without its candidates.
-        if len(decision["candidates"]) == decision["expected_candidates"]:
-            complete.append(decision)
-    return sorted(complete, key=lambda entry: (entry["source"], entry["decision"]))
+    # A run killed mid-decision can leave a header without all its candidates.
+    return [decision for decision in decisions
+            if len(decision["candidates"]) == decision["expected_candidates"]]
 
 
 def band_probabilities(scores, fraction):

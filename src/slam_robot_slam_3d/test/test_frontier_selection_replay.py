@@ -51,6 +51,34 @@ def test_a_decision_missing_candidates_is_dropped_rather_than_half_read():
     assert [decision["decision"] for decision in decisions] == [1]
 
 
+def test_pooled_runs_do_not_collapse_onto_each_other():
+    # Every run numbers its decisions from one, so keying on that number folds
+    # concatenated runs together. Measured: three pooled runs parsed as a
+    # single decision, which reads as a working tool producing a tiny sample.
+    pooled = RUN + RUN + RUN
+
+    decisions = MODULE.parse_decisions(pooled, "pooled.log")
+
+    assert len(decisions) == 6
+    assert [decision["decision"] for decision in decisions] == [1, 2, 1, 2, 1, 2]
+    assert all(
+        len(decision["candidates"]) == decision["expected_candidates"]
+        for decision in decisions
+    )
+
+
+def test_a_candidate_from_another_decision_is_not_absorbed():
+    stray = (
+        f"{PREFIX} FRONTIER SELECTION decision=1 candidates=1 pool=1 rank=1 "
+        "seed=1 chosen_score=5.000\n"
+        f"{PREFIX} FRONTIER CANDIDATE decision=9 index=0 x=0.000 y=0.000 "
+        "score=5.000 gain=1.000 clearance=1.000 distance=1.000 path=1.000 "
+        "cells=9 chosen=1\n"
+    )
+
+    assert MODULE.parse_decisions(stray, "run.log") == []
+
+
 def test_negative_scores_survive_the_round_trip():
     text = (
         f"{PREFIX} FRONTIER SELECTION decision=1 candidates=1 pool=1 rank=1 "
