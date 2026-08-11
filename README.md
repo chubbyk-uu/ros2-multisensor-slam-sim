@@ -147,7 +147,7 @@ ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py
 
 该入口边建图边导航，并在正常退出时原子保存自包含快照到
 `~/.ros/custom_slam_3d.snapshot`。继续建图或从保存末端位姿只读定位的命令见
-[3D 工作流](docs/3d-workflows.md)。当前版本使用 0.05/0.10 m 双分辨率点云与 v3
+[3D 工作流](docs/3d-workflows.md)。当前版本使用 0.05/0.10 m 双分辨率点云与 v4
 快照；快照会校验占据投影的体素、高度、距离和平面运动契约，旧 v1/v2 快照或
 契约不一致的数据需重新建图。首版只读定位尚不支持从任意初始位姿全局重定位。
 

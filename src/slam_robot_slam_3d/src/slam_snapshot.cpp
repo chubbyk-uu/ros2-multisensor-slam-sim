@@ -14,7 +14,13 @@ namespace slam_robot_slam_3d
 namespace
 {
 constexpr std::uint64_t kMagic = 0x534C414D33445331ULL;
-constexpr std::uint32_t kVersion = 3U;
+// Bumped whenever the byte layout changes, not only when a field is added at
+// the end. Version 3 shipped twice with different layouts -- the occupancy
+// projection contract was later inserted between the version field and the
+// keyframe count -- and the older files then failed while reporting an invalid
+// contract, which points at the wrong thing entirely. A version field exists
+// precisely so a layout change announces itself.
+constexpr std::uint32_t kVersion = 4U;
 constexpr std::uint64_t kMaximumKeyframes = 1000000U;
 constexpr std::uint64_t kMaximumPointsPerKeyframe = 10000000U;
 constexpr std::uint64_t kMaximumConstraints = 10000000U;
@@ -253,7 +259,8 @@ SlamSnapshot loadSlamSnapshot(const std::string & path)
   if (version != kVersion) {
     throw std::runtime_error(
             "unsupported SLAM snapshot version " + std::to_string(version) +
-            "; remap to generate a version 3 snapshot");
+            "; remap to generate a version " + std::to_string(kVersion) +
+            " snapshot");
   }
   SlamSnapshot result;
   result.occupancy_projection = readOccupancyProjectionContract(input);

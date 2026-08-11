@@ -891,6 +891,24 @@ private:
     const Eigen::Isometry3d & base_to_sensor,
     const ScanToMapResult * match_result)
   {
+    // Filtered before any state moves, and skipped rather than thrown on.
+    // A scan whose every return falls outside the projection range and height
+    // band is a fact about where the robot is standing, not a fault; throwing
+    // from here abandoned the rest of the callback, which updates map -> odom,
+    // records the odometry reference for the next motion prediction and
+    // publishes the pose. The estimate would advance while its odometry
+    // reference did not, so the following scan predicted across two intervals.
+    auto occupancy_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(
+      selectPersistentOccupancyEvidence(
+        occupancy_input_scan, base_to_sensor, occupancy_projection_contract_));
+    if (occupancy_scan->empty()) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "Skipping a global keyframe: no return fell inside the occupancy "
+        "projection range and height band");
+      ++skipped_global_keyframe_count_;
+      return;
+    }
     if (has_last_global_keyframe_) {
       const Eigen::Vector2d displacement =
         front_end_base_pose.translation().head<2>() -
@@ -901,12 +919,6 @@ private:
     keyframe.stamp = rclcpp::Time(header.stamp);
     keyframe.registration_scan =
       std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(registration_scan);
-    auto occupancy_scan = std::make_shared<pcl::PointCloud<pcl::PointXYZI>>(
-      selectPersistentOccupancyEvidence(
-        occupancy_input_scan, base_to_sensor, occupancy_projection_contract_));
-    if (occupancy_scan->empty()) {
-      throw std::runtime_error("occupancy scan is empty after evidence filtering");
-    }
     keyframe.occupancy_scan = std::move(occupancy_scan);
     keyframe.front_end_base_pose = front_end_base_pose;
     keyframe.odom_base_pose = odom_base_pose;
@@ -1483,6 +1495,9 @@ private:
       "global_keyframe_occupancy_points",
       std::to_string(global_keyframes_.occupancyPointCount())));
     status.values.push_back(makeValue(
+      "skipped_global_keyframes",
+      std::to_string(skipped_global_keyframe_count_)));
+    status.values.push_back(makeValue(
       "registration_scan_points", std::to_string(latest_registration_points_)));
     status.values.push_back(makeValue(
       "occupancy_input_scan_points",
@@ -1746,6 +1761,7 @@ private:
   std::size_t occupancy_probability_free_cells_{0U};
   std::size_t occupancy_probability_partial_cells_{0U};
   std::size_t occupancy_probability_occupied_cells_{0U};
+  std::size_t skipped_global_keyframe_count_{0U};
   std::size_t latest_registration_points_{0U};
   std::size_t latest_occupancy_input_points_{0U};
   std::uintmax_t snapshot_size_bytes_{0U};

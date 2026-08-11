@@ -3,8 +3,11 @@ frontier_explorer:
     use_sim_time: true
     update_rate: 1.0
     evaluation_candidate_limit: 5
-    # Randomise only among reachable candidates in the top 20% of the score
-    # span. The launch argument exploration_seed controls reproducibility:
+    # Randomise only among reachable candidates scoring within this fraction of
+    # the best score. Measured against the best score itself, not the span
+    # between best and worst: sizing it by the span let the worst candidate set
+    # the width, so {10, 9, 8} admitted only the 10 while {10, 9, 8, 0} admitted
+    # all three. The launch argument exploration_seed controls reproducibility:
     # zero generates a new run seed, while regressions pass a fixed value.
     selection_top_score_band_fraction: 0.20
     # Candidate gain is frontier length in metres. Straight-line distance is

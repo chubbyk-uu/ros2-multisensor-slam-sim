@@ -39,6 +39,43 @@ TEST(FrontierGoalSelector, RestrictsRandomChoiceToTopScoreBand)
   EXPECT_TRUE(selected_second);
 }
 
+TEST(FrontierGoalSelector, AnIrrelevantWorstCandidateDoesNotWidenTheBand)
+{
+  // Sizing the band by the span between best and worst let the candidate
+  // nobody would drive to decide how many of the others become eligible:
+  // {10, 9, 8} admitted only the 10, and adding a 0 admitted all three.
+  slam_robot_navigation::FrontierGoalSelector selector(0.05, 3U);
+  const std::vector<slam_robot_navigation::ScoredFrontierCandidate> leading{
+    scored(1.0, 10.0), scored(2.0, 9.0), scored(3.0, 8.0)};
+  std::vector<slam_robot_navigation::ScoredFrontierCandidate> with_a_bad_one =
+    leading;
+  with_a_bad_one.push_back(scored(4.0, 0.0));
+
+  const auto without = selector.select(leading);
+  const auto with = selector.select(with_a_bad_one);
+
+  ASSERT_TRUE(without);
+  ASSERT_TRUE(with);
+  EXPECT_EQ(without->pool_size, 1U);
+  EXPECT_EQ(with->pool_size, without->pool_size);
+}
+
+TEST(FrontierGoalSelector, TheBandScalesWithTheBestScoreWhenScoresAreNegative)
+{
+  // Scores subtract a travel cost, so they can go negative. The band is then
+  // measured against the magnitude of the best score, which keeps "within 20%
+  // of the best" meaning the same thing on either side of zero.
+  slam_robot_navigation::FrontierGoalSelector selector(0.20, 5U);
+
+  const auto selection = selector.select(
+    {scored(1.0, -10.0), scored(2.0, -11.5), scored(3.0, -13.0)});
+
+  ASSERT_TRUE(selection);
+  // -12.0 is the threshold, so the -13.0 candidate stays out.
+  EXPECT_EQ(selection->pool_size, 2U);
+  EXPECT_NE(selection->candidate.x, 3.0);
+}
+
 TEST(FrontierGoalSelector, ZeroBandAlwaysChoosesTheBestCandidate)
 {
   slam_robot_navigation::FrontierGoalSelector selector(0.0, 7U);

@@ -460,6 +460,10 @@ if(BUILD_TESTING)
     test_trinary_projection_contract
     test/test_trinary_projection_contract.py
   )
+  ament_add_pytest_test(
+    test_exploration_seed_wiring
+    test/test_exploration_seed_wiring.py
+  )
 endif()
 
 ament_package()

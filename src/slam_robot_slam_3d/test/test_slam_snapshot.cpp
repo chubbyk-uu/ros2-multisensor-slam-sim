@@ -118,7 +118,17 @@ TEST(SlamSnapshot, RejectsVersionTwoSnapshots)
   expectLegacyVersionRejected(2U);
 }
 
-TEST(SlamSnapshot, RejectsTruncatedVersionThreeSnapshots)
+TEST(SlamSnapshot, RejectsVersionThreeSnapshots)
+{
+  // Version 3 shipped in two incompatible layouts: the second inserted the
+  // occupancy projection contract ahead of the keyframe count. Reading an
+  // early one under the later layout takes the keyframe count for a contract
+  // and blames the contract for a format change, so the version was bumped
+  // rather than reused.
+  expectLegacyVersionRejected(3U);
+}
+
+TEST(SlamSnapshot, RejectsTruncatedSnapshots)
 {
   const auto path = (std::filesystem::temp_directory_path() /
     "slam_robot_slam_3d_snapshot_truncated.bin").string();

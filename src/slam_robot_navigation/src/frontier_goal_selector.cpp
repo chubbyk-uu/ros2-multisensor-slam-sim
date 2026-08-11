@@ -52,10 +52,16 @@ std::optional<FrontierGoalSelection> FrontierGoalSelector::select(
     throw std::invalid_argument("frontier candidate scores must be finite");
   }
 
-  const auto [worst, best] = std::minmax_element(
+  // The band is measured against the best score alone. Sizing it by the span
+  // between best and worst made its width depend on the worst candidate, which
+  // says nothing about how good the alternatives are: scores {10, 9, 8} give a
+  // span of 2 and admit only the 10, while adding one irrelevant 0 widens the
+  // span to 10 and admits 9 and 8 as well. Identical leading candidates, a
+  // different pool, decided by the one candidate nobody would drive to.
+  const auto best = std::max_element(
     candidates.begin(), candidates.end(), score_order);
-  const double score_span = best->score - worst->score;
-  const double threshold = best->score - top_score_band_fraction_ * score_span;
+  const double threshold =
+    best->score - top_score_band_fraction_ * std::abs(best->score);
   std::vector<std::size_t> pool;
   pool.reserve(candidates.size());
   for (std::size_t index = 0; index < candidates.size(); ++index) {
