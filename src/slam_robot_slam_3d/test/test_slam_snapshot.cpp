@@ -2,6 +2,9 @@
 #include <memory>
 #include <string>
 
+#include <filesystem>
+#include <fstream>
+
 #include <gtest/gtest.h>
 
 #include "slam_robot_slam_3d/slam_snapshot.hpp"
@@ -76,6 +79,42 @@ TEST(SlamSnapshot, RoundTripsTheFrontEndFrameCorrection)
 
   EXPECT_NEAR(restored.map_from_local.translation().x(), 1.5, 1.0e-9);
   EXPECT_NEAR(restored.map_from_local.translation().y(), -2.5, 1.0e-9);
+}
+
+
+TEST(SlamSnapshot, RecoversTheFrameCorrectionFromAVersionOneFile)
+{
+  // Version 1 files exist in users' home directories and the restore path is a
+  // documented feature, so they must keep loading. The correction they never
+  // stored is recoverable: the last pose entry is that keyframe's pose in the
+  // map frame, so composing it with the inverse of the same keyframe's
+  // front-end pose recovers the transform between the frames.
+  const std::string path = "/tmp/slam_robot_snapshot_v1.bin";
+  SlamSnapshot source;
+  source.keyframes = {makeKeyframe(0U, 0.0), makeKeyframe(1U, 1.0)};
+  source.optimized_base_poses = {
+    Eigen::Isometry3d::Identity(), Eigen::Isometry3d::Identity()};
+  source.optimized_base_poses.back().translation() =
+    Eigen::Vector3d(4.0, -3.0, 0.0);
+  source.map_from_local.translation() = Eigen::Vector3d(9.0, 9.0, 0.0);
+  saveSlamSnapshot(path, source);
+
+  // Rewrite the version field in place, then truncate the trailing correction
+  // so the file matches what version 1 actually wrote.
+  std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+  file.seekp(sizeof(std::uint64_t));
+  const std::uint32_t one = 1U;
+  file.write(reinterpret_cast<const char *>(&one), sizeof(one));
+  file.close();
+  const auto size = std::filesystem::file_size(path);
+  std::filesystem::resize_file(path, size - 16U * sizeof(double));
+
+  const auto restored = loadSlamSnapshot(path);
+
+  // keyframes.back() sits at x = 1.0 and its map pose at x = 4.0, so the
+  // frames differ by 3.0 in x and -3.0 in y.
+  EXPECT_NEAR(restored.map_from_local.translation().x(), 3.0, 1.0e-9);
+  EXPECT_NEAR(restored.map_from_local.translation().y(), -3.0, 1.0e-9);
 }
 
 }  // namespace slam_robot_slam_3d

@@ -12,6 +12,13 @@ namespace
 {
 constexpr std::uint64_t kMagic = 0x534C414D33445331ULL;
 constexpr std::uint32_t kVersion = 2U;
+// Version 1 stored no frame correction. It is still readable because the value
+// can be recovered exactly from what it did store: the last entry of the pose
+// array is that keyframe's pose in the map frame, so composing it with the
+// inverse of the same keyframe's front-end pose gives the transform between
+// the two frames. That is what resuming needs, whether or not the entry came
+// from an optimisation or from dead reckoning past one.
+constexpr std::uint32_t kMinimumReadableVersion = 1U;
 constexpr std::uint64_t kMaximumKeyframes = 1000000U;
 constexpr std::uint64_t kMaximumPointsPerKeyframe = 10000000U;
 constexpr std::uint64_t kMaximumConstraints = 10000000U;
@@ -191,7 +198,8 @@ SlamSnapshot loadSlamSnapshot(const std::string & path)
   readValue(input, magic);
   readValue(input, version);
   readValue(input, keyframe_count);
-  if (magic != kMagic || version != kVersion || keyframe_count == 0U ||
+  if (magic != kMagic || version < kMinimumReadableVersion ||
+    version > kVersion || keyframe_count == 0U ||
     keyframe_count > kMaximumKeyframes)
   {
     throw std::runtime_error("unsupported or invalid SLAM snapshot");
@@ -223,7 +231,12 @@ SlamSnapshot loadSlamSnapshot(const std::string & path)
   for (std::uint64_t index = 0U; index < keyframe_count; ++index) {
     result.optimized_base_poses.push_back(readPose(input));
   }
-  result.map_from_local = readPose(input);
+  if (version >= 2U) {
+    result.map_from_local = readPose(input);
+  } else {
+    result.map_from_local = result.optimized_base_poses.back() *
+      result.keyframes.back().front_end_base_pose.inverse();
+  }
   return result;
 }
 }  // namespace slam_robot_slam_3d

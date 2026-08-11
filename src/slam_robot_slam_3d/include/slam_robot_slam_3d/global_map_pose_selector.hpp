@@ -39,6 +39,27 @@ inline std::vector<Eigen::Isometry3d> selectGlobalMapPoses(
   return poses;
 }
 
+// Brings restored keyframes into the frame mapping will resume in.
+//
+// Keyframes store front_end_base_pose in the front end's own frame, while a
+// resumed session creates new ones in the map frame. Left as they are, the
+// pose graph's first edge across that join would carry the whole accumulated
+// correction as if it were a measurement.
+//
+// A rigid transform applied to every pose leaves all relative poses unchanged,
+// and relative poses are what the edges are built from. Rebasing onto the
+// optimised poses instead would not: optimisation changes the relative poses
+// the graph is later asked to re-derive, so those corrections would be counted
+// a second time.
+inline void rebaseFrontEndPoses(
+  std::vector<GlobalKeyframe> & keyframes,
+  const Eigen::Isometry3d & map_from_local)
+{
+  for (auto & keyframe : keyframes) {
+    keyframe.front_end_base_pose = map_from_local * keyframe.front_end_base_pose;
+  }
+}
+
 }  // namespace slam_robot_slam_3d
 
 #endif  // SLAM_ROBOT_SLAM_3D__GLOBAL_MAP_POSE_SELECTOR_HPP_

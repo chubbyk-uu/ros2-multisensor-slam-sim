@@ -14,8 +14,10 @@ crashes while shutting down is recorded separately from the verdict it produced.
 
 import argparse
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -85,6 +87,30 @@ def leftover_processes():
         if result.returncode == 0 and result.stdout.strip():
             found.append(pattern)
     return found
+
+
+def end_process_group(launch, settle_seconds):
+    """Stop the launch and everything it started, and nothing else.
+
+    The launch runs in its own session, so its process group covers the
+    simulator and every node it spawned. Signalling that group leaves any other
+    Gazebo or Nav2 on the machine untouched, which matching on command lines
+    would not.
+    """
+    try:
+        group = os.getpgid(launch.pid)
+    except ProcessLookupError:
+        return
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(group, sig)
+        except ProcessLookupError:
+            return
+        try:
+            launch.wait(timeout=settle_seconds)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def parse_run(text, exit_code, timed_out=False):
@@ -224,16 +250,22 @@ def main():
         started = time.monotonic()
         timed_out = False
         with open(log_path, "w", encoding="utf-8") as handle:
+            # Own session, so this run's simulator and nodes share one process
+            # group that can be ended without naming them. Matching on command
+            # lines instead would reach any Gazebo or Nav2 the machine happens
+            # to be running, including a user's own work in another terminal.
+            launch = subprocess.Popen(
+                ["ros2", "launch", "slam_robot_slam_3d", arguments.launch_file,
+                 "gui:=false", "rviz:=false"],
+                stdout=handle, stderr=subprocess.STDOUT, start_new_session=True,
+            )
             try:
-                completed_returncode = subprocess.run(
-                    ["ros2", "launch", "slam_robot_slam_3d", arguments.launch_file,
-                     "gui:=false", "rviz:=false"],
-                    stdout=handle, stderr=subprocess.STDOUT, check=False,
-                    timeout=arguments.run_timeout_seconds,
-                ).returncode
+                completed_returncode = launch.wait(
+                    timeout=arguments.run_timeout_seconds)
             except subprocess.TimeoutExpired:
                 timed_out = True
                 completed_returncode = None
+                end_process_group(launch, arguments.settle_seconds)
         text = log_path.read_text(encoding="utf-8", errors="replace")
         record = parse_run(text, completed_returncode, timed_out)
         record["index"] = index
@@ -252,16 +284,13 @@ def main():
         # Checked between runs, not only before the batch. A run that failed to
         # tear down would otherwise share the machine with the next one, which
         # is exactly the contention these measurements are meant to exclude.
-        # Warning alone was not enough: contention usually surfaces as a host
-        # attribution, but it can just as well produce a core failure, and that
-        # would be recorded against the algorithm.
+        # Only this run's own process group is ended: whatever else the machine
+        # is running is the operator's business, not this script's.
         remaining = leftover_processes()
         if remaining:
             print(f"    {remaining} still running after run {index}; stopping it",
                   flush=True)
-            for pattern in remaining:
-                subprocess.run(["pkill", "-f", pattern], check=False)
-            time.sleep(arguments.settle_seconds)
+            end_process_group(launch, arguments.settle_seconds)
             remaining = leftover_processes()
         if remaining:
             record["left_processes_running"] = remaining
