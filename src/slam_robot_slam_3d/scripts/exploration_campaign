@@ -89,28 +89,43 @@ def leftover_processes():
     return found
 
 
-def end_process_group(launch, settle_seconds):
+def end_process_group(launch, group, settle_seconds):
     """Stop the launch and everything it started, and nothing else.
 
     The launch runs in its own session, so its process group covers the
     simulator and every node it spawned. Signalling that group leaves any other
     Gazebo or Nav2 on the machine untouched, which matching on command lines
     would not.
+
+    The group is the id saved when the launch started, not one looked up from
+    the parent now. The case worth cleaning up is exactly the one where the
+    parent went first and left the simulator orphaned in the group behind it;
+    asking a departed pid for its group finds nothing and returns having killed
+    nobody. The saved id stays safe to signal because the kernel will not hand
+    that number to an unrelated process while it is still in use as a group id,
+    and once the group empties killpg reports that instead.
+
+    Progress is judged on the group for the same reason. Waiting on the parent
+    says nothing once it has been reaped, and the wait then returns at once
+    while the simulator is still up. Reaping it inside the loop matters too: a
+    zombie is still a member of its group and still answers signal 0, so an
+    unreaped parent would make an otherwise empty group look alive.
     """
-    try:
-        group = os.getpgid(launch.pid)
-    except ProcessLookupError:
-        return
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(group, sig)
         except ProcessLookupError:
             return
-        try:
-            launch.wait(timeout=settle_seconds)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+        deadline = time.monotonic() + settle_seconds
+        while True:
+            launch.poll()
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
 
 
 def parse_run(text, exit_code, timed_out=False):
@@ -259,13 +274,17 @@ def main():
                  "gui:=false", "rviz:=false"],
                 stdout=handle, stderr=subprocess.STDOUT, start_new_session=True,
             )
+            # start_new_session makes the launch its own group leader, so its
+            # pid is the group id. Saved now because it is still needed after
+            # the launch itself has gone.
+            group = launch.pid
             try:
                 completed_returncode = launch.wait(
                     timeout=arguments.run_timeout_seconds)
             except subprocess.TimeoutExpired:
                 timed_out = True
                 completed_returncode = None
-                end_process_group(launch, arguments.settle_seconds)
+                end_process_group(launch, group, arguments.settle_seconds)
         text = log_path.read_text(encoding="utf-8", errors="replace")
         record = parse_run(text, completed_returncode, timed_out)
         record["index"] = index
@@ -290,7 +309,7 @@ def main():
         if remaining:
             print(f"    {remaining} still running after run {index}; stopping it",
                   flush=True)
-            end_process_group(launch, arguments.settle_seconds)
+            end_process_group(launch, group, arguments.settle_seconds)
             remaining = leftover_processes()
         if remaining:
             record["left_processes_running"] = remaining

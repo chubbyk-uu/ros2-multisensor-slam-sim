@@ -1,9 +1,7 @@
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
-
-#include <filesystem>
-#include <fstream>
 
 #include <gtest/gtest.h>
 
@@ -68,7 +66,8 @@ TEST(SlamSnapshot, RoundTripsTheFrontEndFrameCorrection)
   // Without this the frame the keyframes were written in is lost, and mapping
   // resumed from the snapshot mixes those poses with new ones expressed in the
   // map frame.
-  const std::string path = "/tmp/slam_robot_snapshot_map_from_local.bin";
+  const auto path = (std::filesystem::temp_directory_path() /
+    "slam_robot_slam_3d_snapshot_map_from_local.bin").string();
   SlamSnapshot snapshot;
   snapshot.keyframes.push_back(makeKeyframe(0U, 0.0));
   snapshot.optimized_base_poses.push_back(Eigen::Isometry3d::Identity());
@@ -79,6 +78,7 @@ TEST(SlamSnapshot, RoundTripsTheFrontEndFrameCorrection)
 
   EXPECT_NEAR(restored.map_from_local.translation().x(), 1.5, 1.0e-9);
   EXPECT_NEAR(restored.map_from_local.translation().y(), -2.5, 1.0e-9);
+  std::filesystem::remove(path);
 }
 
 
@@ -89,7 +89,8 @@ TEST(SlamSnapshot, RecoversTheFrameCorrectionFromAVersionOneFile)
   // stored is recoverable: the last pose entry is that keyframe's pose in the
   // map frame, so composing it with the inverse of the same keyframe's
   // front-end pose recovers the transform between the frames.
-  const std::string path = "/tmp/slam_robot_snapshot_v1.bin";
+  const auto path = (std::filesystem::temp_directory_path() /
+    "slam_robot_slam_3d_snapshot_v1.bin").string();
   SlamSnapshot source;
   source.keyframes = {makeKeyframe(0U, 0.0), makeKeyframe(1U, 1.0)};
   source.optimized_base_poses = {
@@ -115,6 +116,7 @@ TEST(SlamSnapshot, RecoversTheFrameCorrectionFromAVersionOneFile)
   // frames differ by 3.0 in x and -3.0 in y.
   EXPECT_NEAR(restored.map_from_local.translation().x(), 3.0, 1.0e-9);
   EXPECT_NEAR(restored.map_from_local.translation().y(), -3.0, 1.0e-9);
+  std::filesystem::remove(path);
 }
 
 }  // namespace slam_robot_slam_3d

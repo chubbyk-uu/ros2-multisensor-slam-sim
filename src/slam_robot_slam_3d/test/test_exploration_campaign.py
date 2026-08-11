@@ -1,5 +1,8 @@
 from importlib.machinery import SourceFileLoader
+import os
 from pathlib import Path
+import subprocess
+import time
 
 import pytest
 
@@ -149,6 +152,66 @@ west=0.000 m south=0.750 m east=0.400 m north=0.850 m
     # not the same failure as one wall smearing.
     assert record["wall_overshoot_m"]["north"] == 0.850
     assert record["wall_overshoot_m"]["west"] == 0.000
+
+
+def group_is_alive(group):
+    try:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_a_run_whose_parent_left_first_is_still_cleaned_up():
+    # The shape this is really about: ros2 launch exits, and the simulator it
+    # started keeps running in the group left behind. Asking the departed pid
+    # for its group finds nothing, so the cleanup used to return having killed
+    # nobody, and the check that follows would then abort the batch over
+    # processes it could have stopped.
+    launch = subprocess.Popen(["sh", "-c", "sleep 300 & exit 0"],
+                              start_new_session=True)
+    group = launch.pid
+    launch.wait()
+    assert group_is_alive(group)
+
+    MODULE.end_process_group(launch, group, 2.0)
+
+    assert not group_is_alive(group)
+
+
+def test_cleanup_waits_for_the_group_rather_than_the_parent():
+    # A run killed on its timeout still has its parent, unreaped. Judging
+    # progress by waiting on that parent returns the moment it is reaped while
+    # its children are still up, and a parent left as a zombie is itself still
+    # a member of the group answering signals.
+    launch = subprocess.Popen(["sh", "-c", "sleep 300 & wait"],
+                              start_new_session=True)
+    group = launch.pid
+    while not group_is_alive(group):
+        time.sleep(0.05)
+
+    started = time.monotonic()
+    MODULE.end_process_group(launch, group, 2.0)
+
+    assert not group_is_alive(group)
+    # Returned on the group actually being gone, not after exhausting every
+    # signal's settle window.
+    assert time.monotonic() - started < 5.0
+    assert launch.poll() is not None
+
+
+def test_cleanup_of_a_run_that_left_nothing_behind_returns_quietly():
+    launch = subprocess.Popen(["true"], start_new_session=True)
+    group = launch.pid
+    launch.wait()
+
+    started = time.monotonic()
+    MODULE.end_process_group(launch, group, 2.0)
+
+    # An empty group cannot be signalled, which is the answer, not an error to
+    # sit through three settle windows for.
+    assert not group_is_alive(group)
+    assert time.monotonic() - started < 1.0
 
 
 def test_missing_measurements_are_recorded_as_absent_not_zero():
