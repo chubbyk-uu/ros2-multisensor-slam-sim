@@ -1,0 +1,182 @@
+FRONTIER SELECTION decision=1 candidates=5 pool=1 rank=1 seed=20260811 chosen_score=41.967
+FRONTIER CANDIDATE decision=1 index=0 x=3.875 y=-0.725 score=41.967 gain=21.150 clearance=0.650 distance=3.942 path=4.015 cells=423 chosen=1
+FRONTIER CANDIDATE decision=1 index=1 x=-0.125 y=3.475 score=14.222 gain=7.250 clearance=0.750 distance=3.477 path=3.584 cells=145 chosen=0
+FRONTIER CANDIDATE decision=1 index=2 x=-1.025 y=3.975 score=9.591 gain=4.950 clearance=1.245 distance=4.105 path=4.567 cells=99 chosen=0
+FRONTIER CANDIDATE decision=1 index=3 x=3.575 y=1.025 score=1.955 gain=1.150 clearance=0.391 distance=3.719 path=3.971 cells=23 chosen=0
+FRONTIER CANDIDATE decision=1 index=4 x=2.425 y=-1.125 score=1.477 gain=0.850 clearance=0.754 distance=2.673 path=3.296 cells=17 chosen=0
+FRONTIER SELECTION decision=2 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=5.997
+FRONTIER CANDIDATE decision=2 index=0 x=10.025 y=0.175 score=5.997 gain=3.250 clearance=1.221 distance=6.197 path=6.309 cells=65 chosen=1
+FRONTIER CANDIDATE decision=2 index=1 x=0.525 y=5.925 score=3.880 gain=2.300 clearance=0.983 distance=7.354 path=9.007 cells=46 chosen=0
+FRONTIER CANDIDATE decision=2 index=2 x=1.325 y=5.775 score=0.216 gain=0.500 clearance=0.391 distance=6.886 path=9.574 cells=10 chosen=0
+FRONTIER SELECTION decision=3 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=14.670
+FRONTIER CANDIDATE decision=3 index=0 x=15.425 y=-0.075 score=14.670 gain=7.550 clearance=1.371 distance=5.549 path=5.785 cells=151 chosen=1
+FRONTIER CANDIDATE decision=3 index=1 x=0.525 y=5.925 score=3.408 gain=2.300 clearance=0.983 distance=11.026 path=14.787 cells=46 chosen=0
+FRONTIER CANDIDATE decision=3 index=2 x=1.325 y=5.775 score=-0.242 gain=0.500 clearance=0.391 distance=10.272 path=15.347 cells=10 chosen=0
+FRONTIER SELECTION decision=4 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=10.742
+FRONTIER CANDIDATE decision=4 index=0 x=21.125 y=-0.225 score=10.742 gain=5.600 clearance=1.200 distance=5.732 path=5.831 cells=112 chosen=1
+FRONTIER CANDIDATE decision=4 index=1 x=0.525 y=5.925 score=2.885 gain=2.300 clearance=0.983 distance=15.982 path=20.287 cells=46 chosen=0
+FRONTIER CANDIDATE decision=4 index=2 x=21.525 y=1.075 score=0.898 gain=0.750 clearance=0.300 distance=6.204 path=6.433 cells=15 chosen=0
+FRONTIER CANDIDATE decision=4 index=3 x=1.325 y=5.775 score=-0.762 gain=0.500 clearance=0.391 distance=15.184 path=20.847 cells=10 chosen=0
+FRONTIER SELECTION decision=5 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=4.965
+FRONTIER CANDIDATE decision=5 index=0 x=23.925 y=2.025 score=4.965 gain=2.600 clearance=1.450 distance=3.604 path=4.001 cells=52 chosen=1
+FRONTIER CANDIDATE decision=5 index=1 x=0.525 y=5.925 score=2.318 gain=2.300 clearance=0.983 distance=21.505 path=26.101 cells=46 chosen=0
+FRONTIER CANDIDATE decision=5 index=2 x=22.975 y=1.325 score=1.247 gain=0.750 clearance=0.441 distance=2.426 path=3.516 cells=15 chosen=0
+FRONTIER CANDIDATE decision=5 index=3 x=1.325 y=5.775 score=-1.328 gain=0.500 clearance=0.391 distance=20.696 path=26.654 cells=10 chosen=0
+FRONTIER SELECTION decision=6 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=17.653
+FRONTIER CANDIDATE decision=6 index=0 x=23.425 y=8.325 score=17.653 gain=9.100 clearance=0.841 distance=6.269 path=6.363 cells=182 chosen=1
+FRONTIER CANDIDATE decision=6 index=1 x=0.525 y=5.925 score=2.017 gain=2.300 clearance=0.983 distance=23.638 path=29.986 cells=46 chosen=0
+FRONTIER CANDIDATE decision=6 index=2 x=24.875 y=6.275 score=1.603 gain=1.000 clearance=0.700 distance=4.328 path=5.011 cells=20 chosen=0
+FRONTIER CANDIDATE decision=6 index=3 x=1.325 y=5.775 score=-1.629 gain=0.500 clearance=0.391 distance=22.825 path=30.537 cells=10 chosen=0
+FRONTIER SELECTION decision=7 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=4.766
+FRONTIER CANDIDATE decision=7 index=0 x=23.275 y=11.875 score=4.766 gain=2.500 clearance=1.491 distance=3.566 path=4.099 cells=50 chosen=1
+FRONTIER CANDIDATE decision=7 index=1 x=0.525 y=5.925 score=1.738 gain=2.300 clearance=0.983 distance=23.082 path=36.130 cells=46 chosen=0
+FRONTIER CANDIDATE decision=7 index=2 x=1.325 y=5.775 score=-1.911 gain=0.500 clearance=0.391 distance=22.304 path=36.695 cells=10 chosen=0
+FRONTIER SELECTION decision=8 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=9.494
+FRONTIER CANDIDATE decision=8 index=0 x=17.075 y=12.225 score=9.494 gain=5.000 clearance=1.150 distance=6.168 path=6.252 cells=100 chosen=1
+FRONTIER CANDIDATE decision=8 index=1 x=17.275 y=11.325 score=3.508 gain=2.000 clearance=1.221 distance=5.977 path=6.302 cells=40 chosen=0
+FRONTIER CANDIDATE decision=8 index=2 x=0.525 y=5.925 score=1.522 gain=2.300 clearance=0.983 distance=23.462 path=40.065 cells=46 chosen=0
+FRONTIER CANDIDATE decision=8 index=3 x=1.325 y=5.775 score=-2.127 gain=0.500 clearance=0.391 distance=22.728 path=40.600 cells=10 chosen=0
+FRONTIER SELECTION decision=9 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=8.259
+FRONTIER CANDIDATE decision=9 index=0 x=11.825 y=12.375 score=8.259 gain=4.350 clearance=1.041 distance=5.420 path=5.479 cells=87 chosen=1
+FRONTIER CANDIDATE decision=9 index=1 x=0.525 y=5.925 score=2.879 gain=2.300 clearance=0.983 distance=17.859 path=18.519 cells=46 chosen=0
+FRONTIER CANDIDATE decision=9 index=2 x=13.025 y=11.175 score=2.954 gain=1.650 clearance=1.050 distance=4.342 path=4.685 cells=33 chosen=0
+FRONTIER CANDIDATE decision=9 index=3 x=1.325 y=5.775 score=-0.711 gain=0.500 clearance=0.391 distance=17.168 path=17.829 cells=10 chosen=0
+FRONTIER SELECTION decision=10 candidates=5 pool=1 rank=1 seed=20260811 chosen_score=14.168
+FRONTIER CANDIDATE decision=10 index=0 x=6.075 y=12.425 score=14.168 gain=7.300 clearance=1.564 distance=5.744 path=6.018 cells=146 chosen=1
+FRONTIER CANDIDATE decision=10 index=1 x=7.075 y=13.175 score=5.408 gain=2.950 clearance=0.312 distance=4.805 path=5.670 cells=59 chosen=0
+FRONTIER CANDIDATE decision=10 index=2 x=0.525 y=5.925 score=3.331 gain=2.300 clearance=0.983 distance=13.026 path=14.311 cells=46 chosen=0
+FRONTIER CANDIDATE decision=10 index=3 x=9.225 y=11.025 score=1.973 gain=1.100 clearance=0.916 distance=2.943 path=3.432 cells=22 chosen=0
+FRONTIER CANDIDATE decision=10 index=4 x=1.325 y=5.775 score=-0.274 gain=0.500 clearance=0.391 distance=12.419 path=13.843 cells=10 chosen=0
+FRONTIER SELECTION decision=11 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=33.016
+FRONTIER CANDIDATE decision=11 index=0 x=0.725 y=12.125 score=33.016 gain=16.700 clearance=1.714 distance=5.508 path=5.607 cells=334 chosen=1
+FRONTIER CANDIDATE decision=11 index=1 x=0.525 y=5.925 score=3.715 gain=2.300 clearance=0.983 distance=8.604 path=11.061 cells=46 chosen=0
+FRONTIER CANDIDATE decision=11 index=2 x=0.075 y=12.025 score=0.325 gain=0.400 clearance=1.471 distance=6.162 path=6.284 cells=8 chosen=0
+FRONTIER CANDIDATE decision=11 index=3 x=1.325 y=5.775 score=0.077 gain=0.500 clearance=0.391 distance=8.216 path=11.023 cells=10 chosen=0
+FRONTIER SELECTION decision=12 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=11.968
+FRONTIER CANDIDATE decision=12 index=0 x=0.925 y=6.525 score=11.968 gain=6.250 clearance=0.541 distance=5.551 path=6.171 cells=125 chosen=1
+FRONTIER CANDIDATE decision=12 index=1 x=0.525 y=6.825 score=8.353 gain=4.400 clearance=0.941 distance=5.252 path=5.564 cells=88 chosen=0
+FRONTIER CANDIDATE decision=12 index=2 x=1.175 y=5.375 score=1.775 gain=1.250 clearance=0.250 distance=6.712 path=8.279 cells=25 chosen=0
+FRONTIER SELECTION decision=13 candidates=1 pool=1 rank=1 seed=20260811 chosen_score=0.528
+FRONTIER CANDIDATE decision=13 index=0 x=0.625 y=3.925 score=0.528 gain=0.400 clearance=0.400 distance=2.590 path=3.656 cells=8 chosen=1
+FRONTIER SELECTION decision=1 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=34.889
+FRONTIER CANDIDATE decision=1 index=0 x=3.425 y=0.075 score=34.889 gain=17.550 clearance=1.321 distance=3.426 path=3.437 cells=351 chosen=1
+FRONTIER CANDIDATE decision=1 index=1 x=-0.125 y=3.475 score=13.524 gain=6.900 clearance=0.771 distance=3.477 path=3.592 cells=138 chosen=0
+FRONTIER CANDIDATE decision=1 index=2 x=-1.025 y=3.975 score=7.496 gain=3.900 clearance=1.245 distance=4.105 path=4.457 cells=78 chosen=0
+FRONTIER CANDIDATE decision=1 index=3 x=-1.025 y=5.325 score=2.681 gain=1.600 clearance=0.421 distance=5.422 path=5.793 cells=32 chosen=0
+FRONTIER SELECTION decision=2 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=14.784
+FRONTIER CANDIDATE decision=2 index=0 x=8.925 y=-0.025 score=14.784 gain=7.600 clearance=1.421 distance=5.546 path=5.622 cells=152 chosen=1
+FRONTIER CANDIDATE decision=2 index=1 x=0.425 y=5.825 score=6.877 gain=3.750 clearance=1.145 distance=6.539 path=8.207 cells=75 chosen=0
+FRONTIER CANDIDATE decision=2 index=2 x=1.375 y=5.675 score=3.222 gain=1.950 clearance=0.700 distance=6.026 path=8.926 cells=39 chosen=0
+FRONTIER SELECTION decision=3 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=8.510
+FRONTIER CANDIDATE decision=3 index=0 x=15.075 y=-0.125 score=8.510 gain=4.500 clearance=1.341 distance=6.165 path=6.309 cells=90 chosen=1
+FRONTIER CANDIDATE decision=3 index=1 x=0.425 y=5.825 score=6.419 gain=3.750 clearance=1.145 distance=10.281 path=13.637 cells=75 chosen=0
+FRONTIER CANDIDATE decision=3 index=2 x=1.375 y=5.675 score=2.783 gain=1.950 clearance=0.700 distance=9.421 path=14.317 cells=39 chosen=0
+FRONTIER SELECTION decision=4 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=13.686
+FRONTIER CANDIDATE decision=4 index=0 x=20.425 y=0.025 score=13.686 gain=7.050 clearance=1.400 distance=5.504 path=5.568 cells=141 chosen=1
+FRONTIER CANDIDATE decision=4 index=1 x=0.425 y=5.825 score=5.851 gain=3.750 clearance=1.145 distance=15.633 path=19.643 cells=75 chosen=0
+FRONTIER CANDIDATE decision=4 index=2 x=21.025 y=0.975 score=3.410 gain=2.000 clearance=0.471 distance=6.186 path=6.561 cells=40 chosen=0
+FRONTIER CANDIDATE decision=4 index=3 x=1.375 y=5.675 score=2.219 gain=1.950 clearance=0.700 distance=14.697 path=20.324 cells=39 chosen=0
+FRONTIER SELECTION decision=5 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=16.719
+FRONTIER CANDIDATE decision=5 index=0 x=24.225 y=2.075 score=16.719 gain=8.550 clearance=1.150 distance=4.498 path=5.427 cells=171 chosen=1
+FRONTIER CANDIDATE decision=5 index=1 x=0.425 y=5.825 score=5.332 gain=3.750 clearance=1.145 distance=20.664 path=24.983 cells=75 chosen=0
+FRONTIER CANDIDATE decision=5 index=2 x=23.975 y=1.475 score=4.721 gain=2.500 clearance=1.400 distance=4.019 path=4.366 cells=50 chosen=0
+FRONTIER CANDIDATE decision=5 index=3 x=1.375 y=5.675 score=1.700 gain=1.950 clearance=0.700 distance=19.711 path=25.697 cells=39 chosen=0
+FRONTIER SELECTION decision=6 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=17.235
+FRONTIER CANDIDATE decision=6 index=0 x=23.325 y=8.325 score=17.235 gain=8.900 clearance=0.750 distance=6.288 path=6.515 cells=178 chosen=1
+FRONTIER CANDIDATE decision=6 index=1 x=0.425 y=5.825 score=4.917 gain=3.750 clearance=1.145 distance=24.020 path=29.939 cells=75 chosen=0
+FRONTIER CANDIDATE decision=6 index=2 x=1.375 y=5.675 score=1.284 gain=1.950 clearance=0.700 distance=23.059 path=30.654 cells=39 chosen=0
+FRONTIER CANDIDATE decision=6 index=3 x=24.825 y=6.275 score=1.515 gain=0.950 clearance=0.750 distance=4.237 path=4.961 cells=19 chosen=0
+FRONTIER SELECTION decision=7 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=6.768
+FRONTIER CANDIDATE decision=7 index=0 x=23.325 y=11.425 score=6.768 gain=3.500 clearance=1.161 distance=3.119 path=3.852 cells=70 chosen=1
+FRONTIER CANDIDATE decision=7 index=1 x=0.425 y=5.825 score=4.665 gain=3.750 clearance=1.145 distance=22.989 path=35.994 cells=75 chosen=0
+FRONTIER CANDIDATE decision=7 index=2 x=1.375 y=5.675 score=1.031 gain=1.950 clearance=0.700 distance=22.063 path=36.720 cells=39 chosen=0
+FRONTIER SELECTION decision=8 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=11.779
+FRONTIER CANDIDATE decision=8 index=0 x=17.975 y=12.075 score=11.779 gain=6.100 clearance=1.350 distance=5.525 path=5.603 cells=122 chosen=1
+FRONTIER CANDIDATE decision=8 index=1 x=0.425 y=5.825 score=4.458 gain=3.750 clearance=1.145 distance=23.690 path=39.445 cells=75 chosen=0
+FRONTIER CANDIDATE decision=8 index=2 x=1.375 y=5.675 score=0.822 gain=1.950 clearance=0.700 distance=22.805 path=40.163 cells=39 chosen=0
+FRONTIER SELECTION decision=9 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=12.866
+FRONTIER CANDIDATE decision=9 index=0 x=12.725 y=12.325 score=12.866 gain=6.650 clearance=1.112 distance=5.395 path=5.507 cells=133 chosen=1
+FRONTIER CANDIDATE decision=9 index=1 x=0.425 y=5.825 score=5.714 gain=3.750 clearance=1.145 distance=18.788 path=19.229 cells=75 chosen=0
+FRONTIER CANDIDATE decision=9 index=2 x=13.075 y=11.225 score=2.981 gain=1.700 clearance=1.100 distance=5.126 path=5.459 cells=34 chosen=0
+FRONTIER CANDIDATE decision=9 index=3 x=1.375 y=5.675 score=2.154 gain=1.950 clearance=0.700 distance=17.950 path=18.369 cells=39 chosen=0
+FRONTIER SELECTION decision=10 candidates=5 pool=1 rank=1 seed=20260811 chosen_score=8.922
+FRONTIER CANDIDATE decision=10 index=0 x=6.525 y=12.125 score=8.922 gain=4.700 clearance=1.550 distance=6.227 path=6.442 cells=94 chosen=1
+FRONTIER CANDIDATE decision=10 index=1 x=0.425 y=5.825 score=6.174 gain=3.750 clearance=1.145 distance=13.944 path=14.868 cells=75 chosen=0
+FRONTIER CANDIDATE decision=10 index=2 x=7.225 y=13.125 score=4.546 gain=2.550 clearance=0.474 distance=5.577 path=6.450 cells=51 chosen=0
+FRONTIER CANDIDATE decision=10 index=3 x=8.725 y=10.975 score=3.800 gain=2.050 clearance=1.416 distance=4.251 path=4.589 cells=41 chosen=0
+FRONTIER CANDIDATE decision=10 index=4 x=1.375 y=5.675 score=2.588 gain=1.950 clearance=0.700 distance=13.187 path=14.447 cells=39 chosen=0
+FRONTIER SELECTION decision=11 candidates=3 pool=1 rank=1 seed=20260811 chosen_score=19.802
+FRONTIER CANDIDATE decision=11 index=0 x=1.375 y=12.325 score=19.802 gain=10.100 clearance=1.349 distance=5.287 path=5.372 cells=202 chosen=1
+FRONTIER CANDIDATE decision=11 index=1 x=0.425 y=5.825 score=6.637 gain=3.750 clearance=1.145 distance=8.811 path=10.744 cells=75 chosen=0
+FRONTIER CANDIDATE decision=11 index=2 x=1.375 y=5.675 score=3.004 gain=1.950 clearance=0.700 distance=8.282 path=11.032 cells=39 chosen=0
+FRONTIER SELECTION decision=12 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=6.823
+FRONTIER CANDIDATE decision=12 index=0 x=0.425 y=5.875 score=6.823 gain=3.700 clearance=1.124 distance=6.466 path=7.321 cells=74 chosen=1
+FRONTIER CANDIDATE decision=12 index=1 x=0.025 y=7.725 score=4.335 gain=2.350 clearance=1.211 distance=4.754 path=4.967 cells=47 chosen=0
+FRONTIER CANDIDATE decision=12 index=2 x=1.375 y=5.675 score=3.219 gain=1.950 clearance=0.700 distance=6.583 path=8.434 cells=39 chosen=0
+FRONTIER CANDIDATE decision=12 index=3 x=1.275 y=9.725 score=2.580 gain=1.400 clearance=0.645 distance=2.539 path=3.154 cells=28 chosen=0
+FRONTIER SELECTION decision=1 candidates=5 pool=1 rank=1 seed=20260811 chosen_score=42.685
+FRONTIER CANDIDATE decision=1 index=0 x=3.425 y=-0.075 score=42.685 gain=21.450 clearance=1.321 distance=3.426 path=3.506 cells=429 chosen=1
+FRONTIER CANDIDATE decision=1 index=1 x=-0.125 y=3.475 score=13.824 gain=7.050 clearance=0.771 distance=3.477 path=3.586 cells=141 chosen=0
+FRONTIER CANDIDATE decision=1 index=2 x=-1.025 y=3.975 score=7.496 gain=3.900 clearance=1.245 distance=4.105 path=4.457 cells=78 chosen=0
+FRONTIER CANDIDATE decision=1 index=3 x=-0.975 y=5.375 score=2.883 gain=1.700 clearance=0.450 distance=5.463 path=5.779 cells=34 chosen=0
+FRONTIER CANDIDATE decision=1 index=4 x=2.475 y=-1.125 score=1.476 gain=0.850 clearance=0.754 distance=2.719 path=3.278 cells=17 chosen=0
+FRONTIER SELECTION decision=2 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=15.886
+FRONTIER CANDIDATE decision=2 index=0 x=8.725 y=0.025 score=15.886 gain=8.150 clearance=1.371 distance=5.471 path=5.560 cells=163 chosen=1
+FRONTIER CANDIDATE decision=2 index=1 x=0.425 y=5.775 score=5.783 gain=3.200 clearance=1.041 distance=6.439 path=7.993 cells=64 chosen=0
+FRONTIER CANDIDATE decision=2 index=2 x=1.325 y=6.025 score=0.177 gain=0.450 clearance=0.391 distance=6.335 path=8.914 cells=9 chosen=0
+FRONTIER CANDIDATE decision=2 index=3 x=1.325 y=5.275 score=0.131 gain=0.400 clearance=0.341 distance=5.626 path=8.443 cells=8 chosen=0
+FRONTIER SELECTION decision=3 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=8.120
+FRONTIER CANDIDATE decision=3 index=0 x=14.875 y=0.025 score=8.120 gain=4.300 clearance=1.400 distance=6.161 path=6.244 cells=86 chosen=1
+FRONTIER CANDIDATE decision=3 index=1 x=0.425 y=5.775 score=5.332 gain=3.200 clearance=1.041 distance=10.059 path=13.377 cells=64 chosen=0
+FRONTIER CANDIDATE decision=3 index=2 x=1.325 y=6.025 score=-0.250 gain=0.450 clearance=0.391 distance=9.486 path=14.306 cells=9 chosen=0
+FRONTIER CANDIDATE decision=3 index=3 x=1.325 y=5.275 score=-0.311 gain=0.400 clearance=0.341 distance=9.034 path=13.863 cells=8 chosen=0
+FRONTIER SELECTION decision=4 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=20.538
+FRONTIER CANDIDATE decision=4 index=0 x=20.325 y=0.425 score=20.538 gain=10.500 clearance=1.041 distance=5.624 path=5.706 cells=210 chosen=1
+FRONTIER CANDIDATE decision=4 index=1 x=0.425 y=5.775 score=4.766 gain=3.200 clearance=1.041 distance=15.375 path=19.379 cells=64 chosen=0
+FRONTIER CANDIDATE decision=4 index=2 x=1.325 y=6.025 score=-0.808 gain=0.450 clearance=0.391 distance=14.642 path=20.306 cells=9 chosen=0
+FRONTIER CANDIDATE decision=4 index=3 x=1.325 y=5.275 score=-0.877 gain=0.400 clearance=0.341 distance=14.354 path=19.861 cells=8 chosen=0
+FRONTIER SELECTION decision=5 candidates=5 pool=2 rank=2 seed=20260811 chosen_score=5.468
+FRONTIER CANDIDATE decision=5 index=0 x=24.225 y=2.025 score=6.431 gain=3.400 clearance=1.150 distance=4.427 path=5.244 cells=68 chosen=0
+FRONTIER CANDIDATE decision=5 index=1 x=24.125 y=1.625 score=5.468 gain=2.900 clearance=1.291 distance=4.195 path=5.026 cells=58 chosen=1
+FRONTIER CANDIDATE decision=5 index=2 x=0.425 y=5.775 score=4.242 gain=3.200 clearance=1.041 distance=20.448 path=24.792 cells=64 chosen=0
+FRONTIER CANDIDATE decision=5 index=3 x=23.825 y=1.175 score=5.138 gain=2.700 clearance=1.354 distance=3.785 path=4.155 cells=54 chosen=0
+FRONTIER CANDIDATE decision=5 index=4 x=1.325 y=6.025 score=-1.329 gain=0.450 clearance=0.391 distance=19.653 path=25.715 cells=9 chosen=0
+FRONTIER SELECTION decision=6 candidates=5 pool=1 rank=1 seed=20260811 chosen_score=4.842
+FRONTIER CANDIDATE decision=6 index=0 x=0.425 y=5.775 score=3.827 gain=3.200 clearance=1.041 distance=24.074 path=29.473 cells=64 chosen=0
+FRONTIER CANDIDATE decision=6 index=1 x=23.525 y=8.075 score=4.842 gain=2.700 clearance=0.950 distance=6.500 path=6.562 cells=54 chosen=1
+FRONTIER CANDIDATE decision=6 index=2 x=24.875 y=6.325 score=1.853 gain=1.150 clearance=0.650 distance=4.779 path=5.470 cells=23 chosen=0
+FRONTIER CANDIDATE decision=6 index=3 x=23.075 y=9.025 score=0.380 gain=0.550 clearance=0.350 distance=7.497 path=7.601 cells=11 chosen=0
+FRONTIER CANDIDATE decision=6 index=4 x=23.225 y=8.625 score=0.154 gain=0.400 clearance=0.671 distance=7.080 path=7.173 cells=8 chosen=0
+FRONTIER SELECTION decision=7 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=4.534
+FRONTIER CANDIDATE decision=7 index=0 x=0.425 y=5.775 score=3.557 gain=3.200 clearance=1.041 distance=23.327 path=35.625 cells=64 chosen=0
+FRONTIER CANDIDATE decision=7 index=1 x=23.275 y=11.925 score=4.534 gain=2.400 clearance=1.441 distance=3.872 path=4.325 cells=48 chosen=1
+FRONTIER CANDIDATE decision=7 index=2 x=1.325 y=6.025 score=-2.008 gain=0.450 clearance=0.391 distance=22.407 path=36.543 cells=9 chosen=0
+FRONTIER CANDIDATE decision=7 index=3 x=1.325 y=5.275 score=-2.095 gain=0.400 clearance=0.341 distance=22.488 path=36.090 cells=8 chosen=0
+FRONTIER SELECTION decision=8 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=13.710
+FRONTIER CANDIDATE decision=8 index=0 x=17.375 y=12.125 score=13.710 gain=7.100 clearance=1.019 distance=5.866 path=5.982 cells=142 chosen=1
+FRONTIER CANDIDATE decision=8 index=1 x=0.425 y=5.775 score=3.331 gain=3.200 clearance=1.041 distance=23.615 path=39.847 cells=64 chosen=0
+FRONTIER CANDIDATE decision=8 index=2 x=1.325 y=6.025 score=-2.234 gain=0.450 clearance=0.391 distance=22.681 path=40.776 cells=9 chosen=0
+FRONTIER CANDIDATE decision=8 index=3 x=1.325 y=5.275 score=-2.327 gain=0.400 clearance=0.341 distance=22.886 path=40.333 cells=8 chosen=0
+FRONTIER SELECTION decision=9 candidates=5 pool=1 rank=1 seed=20260811 chosen_score=6.521
+FRONTIER CANDIDATE decision=9 index=0 x=11.675 y=12.475 score=6.521 gain=3.500 clearance=0.971 distance=5.713 path=5.802 cells=70 chosen=1
+FRONTIER CANDIDATE decision=9 index=1 x=0.425 y=5.775 score=4.658 gain=3.200 clearance=1.041 distance=18.094 path=18.833 cells=64 chosen=0
+FRONTIER CANDIDATE decision=9 index=2 x=13.025 y=11.175 score=2.839 gain=1.600 clearance=1.050 distance=4.449 path=4.861 cells=32 chosen=0
+FRONTIER CANDIDATE decision=9 index=3 x=1.325 y=6.025 score=-0.809 gain=0.450 clearance=0.391 distance=17.164 path=17.808 cells=9 chosen=0
+FRONTIER CANDIDATE decision=9 index=4 x=1.325 y=5.275 score=-0.950 gain=0.400 clearance=0.341 distance=17.443 path=18.249 cells=8 chosen=0
+FRONTIER SELECTION decision=10 candidates=5 pool=1 rank=1 seed=20260811 chosen_score=13.991
+FRONTIER CANDIDATE decision=10 index=0 x=6.325 y=11.975 score=13.991 gain=7.200 clearance=1.400 distance=5.401 path=5.570 cells=144 chosen=1
+FRONTIER CANDIDATE decision=10 index=1 x=0.425 y=5.775 score=5.133 gain=3.200 clearance=1.041 distance=13.118 path=14.295 cells=64 chosen=0
+FRONTIER CANDIDATE decision=10 index=2 x=6.475 y=13.325 score=2.886 gain=1.700 clearance=0.621 distance=5.297 path=6.232 cells=34 chosen=0
+FRONTIER CANDIDATE decision=10 index=3 x=7.675 y=13.025 score=2.081 gain=1.250 clearance=0.371 distance=4.066 path=5.050 cells=25 chosen=0
+FRONTIER CANDIDATE decision=10 index=4 x=9.275 y=11.025 score=1.982 gain=1.100 clearance=0.895 distance=2.828 path=3.326 cells=22 chosen=0
+FRONTIER SELECTION decision=11 candidates=5 pool=1 rank=1 seed=20260811 chosen_score=13.310
+FRONTIER CANDIDATE decision=11 index=0 x=1.175 y=11.975 score=13.310 gain=6.850 clearance=1.454 distance=5.329 path=5.377 cells=137 chosen=1
+FRONTIER CANDIDATE decision=11 index=1 x=0.425 y=5.775 score=5.537 gain=3.200 clearance=1.041 distance=8.627 path=10.719 cells=64 chosen=0
+FRONTIER CANDIDATE decision=11 index=2 x=1.675 y=13.075 score=3.835 gain=2.150 clearance=0.574 distance=4.970 path=5.475 cells=43 chosen=0
+FRONTIER CANDIDATE decision=11 index=3 x=1.325 y=6.025 score=0.025 gain=0.450 clearance=0.391 distance=7.830 path=10.456 cells=9 chosen=0
+FRONTIER CANDIDATE decision=11 index=4 x=1.325 y=5.275 score=-0.151 gain=0.400 clearance=0.341 distance=8.407 path=11.288 cells=8 chosen=0
+FRONTIER SELECTION decision=12 candidates=4 pool=1 rank=1 seed=20260811 chosen_score=18.689
+FRONTIER CANDIDATE decision=12 index=0 x=0.875 y=6.675 score=18.689 gain=9.600 clearance=0.550 distance=5.246 path=6.074 cells=192 chosen=1
+FRONTIER CANDIDATE decision=12 index=1 x=1.425 y=8.825 score=0.912 gain=0.600 clearance=0.433 distance=3.096 path=3.534 cells=12 chosen=0
+FRONTIER CANDIDATE decision=12 index=2 x=1.425 y=6.175 score=0.487 gain=0.550 clearance=0.500 distance=5.742 path=7.524 cells=11 chosen=0
+FRONTIER CANDIDATE decision=12 index=3 x=1.425 y=7.825 score=0.368 gain=0.400 clearance=0.400 distance=4.094 path=5.348 cells=8 chosen=0

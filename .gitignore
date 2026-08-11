@@ -36,3 +36,5 @@ __pycache__/
 campaign_logs/
 snapshot_resume_reports/
 snapshot_resume_reports_run.log
+selection_logs/
+selection_campaign.log

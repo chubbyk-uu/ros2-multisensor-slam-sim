@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+
+"""Replay alternative goal-selection rules against recorded decisions.
+
+Every selection rule here -- a band relative to the best score, a plain top-k,
+a softmax over scores -- picks from the same list of reachable candidates. The
+explorer records that list per decision, so a rule can be evaluated against
+real decisions instead of being tuned an hour of campaign time at a value.
+
+What this can and cannot say is worth being exact about.
+
+It can answer per-decision questions, because each recorded decision is a fact:
+how often a rule would have had anything to choose between, how much score it
+gives up when it chooses, and how much longer the path it takes is at the
+moment it takes it.
+
+It cannot produce end-to-end run outcomes. The first time a rule picks a
+different goal the robot goes somewhere else, the map fills in differently and
+every later decision in the log stops applying. Total travel, coverage and
+completion time under a different rule need a real run, not a replay.
+"""
+
+import argparse
+import math
+import re
+import sys
+from collections import Counter
+from pathlib import Path
+
+# ros2 launch prefixes every line with the node name, so nothing here may be
+# anchored at the start of a line.
+SELECTION_PATTERN = re.compile(
+    r"FRONTIER SELECTION decision=(\d+) candidates=(\d+) pool=(\d+) rank=(\d+) "
+    r"seed=(\d+) chosen_score=(-?[0-9.]+)")
+CANDIDATE_PATTERN = re.compile(
+    r"FRONTIER CANDIDATE decision=(\d+) index=(\d+) x=(-?[0-9.]+) y=(-?[0-9.]+) "
+    r"score=(-?[0-9.]+) gain=(-?[0-9.]+) clearance=(-?[0-9.]+) "
+    r"distance=(-?[0-9.]+) path=(-?[0-9.]+) cells=(\d+) chosen=([01])")
+
+
+def parse_decisions(text, source=""):
+    """Group the candidate lines of one run by the decision they belong to."""
+    decisions = {}
+    for match in SELECTION_PATTERN.finditer(text):
+        decisions[int(match.group(1))] = {
+            "source": source,
+            "decision": int(match.group(1)),
+            "expected_candidates": int(match.group(2)),
+            "pool": int(match.group(3)),
+            "rank": int(match.group(4)),
+            "seed": int(match.group(5)),
+            "chosen_score": float(match.group(6)),
+            "candidates": [],
+        }
+    for match in CANDIDATE_PATTERN.finditer(text):
+        decision = decisions.get(int(match.group(1)))
+        if decision is None:
+            continue
+        decision["candidates"].append({
+            "index": int(match.group(2)),
+            "x": float(match.group(3)),
+            "y": float(match.group(4)),
+            "score": float(match.group(5)),
+            "gain": float(match.group(6)),
+            "clearance": float(match.group(7)),
+            "distance": float(match.group(8)),
+            "path": float(match.group(9)),
+            "cells": int(match.group(10)),
+            "chosen": match.group(11) == "1",
+        })
+    complete = []
+    for decision in decisions.values():
+        # A run killed mid-decision can leave a header without its candidates.
+        if len(decision["candidates"]) == decision["expected_candidates"]:
+            complete.append(decision)
+    return sorted(complete, key=lambda entry: (entry["source"], entry["decision"]))
+
+
+def band_probabilities(scores, fraction):
+    """Uniform over candidates within a fraction of the best score."""
+    best = max(scores)
+    threshold = best - fraction * abs(best)
+    pool = [index for index, score in enumerate(scores) if score >= threshold]
+    return [1.0 / len(pool) if index in set(pool) else 0.0
+            for index in range(len(scores))]
+
+
+def top_k_probabilities(scores, k):
+    """Uniform over the k best candidates, however far apart they are."""
+    order = sorted(range(len(scores)), key=lambda index: -scores[index])
+    pool = set(order[:max(1, k)])
+    return [1.0 / len(pool) if index in pool else 0.0
+            for index in range(len(scores))]
+
+
+def softmax_probabilities(scores, temperature):
+    """Weight by exp(score / T): no threshold, the best stays most likely."""
+    if temperature <= 0.0:
+        return top_k_probabilities(scores, 1)
+    best = max(scores)
+    weights = [math.exp((score - best) / temperature) for score in scores]
+    total = sum(weights)
+    return [weight / total for weight in weights]
+
+
+def perplexity(probabilities):
+    """Effective number of candidates the rule is really choosing between.
+
+    Reported instead of a pool count because it is comparable across rules: a
+    hard band of three equal candidates and a softmax that almost always takes
+    the best are both "three candidates" by any count, and only one of them is
+    actually choosing.
+    """
+    entropy = -sum(
+        probability * math.log(probability)
+        for probability in probabilities if probability > 0.0)
+    return math.exp(entropy)
+
+
+def evaluate(decisions, rule):
+    """Per-decision cost and engagement of one rule, averaged over decisions."""
+    engagement = []
+    perplexities = []
+    score_deficit = []
+    extra_path = []
+    pools = Counter()
+    for decision in decisions:
+        scores = [candidate["score"] for candidate in decision["candidates"]]
+        paths = [candidate["path"] for candidate in decision["candidates"]]
+        probabilities = rule(scores)
+        best = max(range(len(scores)), key=lambda index: scores[index])
+        engagement.append(1.0 - probabilities[best])
+        perplexities.append(perplexity(probabilities))
+        score_deficit.append(
+            sum(probability * (scores[best] - score)
+                for probability, score in zip(probabilities, scores)))
+        extra_path.append(
+            sum(probability * (path - paths[best])
+                for probability, path in zip(probabilities, paths)))
+        pools[sum(1 for probability in probabilities if probability > 1.0e-6)] += 1
+    count = len(decisions)
+    mean_engagement = sum(engagement) / count
+    mean_extra_path = sum(extra_path) / count
+    return {
+        "decisions": count,
+        "engagement": mean_engagement,
+        "perplexity": sum(perplexities) / count,
+        "score_deficit": sum(score_deficit) / count,
+        "extra_path_m": mean_extra_path,
+        # The comparison that actually decides between rules: metres of travel
+        # given up per unit of variety bought. Every rule can be made to engage
+        # more by turning its knob, so engagement alone ranks nothing.
+        "path_per_engagement_m": (
+            mean_extra_path / mean_engagement if mean_engagement > 1.0e-6
+            else float("nan")),
+        "pools": dict(sorted(pools.items())),
+    }
+
+
+def rules(arguments):
+    entries = [(f"band {fraction:.2f} (current shape)",
+                lambda scores, fraction=fraction: band_probabilities(scores, fraction))
+               for fraction in arguments.band]
+    entries += [(f"top-{k}", lambda scores, k=k: top_k_probabilities(scores, k))
+                for k in arguments.top_k]
+    entries += [(f"softmax T={temperature:g}",
+                 lambda scores, temperature=temperature:
+                 softmax_probabilities(scores, temperature))
+                for temperature in arguments.temperature]
+    return entries
+
+
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("logs", nargs="+", help="Run logs holding decision records.")
+    parser.add_argument(
+        "--band", type=float, nargs="*", default=[0.20, 0.35, 0.50])
+    parser.add_argument("--top-k", type=int, nargs="*", default=[2, 3])
+    parser.add_argument(
+        "--temperature", type=float, nargs="*", default=[0.5, 1.0, 2.0, 4.0])
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    arguments = parse_arguments(argv)
+    decisions = []
+    for name in arguments.logs:
+        path = Path(name)
+        decisions.extend(
+            parse_decisions(
+                path.read_text(encoding="utf-8", errors="replace"), path.name))
+    if not decisions:
+        print("no complete decision records found", flush=True)
+        return 1
+    sizes = Counter(len(decision["candidates"]) for decision in decisions)
+    print(f"decisions={len(decisions)} from {len(arguments.logs)} logs; "
+          f"candidates per decision {dict(sorted(sizes.items()))}", flush=True)
+    print(
+        f"{'rule':>26} {'engage':>7} {'perplex':>8} {'score_gap':>10} "
+        f"{'extra_m':>8} {'m/engage':>9}  pool sizes", flush=True)
+    for name, rule in rules(arguments):
+        result = evaluate(decisions, rule)
+        ratio = result["path_per_engagement_m"]
+        print(
+            f"{name:>26} {result['engagement']:7.3f} {result['perplexity']:8.3f} "
+            f"{result['score_deficit']:10.3f} {result['extra_path_m']:8.3f} "
+            f"{'--' if ratio != ratio else format(ratio, '9.2f'):>9}  "
+            f"{result['pools']}", flush=True)
+    print(
+        "\nPer-decision figures only. The first differing goal changes where the "
+        "robot goes, so totals for a whole run need a real run.", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

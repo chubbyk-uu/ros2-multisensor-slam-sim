@@ -267,6 +267,7 @@ install(
     scripts/front_end_motion_regression
     scripts/front_end_regression
     scripts/frontier_exploration_regression
+    scripts/frontier_selection_replay
     scripts/grid_contract_check
     scripts/launch_smoke_check
     scripts/map_projection_census
@@ -463,6 +464,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_exploration_seed_wiring
     test/test_exploration_seed_wiring.py
+  )
+  ament_add_pytest_test(
+    test_frontier_selection_replay
+    test/test_frontier_selection_replay.py
   )
 endif()
 
