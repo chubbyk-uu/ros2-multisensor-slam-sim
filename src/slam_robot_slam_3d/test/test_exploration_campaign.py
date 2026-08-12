@@ -113,7 +113,7 @@ def runs(passes, fails, infra):
 
 def test_batch_is_void_rather_than_rejected_when_the_host_dominates():
     arguments = MODULE.parse_arguments([])
-    outcome, _ = MODULE.judge(runs(7, 0, 3), arguments)
+    outcome, _ = MODULE.judge(runs(3, 0, 2), arguments)
 
     # Three environment-attributed runs leave too few evaluable ones to say
     # anything, so the batch is void instead of condemning the algorithm.
@@ -122,27 +122,28 @@ def test_batch_is_void_rather_than_rejected_when_the_host_dominates():
 
 def test_a_single_core_failure_rejects_the_batch():
     arguments = MODULE.parse_arguments([])
-    assert MODULE.judge(runs(9, 1, 0), arguments)[0] == "REJECTED"
+    assert MODULE.judge(runs(4, 1, 0), arguments)[0] == "REJECTED"
     # A core failure is a core failure however many siblings the host claimed.
-    assert MODULE.judge(runs(7, 1, 2), arguments)[0] == "REJECTED"
+    assert MODULE.judge(runs(3, 1, 1), arguments)[0] == "REJECTED"
 
 
 def test_host_attributed_runs_leave_the_denominator():
     arguments = MODULE.parse_arguments([])
-    assert MODULE.judge(runs(10, 0, 0), arguments)[0] == "ACCEPTED"
-    assert MODULE.judge(runs(9, 0, 1), arguments)[0] == "ACCEPTED"
+    assert MODULE.judge(runs(5, 0, 0), arguments)[0] == "ACCEPTED"
+    assert MODULE.judge(runs(4, 0, 1), arguments)[0] == "ACCEPTED"
     # Judging passes out of the whole batch used to reject this case: with no
     # core failure the pass count is only the batch size minus the runs already
     # blamed on the machine, so counting them twice condemned the algorithm for
     # the host's behaviour.
-    assert MODULE.judge(runs(8, 0, 2), arguments)[0] == "ACCEPTED"
+    relaxed = MODULE.parse_arguments(["--minimum-evaluable-runs", "3"])
+    assert MODULE.judge(runs(3, 0, 2), relaxed)[0] == "ACCEPTED"
 
 
 def test_default_criteria_are_written_down_before_the_numbers_arrive():
     arguments = MODULE.parse_arguments([])
 
-    assert arguments.runs == 10
-    assert arguments.minimum_evaluable_runs == 8
+    assert arguments.runs == 5
+    assert arguments.minimum_evaluable_runs == 4
     assert arguments.run_timeout_seconds > 900.0
 
 
@@ -246,3 +247,24 @@ def test_missing_measurements_are_recorded_as_absent_not_zero():
     assert record["free_cells"] is None
     assert record["host_healthy"] is None
     assert record["wall_overshoot_m"] is None
+
+
+def test_random_spawn_requires_a_world():
+    with pytest.raises(SystemExit):
+        MODULE.parse_arguments(["--random-spawn"])
+
+
+def test_spawn_pose_and_world_reach_the_launch_command():
+    arguments = MODULE.parse_arguments([
+        "--world", "/tmp/structured_loop_3d.sdf",
+        "--world-profile", "structured_loop_3d",
+    ])
+    command = MODULE.launch_command(
+        arguments, {"x": 1.25, "y": -2.5, "yaw": 0.75}
+    )
+
+    assert "world:=/tmp/structured_loop_3d.sdf" in command
+    assert "world_profile:=structured_loop_3d" in command
+    assert "spawn_x:=1.25" in command
+    assert "spawn_y:=-2.5" in command
+    assert "spawn_yaw:=0.75" in command

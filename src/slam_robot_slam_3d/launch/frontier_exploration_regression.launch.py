@@ -33,7 +33,7 @@ def generate_launch_description():
             "custom_3d_exploration_simulation.launch.py",
         ]
     )
-    structured_world = PathJoinSubstitution(
+    default_world = PathJoinSubstitution(
         [
             FindPackageShare("slam_robot_gazebo"),
             "worlds",
@@ -48,6 +48,16 @@ def generate_launch_description():
         arguments=[
             "--wall-timeout",
             LaunchConfiguration("wall_timeout"),
+            "--world",
+            LaunchConfiguration("world"),
+            "--world-profile",
+            LaunchConfiguration("world_profile"),
+            "--spawn-x",
+            LaunchConfiguration("spawn_x"),
+            "--spawn-y",
+            LaunchConfiguration("spawn_y"),
+            "--spawn-yaw",
+            LaunchConfiguration("spawn_yaw"),
             "--maximum-recovery-events",
             LaunchConfiguration("maximum_recovery_events"),
         ],
@@ -58,6 +68,10 @@ def generate_launch_description():
             DeclareLaunchArgument("gui", default_value="false"),
             DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument("smoke", default_value="false"),
+            DeclareLaunchArgument("world", default_value=default_world),
+            DeclareLaunchArgument(
+                "world_profile", default_value="structured_loop_3d"
+            ),
             # Matches the RTAB-Map entry point so neither run carries a
             # different time budget into a coverage comparison.
             DeclareLaunchArgument("wall_timeout", default_value="900"),
@@ -86,7 +100,7 @@ def generate_launch_description():
                     IncludeLaunchDescription(
                         PythonLaunchDescriptionSource(exploration_launch),
                         launch_arguments={
-                            "world": structured_world,
+                            "world": LaunchConfiguration("world"),
                             "gui": LaunchConfiguration("gui"),
                             "rviz": LaunchConfiguration("rviz"),
                             "snapshot_path": LaunchConfiguration("snapshot_path"),

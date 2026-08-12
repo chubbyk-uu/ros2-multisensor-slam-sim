@@ -4,10 +4,12 @@
 
 import argparse
 import math
+from pathlib import Path
 import sys
 import time
 from collections import deque
 
+from ament_index_python.packages import get_package_share_directory
 from diagnostic_msgs.msg import DiagnosticArray
 from nav2_msgs.msg import CollisionMonitorState
 from nav_msgs.msg import OccupancyGrid, Odometry
@@ -20,6 +22,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.utilities import remove_ros_args
 from std_msgs.msg import Bool
 import tf2_ros
+import yaml
 
 
 CRITICAL_LOG_FRAGMENTS = (
@@ -129,7 +132,7 @@ def known_free_cells(message):
     return sum(1 for value in message.data if 0 <= value <= 20)
 
 
-def wall_overshoot(bounds):
+def wall_overshoot(bounds, outer_bounds=None):
     """Return how far a bounding box reaches past each outer wall face.
 
     Reported per side rather than as one number: the observed smear is
@@ -139,22 +142,32 @@ def wall_overshoot(bounds):
     if bounds is None:
         return None
     minimum_x, minimum_y, maximum_x, maximum_y = bounds
+    if outer_bounds is None:
+        outer_bounds = (
+            OUTER_WALL_MINIMUM_X,
+            OUTER_WALL_MINIMUM_Y,
+            OUTER_WALL_MAXIMUM_X,
+            OUTER_WALL_MAXIMUM_Y,
+        )
+    outer_minimum_x, outer_minimum_y, outer_maximum_x, outer_maximum_y = (
+        outer_bounds
+    )
     return {
-        "west": max(0.0, OUTER_WALL_MINIMUM_X - minimum_x),
-        "south": max(0.0, OUTER_WALL_MINIMUM_Y - minimum_y),
-        "east": max(0.0, maximum_x - OUTER_WALL_MAXIMUM_X),
-        "north": max(0.0, maximum_y - OUTER_WALL_MAXIMUM_Y),
+        "west": max(0.0, outer_minimum_x - minimum_x),
+        "south": max(0.0, outer_minimum_y - minimum_y),
+        "east": max(0.0, maximum_x - outer_maximum_x),
+        "north": max(0.0, maximum_y - outer_maximum_y),
     }
 
 
-def format_wall_overshoot(bounds):
-    overshoot = wall_overshoot(bounds)
+def format_wall_overshoot(bounds, outer_bounds=None):
+    overshoot = wall_overshoot(bounds, outer_bounds)
     if overshoot is None:
         return "n/a"
     return " ".join(f"{side}={value:.3f} m" for side, value in overshoot.items())
 
 
-def map_bounds(message, predicate):
+def map_bounds(message, predicate, world_from_map=(0.0, 0.0, 0.0)):
     """Return a world-coordinate bounding box for cells selected by predicate."""
     width = message.info.width
     height = message.info.height
@@ -170,12 +183,27 @@ def map_bounds(message, predicate):
         return None
     xs, ys = zip(*selected)
     origin = message.info.origin.position
-    return (
-        origin.x + min(xs) * resolution,
-        origin.y + min(ys) * resolution,
-        origin.x + (max(xs) + 1) * resolution,
-        origin.y + (max(ys) + 1) * resolution,
+    local_corners = (
+        (origin.x + min(xs) * resolution, origin.y + min(ys) * resolution),
+        (origin.x + min(xs) * resolution,
+         origin.y + (max(ys) + 1) * resolution),
+        (origin.x + (max(xs) + 1) * resolution,
+         origin.y + min(ys) * resolution),
+        (origin.x + (max(xs) + 1) * resolution,
+         origin.y + (max(ys) + 1) * resolution),
     )
+    offset_x, offset_y, yaw = world_from_map
+    cosine = math.cos(yaw)
+    sine = math.sin(yaw)
+    world_corners = [
+        (
+            offset_x + cosine * x - sine * y,
+            offset_y + sine * x + cosine * y,
+        )
+        for x, y in local_corners
+    ]
+    world_x, world_y = zip(*world_corners)
+    return (min(world_x), min(world_y), max(world_x), max(world_y))
 
 
 def bounds_area(bounds):
@@ -201,12 +229,13 @@ def format_metres(value):
 
 
 class ExplorationRegression(Node):
-    def __init__(self):
+    def __init__(self, world_from_map=(0.0, 0.0, 0.0)):
         super().__init__(
             "frontier_exploration_regression",
             parameter_overrides=[Parameter("use_sim_time", value=True)],
         )
         self.complete = False
+        self.world_from_map = world_from_map
         self.seen_active_exploration = False
         self.latest_free_cells = 0
         self.initial_free_cells = None
@@ -330,8 +359,12 @@ class ExplorationRegression(Node):
         self.maximum_free_area = max(
             self.maximum_free_area, self.latest_free_cells * cell_area
         )
-        known_bounds = map_bounds(message, lambda value: value >= 0)
-        free_bounds = map_bounds(message, lambda value: 0 <= value <= 20)
+        known_bounds = map_bounds(
+            message, lambda value: value >= 0, self.world_from_map
+        )
+        free_bounds = map_bounds(
+            message, lambda value: 0 <= value <= 20, self.world_from_map
+        )
         if bounds_area(known_bounds) > self.maximum_known_bbox_area:
             self.maximum_known_bbox_area = bounds_area(known_bounds)
             self.maximum_known_bounds = known_bounds
@@ -529,32 +562,87 @@ class ExplorationRegression(Node):
         )
 
 
+def load_world_profile(name):
+    """Load geometry-specific gates without embedding spawn coordinates."""
+    path = (
+        Path(get_package_share_directory("slam_robot_slam_3d"))
+        / "config" / "exploration_world_profiles.yaml"
+    )
+    profiles = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if name not in profiles:
+        raise ValueError(
+            f"unknown exploration world profile {name!r}; "
+            f"available: {', '.join(sorted(profiles))}"
+        )
+    profile = profiles[name]
+    if len(profile.get("outer_bounds", [])) != 4:
+        raise ValueError(f"profile {name!r} must define four outer_bounds")
+    return profile
+
+
 def parse_arguments(arguments):
+    profile_parser = argparse.ArgumentParser(add_help=False)
+    profile_parser.add_argument(
+        "--world-profile", default="structured_loop_3d"
+    )
+    profile_options, _ = profile_parser.parse_known_args(arguments)
+    profile = load_world_profile(profile_options.world_profile)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wall-timeout", type=float, default=600.0)
-    parser.add_argument("--minimum-successful-goals", type=int, default=1)
+    parser.add_argument(
+        "--world-profile", default=profile_options.world_profile
+    )
+    parser.add_argument("--world", default=profile["world_file"])
+    parser.add_argument("--spawn-x", type=float, default=0.0)
+    parser.add_argument("--spawn-y", type=float, default=0.0)
+    parser.add_argument("--spawn-yaw", type=float, default=0.0)
+    parser.add_argument(
+        "--outer-bounds", type=float, nargs=4,
+        default=profile["outer_bounds"]
+    )
+    parser.add_argument(
+        "--wall-timeout", type=float, default=profile["wall_timeout"]
+    )
+    parser.add_argument(
+        "--minimum-successful-goals", type=int,
+        default=profile["minimum_successful_goals"]
+    )
     parser.add_argument("--minimum-free-cell-growth", type=int, default=500)
     # The fixed structured-world RTAB-Map baseline reaches 76,012 free cells
     # and 70.778 m.  Half of that is an anti-regression gate, not a target:
     # it only stops the self-developed chain from declaring completion on a
     # map far smaller than the one it produced when this gate was written.
-    parser.add_argument("--minimum-final-free-cells", type=int, default=38000)
-    parser.add_argument("--minimum-travel-distance", type=float, default=35.0)
+    parser.add_argument(
+        "--minimum-final-free-cells", type=int,
+        default=profile["minimum_final_free_cells"]
+    )
+    parser.add_argument(
+        "--minimum-travel-distance", type=float,
+        default=profile["minimum_travel_distance"]
+    )
     parser.add_argument("--maximum-failed-goals", type=int, default=5)
-    parser.add_argument("--maximum-successful-goals", type=int, default=30)
+    parser.add_argument(
+        "--maximum-successful-goals", type=int,
+        default=profile["maximum_successful_goals"]
+    )
     parser.add_argument("--maximum-collision-transitions", type=int, default=3)
     parser.add_argument("--maximum-recovery-events", type=int, default=5)
     # The closed structured-loop corridor has less than 216 m2 of physical
     # floor area. 240 m2 leaves measurement margin while rejecting a warped
     # map that fabricates free space outside the world.
-    parser.add_argument("--maximum-free-area-m2", type=float, default=240.0)
+    parser.add_argument(
+        "--maximum-free-area-m2", type=float,
+        default=profile["maximum_free_area_m2"]
+    )
     # Derived from the physical outer wall, 27.2 x 15.2 m, plus room for the
     # wall smear a correct map still shows. Six healthy runs measured
     # 27.05-27.50 m wide and 15.10-16.40 m tall, so the previous 16.5 m height
     # limit had less margin than the run-to-run spread. Height stays a separate
     # check: the warped map this catches was 20.10 m tall while still fitting
     # under an area limit.
-    parser.add_argument("--maximum-known-bbox-width-m", type=float, default=28.0)
+    parser.add_argument(
+        "--maximum-known-bbox-width-m", type=float,
+        default=profile["maximum_known_bbox_width_m"]
+    )
     # Ten calibration runs measured 14.95-16.80 m. Nine of them sat inside
     # 15.55 m with the map fitting the outer wall exactly; one stretched by
     # 1.6 m in y, pushing north and south out together. That stretch has no
@@ -562,8 +650,14 @@ def parse_arguments(arguments):
     # front-end resets, so this limit covers it with margin rather than
     # pretending its size is bounded. It still separates cleanly from the
     # 20.10 m a warped map produced.
-    parser.add_argument("--maximum-known-bbox-height-m", type=float, default=17.5)
-    parser.add_argument("--maximum-known-bbox-area-m2", type=float, default=480.0)
+    parser.add_argument(
+        "--maximum-known-bbox-height-m", type=float,
+        default=profile["maximum_known_bbox_height_m"]
+    )
+    parser.add_argument(
+        "--maximum-known-bbox-area-m2", type=float,
+        default=profile["maximum_known_bbox_area_m2"]
+    )
     # Host health is measured as warnings per minute, not per run: completions
     # span 352-610 s, so an absolute count penalises the longer ones. Six runs
     # measured 0.00-0.20/min while healthy and 0.62/min on the starved one.
@@ -605,12 +699,22 @@ def parse_arguments(arguments):
         or parsed.maximum_known_bbox_area_m2 <= 0.0
     ):
         parser.error("map bounding-box limits must be positive")
+    if not all(math.isfinite(value) for value in parsed.outer_bounds):
+        parser.error("--outer-bounds values must be finite")
+    if (parsed.outer_bounds[0] >= parsed.outer_bounds[2] or
+            parsed.outer_bounds[1] >= parsed.outer_bounds[3]):
+        parser.error("--outer-bounds must be min_x min_y max_x max_y")
     if parsed.maximum_successful_goals < parsed.minimum_successful_goals:
         parser.error("--maximum-successful-goals must allow the required minimum")
     if parsed.maximum_submap_reinitializations < 0:
         parser.error("--maximum-submap-reinitializations must be non-negative")
     if parsed.minimum_loop_accepted_candidates < 0:
         parser.error("--minimum-loop-accepted-candidates must be non-negative")
+    if Path(parsed.world).name != profile["world_file"]:
+        parser.error(
+            f"--world basename must be {profile['world_file']!r} for profile "
+            f"{parsed.world_profile!r}"
+        )
     return parsed
 
 
@@ -661,13 +765,13 @@ def evaluate(regression, arguments):
         "known_free_area_grew": growth >= arguments.minimum_free_cell_growth,
         "final_known_area": regression.maximum_free_cells
         >= arguments.minimum_final_free_cells,
-        "free_area_within_structured_world": regression.maximum_free_area
+        "free_area_within_world": regression.maximum_free_area
         <= arguments.maximum_free_area_m2,
-        "known_map_width_within_structured_world":
+        "known_map_width_within_world":
         regression.maximum_known_bbox_width <= arguments.maximum_known_bbox_width_m,
-        "known_map_height_within_structured_world":
+        "known_map_height_within_world":
         regression.maximum_known_bbox_height <= arguments.maximum_known_bbox_height_m,
-        "known_map_bbox_within_structured_world": regression.maximum_known_bbox_area
+        "known_map_bbox_within_world": regression.maximum_known_bbox_area
         <= arguments.maximum_known_bbox_area_m2,
         "robot_explored_physically": regression.truth_distance
         >= arguments.minimum_travel_distance,
@@ -699,6 +803,12 @@ def evaluate(regression, arguments):
     }
     print("RESULT frontier exploration", flush=True)
     print(
+        f"  world: profile={arguments.world_profile} file={arguments.world} "
+        f"spawn=({arguments.spawn_x:.3f}, {arguments.spawn_y:.3f}, "
+        f"{arguments.spawn_yaw:.3f})",
+        flush=True,
+    )
+    print(
         f"  free cells: initial={initial} maximum={regression.maximum_free_cells} "
         f"growth={growth}",
         flush=True,
@@ -718,10 +828,10 @@ def evaluate(regression, arguments):
     # varied 0.45 m. Per-side extents show whether one wall, the portal, or a
     # global pose correction is responsible, without guessing now.
     print(
-        "  known map extent vs outer wall "
-        f"(x {OUTER_WALL_MINIMUM_X:.2f}..{OUTER_WALL_MAXIMUM_X:.2f}, "
-        f"y {OUTER_WALL_MINIMUM_Y:.2f}..{OUTER_WALL_MAXIMUM_Y:.2f}): "
-        f"{format_wall_overshoot(regression.maximum_known_bounds)}",
+        "  known map extent vs world bounds "
+        f"(x {arguments.outer_bounds[0]:.2f}..{arguments.outer_bounds[2]:.2f}, "
+        f"y {arguments.outer_bounds[1]:.2f}..{arguments.outer_bounds[3]:.2f}): "
+        f"{format_wall_overshoot(regression.maximum_known_bounds, arguments.outer_bounds)}",
         flush=True,
     )
     print(
@@ -836,7 +946,9 @@ def evaluate(regression, arguments):
 def main():
     arguments = parse_arguments(remove_ros_args(sys.argv)[1:])
     rclpy.init()
-    regression = ExplorationRegression()
+    regression = ExplorationRegression(
+        (arguments.spawn_x, arguments.spawn_y, arguments.spawn_yaw)
+    )
     deadline = time.monotonic() + arguments.wall_timeout
     verdict = FAIL
     interrupted = False

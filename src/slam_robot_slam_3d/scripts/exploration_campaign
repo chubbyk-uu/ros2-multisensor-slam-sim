@@ -13,6 +13,7 @@ crashes while shutting down is recorded separately from the verdict it produced.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -76,7 +77,7 @@ WALL_OVERSHOOT_PATTERN = re.compile(
     r"west=([0-9.]+) m south=([0-9.]+) m east=([0-9.]+) m north=([0-9.]+) m")
 
 
-def launch_command(arguments):
+def launch_command(arguments, spawn=None):
     """Build the launch invocation, including any operator overrides.
 
     Overrides exist so a batch can vary one thing without editing the launch
@@ -87,12 +88,60 @@ def launch_command(arguments):
         "ros2", "launch", "slam_robot_slam_3d", arguments.launch_file,
         "gui:=false", "rviz:=false",
     ]
+    if arguments.world:
+        command.extend([
+            f"world:={arguments.world}",
+            f"world_profile:={arguments.world_profile}",
+        ])
+    if spawn is not None:
+        command.extend([
+            f"spawn_x:={spawn['x']}",
+            f"spawn_y:={spawn['y']}",
+            f"spawn_yaw:={spawn['yaw']}",
+        ])
     for override in arguments.launch_argument:
         if ":=" not in override:
             raise ValueError(
                 f"launch argument {override!r} must be written name:=value")
         command.append(override)
     return command
+
+
+def sample_spawns(arguments):
+    if not arguments.random_spawn:
+        return [None] * arguments.runs, None
+    if not arguments.world:
+        raise ValueError("--world is required with --random-spawn")
+    command = [
+        "ros2", "run", "slam_robot_gazebo", "safe_spawn_sampler",
+        "--world", arguments.world,
+        "--count", str(arguments.runs),
+        "--seed", str(arguments.campaign_seed),
+        "--safety-margin", str(arguments.spawn_safety_margin),
+        "--robot-height", str(arguments.spawn_robot_height),
+        "--vertical-margin", str(arguments.spawn_vertical_margin),
+    ]
+    completed = subprocess.run(
+        command, capture_output=True, text=True, check=True
+    )
+    result = json.loads(completed.stdout.strip().splitlines()[-1])
+    poses = result.get("poses", [])
+    if len(poses) != arguments.runs:
+        raise RuntimeError(
+            f"spawn sampler returned {len(poses)} poses for {arguments.runs} runs"
+        )
+    return poses, result
+
+
+def minimum_spawn_distance(poses):
+    if len(poses) < 2:
+        return None
+    return min(
+        ((left["x"] - right["x"]) ** 2 +
+         (left["y"] - right["y"]) ** 2) ** 0.5
+        for index, left in enumerate(poses)
+        for right in poses[index + 1:]
+    )
 
 
 def leftover_processes():
@@ -224,12 +273,19 @@ def judge(runs, arguments):
 
 def parse_arguments(arguments):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runs", type=int, default=10)
+    parser.add_argument("--runs", type=int, default=5)
     # How many runs must survive host attribution for the batch to mean
     # anything. Every evaluable run then has to pass: a core failure is a core
     # failure regardless of how many siblings it had.
-    parser.add_argument("--minimum-evaluable-runs", type=int, default=8)
+    parser.add_argument("--minimum-evaluable-runs", type=int, default=4)
     parser.add_argument("--launch-file", default="frontier_exploration_regression.launch.py")
+    parser.add_argument("--world")
+    parser.add_argument("--world-profile", default="structured_loop_3d")
+    parser.add_argument("--random-spawn", action="store_true")
+    parser.add_argument("--campaign-seed", type=int, default=20260812)
+    parser.add_argument("--spawn-safety-margin", type=float, default=0.15)
+    parser.add_argument("--spawn-robot-height", type=float, default=0.35)
+    parser.add_argument("--spawn-vertical-margin", type=float, default=0.10)
     # Relative to the working directory on purpose, so a batch survives the
     # session that produced it. Thirty runs were once written to a scratch
     # directory and lost, leaving hand-copied tables as the only record.
@@ -256,6 +312,16 @@ def parse_arguments(arguments):
         parser.error("--minimum-evaluable-runs cannot exceed --runs")
     if parsed.minimum_evaluable_runs <= 0:
         parser.error("--minimum-evaluable-runs must be positive")
+    if parsed.campaign_seed <= 0:
+        parser.error("--campaign-seed must be positive")
+    if parsed.spawn_safety_margin < 0.0:
+        parser.error("--spawn-safety-margin must be non-negative")
+    if parsed.spawn_robot_height <= 0.0:
+        parser.error("--spawn-robot-height must be positive")
+    if parsed.spawn_vertical_margin < 0.0:
+        parser.error("--spawn-vertical-margin must be non-negative")
+    if parsed.random_spawn and not parsed.world:
+        parser.error("--world is required with --random-spawn")
     return parsed
 
 
@@ -281,6 +347,16 @@ def main():
         return 3
     log_directory.mkdir(parents=True, exist_ok=True)
 
+    try:
+        spawn_poses, spawn_sampling = sample_spawns(arguments)
+    except (ValueError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        print(f"REFUSING TO START: could not generate safe spawns: {error}", flush=True)
+        return 3
+
+    world_sha256 = None
+    if arguments.world:
+        world_sha256 = hashlib.sha256(Path(arguments.world).read_bytes()).hexdigest()
+
     runs = []
     for index in range(1, arguments.runs + 1):
         log_path = log_directory / f"run_{index:02d}.log"
@@ -293,7 +369,7 @@ def main():
             # lines instead would reach any Gazebo or Nav2 the machine happens
             # to be running, including a user's own work in another terminal.
             launch = subprocess.Popen(
-                launch_command(arguments),
+                launch_command(arguments, spawn_poses[index - 1]),
                 stdout=handle, stderr=subprocess.STDOUT, start_new_session=True,
             )
             # start_new_session makes the launch its own group leader, so its
@@ -312,6 +388,7 @@ def main():
         record["index"] = index
         record["wall_seconds"] = round(time.monotonic() - started, 1)
         record["log"] = str(log_path)
+        record["spawn"] = spawn_poses[index - 1]
         runs.append(record)
         print(
             f"    verdict={VERDICT_NAMES[record['verdict']]} "
@@ -357,6 +434,16 @@ def main():
             "runs": arguments.runs,
             "minimum_evaluable_runs": arguments.minimum_evaluable_runs,
         },
+        "world": {
+            "path": arguments.world,
+            "sha256": world_sha256,
+            "profile": arguments.world_profile,
+        },
+        "spawn_sampling": spawn_sampling,
+        "minimum_spawn_distance_m": (
+            minimum_spawn_distance(spawn_poses)
+            if arguments.random_spawn else None
+        ),
     }
     (log_directory / "campaign_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")

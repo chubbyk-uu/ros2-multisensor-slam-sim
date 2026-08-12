@@ -38,6 +38,35 @@ def test_map_bounds_tracks_only_selected_cells_in_world_coordinates():
     assert MODULE.bounds_height((1.5, -2.0, 2.5, -1.0)) == 1.0
 
 
+def test_map_bounds_applies_random_spawn_translation_and_yaw():
+    origin = type(
+        "Origin", (), {"position": type("Point", (), {"x": 0.0, "y": 0.0})()}
+    )()
+    message = type(
+        "Grid", (), {
+            "info": type(
+                "Info", (), {
+                    "width": 2, "height": 1, "resolution": 1.0, "origin": origin
+                }
+            )(),
+            "data": [0, 0],
+        }
+    )()
+
+    bounds = MODULE.map_bounds(
+        message, lambda value: value == 0, (10.0, 20.0, math.pi / 2.0)
+    )
+
+    assert bounds == pytest.approx((9.0, 20.0, 10.0, 22.0))
+
+
+def test_each_target_world_has_a_profile():
+    for name in ("structured_loop_3d", "slam_world", "large_warehouse"):
+        profile = MODULE.load_world_profile(name)
+        assert profile["world_file"] == f"{name}.sdf"
+        assert len(profile["outer_bounds"]) == 4
+
+
 def test_default_acceptance_requires_motion_growth_and_success():
     arguments = MODULE.parse_arguments([])
     assert arguments.minimum_successful_goals == 1
