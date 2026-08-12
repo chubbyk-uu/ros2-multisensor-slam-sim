@@ -68,6 +68,8 @@ def resolve_spawn(context):
         context.perform_substitution(LaunchConfiguration("spawn_robot_height")),
         "--vertical-margin",
         context.perform_substitution(LaunchConfiguration("spawn_vertical_margin")),
+        "--minimum-separation",
+        context.perform_substitution(LaunchConfiguration("spawn_minimum_separation")),
     ]
     completed = subprocess.run(
         command, check=True, capture_output=True, text=True, timeout=30.0
@@ -171,6 +173,9 @@ def generate_launch_description():
             # extra 0.10 m keeps random spawns clear of low overhead geometry.
             DeclareLaunchArgument("spawn_robot_height", default_value="0.35"),
             DeclareLaunchArgument("spawn_vertical_margin", default_value="0.10"),
+            # Only meaningful for a batch drawing several poses at once; a
+            # single interactive spawn has nothing to be separated from.
+            DeclareLaunchArgument("spawn_minimum_separation", default_value="2.0"),
             DeclareLaunchArgument("spawn_x", default_value="0.0"),
             DeclareLaunchArgument("spawn_y", default_value="0.0"),
             DeclareLaunchArgument("spawn_yaw", default_value="0.0"),

@@ -282,6 +282,7 @@ def test_spawn_pose_and_world_reach_the_launch_command():
 def random_spawn_arguments():
     return MODULE.parse_arguments([
         "--random-spawn", "--world", "/tmp/structured_loop_3d.sdf",
+        "--world-profile", "structured_loop_3d",
         "--runs", "2", "--minimum-evaluable-runs", "2",
     ])
 
@@ -386,7 +387,8 @@ def test_strict_mode_reaches_the_sampler_only_when_asked(monkeypatch):
     assert "--reject-non-static" not in seen[-1]
 
     strict = MODULE.parse_arguments([
-        "--random-spawn", "--world", "/tmp/w.sdf", "--runs", "2",
+        "--random-spawn", "--world", "/tmp/w.sdf",
+        "--world-profile", "slam_world", "--runs", "2",
         "--minimum-evaluable-runs", "2", "--reject-non-static",
     ])
     MODULE.sample_spawns(strict)
@@ -397,3 +399,37 @@ def test_a_schema_2_record_no_longer_satisfies_the_campaign():
     # It carried the parameters but not the non-static policy, so it cannot say
     # whether the world held anything the sampler could only approximate.
     assert MODULE.MINIMUM_SPAWN_SCHEMA_VERSION == 3
+
+
+def test_a_world_and_its_profile_must_travel_together():
+    # A profile alone was silently discarded while the default world ran.
+    with pytest.raises(SystemExit):
+        MODULE.parse_arguments(["--world-profile", "large_warehouse"])
+    # A world alone is the more dangerous half: it would have been scored
+    # against the structured world's gates.
+    with pytest.raises(SystemExit):
+        MODULE.parse_arguments(["--world", "/tmp/large_warehouse.sdf"])
+    MODULE.parse_arguments([
+        "--world", "/tmp/large_warehouse.sdf", "--world-profile", "large_warehouse"])
+
+
+def test_minimum_separation_reaches_the_sampler(monkeypatch):
+    seen = []
+
+    def fake_run(command, **kwargs):
+        seen.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps({
+            "schema_version": 3, "seed": 5, "poses": TWO_POSES,
+            "parameters": {"safety_margin": 0.15},
+            "sampling_bounds": {"minimum_x": 0.0},
+        }), stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+    MODULE.sample_spawns(MODULE.parse_arguments([
+        "--random-spawn", "--world", "/tmp/w.sdf", "--world-profile", "slam_world",
+        "--runs", "2", "--minimum-evaluable-runs", "2",
+        "--spawn-minimum-separation", "3.5",
+    ]))
+
+    assert "--minimum-separation" in seen[-1]
+    assert seen[-1][seen[-1].index("--minimum-separation") + 1] == "3.5"

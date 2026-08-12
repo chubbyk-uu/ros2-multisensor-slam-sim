@@ -160,6 +160,7 @@ def sample_spawns(arguments):
         "--safety-margin", str(arguments.spawn_safety_margin),
         "--robot-height", str(arguments.spawn_robot_height),
         "--vertical-margin", str(arguments.spawn_vertical_margin),
+        "--minimum-separation", str(arguments.spawn_minimum_separation),
     ]
     if arguments.reject_non_static:
         # A formal batch can afford to insist. Every acceptance world is fully
@@ -341,12 +342,20 @@ def parse_arguments(arguments):
     parser.add_argument("--minimum-evaluable-runs", type=int, default=4)
     parser.add_argument("--launch-file", default="frontier_exploration_regression.launch.py")
     parser.add_argument("--world")
-    parser.add_argument("--world-profile", default="structured_loop_3d")
+    # No default. The two must travel together: a profile alone was silently
+    # discarded while the default world ran, and a world alone would have been
+    # scored against another world's gates, which is the more dangerous half of
+    # the same mistake.
+    parser.add_argument("--world-profile")
     parser.add_argument("--random-spawn", action="store_true")
     parser.add_argument("--campaign-seed", type=int, default=20260812)
     parser.add_argument("--spawn-safety-margin", type=float, default=0.15)
     parser.add_argument("--spawn-robot-height", type=float, default=0.35)
     parser.add_argument("--spawn-vertical-margin", type=float, default=0.10)
+    # Exposed because the right spread depends on the world: 2 m between five
+    # poses is generous in a 26 m corridor and barely a spread in a 12 x 10 m
+    # room.
+    parser.add_argument("--spawn-minimum-separation", type=float, default=2.0)
     parser.add_argument("--reject-non-static", action="store_true")
     # Relative to the working directory on purpose, so a batch survives the
     # session that produced it. Thirty runs were once written to a scratch
@@ -384,6 +393,13 @@ def parse_arguments(arguments):
         parser.error("--spawn-vertical-margin must be non-negative")
     if parsed.random_spawn and not parsed.world:
         parser.error("--world is required with --random-spawn")
+    if bool(parsed.world) != bool(parsed.world_profile):
+        parser.error(
+            "--world and --world-profile must be given together: the profile "
+            "carries this world's acceptance gates, and either one alone is "
+            "silently scored against the other world's")
+    if parsed.spawn_minimum_separation < 0.0:
+        parser.error("--spawn-minimum-separation must be non-negative")
     return parsed
 
 
