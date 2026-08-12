@@ -343,3 +343,28 @@ def test_source_revision_locates_the_tree_without_claiming_to_prove_it():
     if revision["commit"] is not None:
         assert len(revision["commit"]) == 40
         assert isinstance(revision["dirty"], bool)
+
+
+FAULT_RUN = f"""\
+{PREFIX} RESULT frontier exploration
+{PREFIX}   exploration fault: class=dependency_lost code=nav2_runtime_lost \
+error_level=yes reason=Nav2 stopped accepting goals after the run had started
+{PREFIX}   VERDICT INFRA_UNSTABLE
+"""
+
+
+def test_a_dependency_fault_names_the_code_in_the_summary():
+    record = MODULE.parse_run(FAULT_RUN, 2)
+
+    assert record["verdict"] == MODULE.INFRA_UNSTABLE
+    # Which dependency, not just that one failed. A batch read months later
+    # cannot tell a Nav2 startup race from a mid-run loss without this.
+    assert record["exploration_fault_class"] == "dependency_lost"
+    assert record["exploration_fault_code"] == "nav2_runtime_lost"
+
+
+def test_a_healthy_run_records_no_fault():
+    record = MODULE.parse_run(PASSING_RUN, 0)
+
+    assert record["exploration_fault_class"] is None
+    assert record["exploration_fault_code"] is None

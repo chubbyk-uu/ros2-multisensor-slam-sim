@@ -10,7 +10,7 @@ import time
 from collections import deque
 
 from ament_index_python.packages import get_package_share_directory
-from diagnostic_msgs.msg import DiagnosticArray
+from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus
 from nav2_msgs.msg import CollisionMonitorState
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rcl_interfaces.msg import Log
@@ -242,6 +242,10 @@ class ExplorationRegression(Node):
             parameter_overrides=[Parameter("use_sim_time", value=True)],
         )
         self.complete = False
+        self.failure_class = ""
+        self.failure_code = ""
+        self.failure_reason = ""
+        self.failure_level_error = False
         self.world_from_map = world_from_map
         self.seen_active_exploration = False
         self.latest_free_cells = 0
@@ -422,6 +426,18 @@ class ExplorationRegression(Node):
                 self.completion_reason = values.get(
                     "completion_reason", self.completion_reason
                 )
+                # Read the classification, never the prose. failure_reason is
+                # written for people and would put the verdict at the mercy of
+                # a reworded sentence; the level alone cannot say whether the
+                # fault was the algorithm's or the machine's.
+                failure_class = values.get("failure_class", "")
+                if failure_class and not self.failure_class:
+                    self.failure_class = failure_class
+                    self.failure_code = values.get("failure_code", "")
+                    self.failure_reason = values.get("failure_reason", "")
+                    self.failure_level_error = (
+                        status.level == DiagnosticStatus.ERROR
+                    )
             elif status.name == "custom_slam_3d/scan_to_map_front_end":
                 self.probability_unknown_cells = int(
                     values.get("occupancy_probability_unknown_cells", 0)
@@ -738,7 +754,19 @@ NAVIGATION_BEHAVIOUR_CHECKS = (
 )
 
 
-def classify(checks, host_healthy):
+# The explorer's closed vocabulary, pinned here because the verdict depends on
+# it. Anything outside this set is deliberately treated as a core failure: an
+# unrecognised fault must not be able to excuse the algorithm.
+FAILURE_CLASS_DEPENDENCY_LOST = "dependency_lost"
+FAILURE_CLASS_INTERNAL = "internal"
+FAILURE_CODES = (
+    "nav2_startup_timeout",
+    "nav2_runtime_lost",
+    "internal_state_error",
+)
+
+
+def classify(checks, host_healthy, failure_class=None):
     """Split "the algorithm regressed" from "this host was starved".
 
     The three outcomes partition every combination, which matters because an
@@ -746,7 +774,17 @@ def classify(checks, host_healthy):
     recorded for every run but only ever *downgrades* a failure to
     INFRA_UNSTABLE; it never turns a clean run into one, so a merely slow host
     cannot consume the campaign's environment budget on its own.
+
+    A declared dependency fault is answered before any check is consulted. It
+    cannot go through the ordinary path: every check would fail for want of a
+    map that the dead dependency stopped producing, and core failures are
+    evaluated first, so the run would be recorded as an algorithm regression
+    for something the algorithm never did.
     """
+    if failure_class == FAILURE_CLASS_DEPENDENCY_LOST:
+        return INFRA_UNSTABLE
+    if failure_class is not None:
+        return FAIL
     core_failures = [
         name for name, passed in checks.items()
         if not passed and name not in NAVIGATION_BEHAVIOUR_CHECKS
@@ -942,7 +980,15 @@ def evaluate(regression, arguments):
         print(f"  {'PASS' if passed else 'FAIL'} {name}", flush=True)
     for message in regression.critical_logs:
         print(f"  critical log: {message}", flush=True)
-    verdict = classify(checks, host_healthy)
+    if regression.failure_class:
+        print(
+            f"  exploration fault: class={regression.failure_class} "
+            f"code={regression.failure_code} "
+            f"error_level={'yes' if regression.failure_level_error else 'no'} "
+            f"reason={regression.failure_reason}",
+            flush=True,
+        )
+    verdict = classify(checks, host_healthy, regression.failure_class or None)
     print(
         f"  VERDICT {['PASS', 'FAIL', 'INFRA_UNSTABLE'][verdict]}",
         flush=True,
@@ -960,7 +1006,10 @@ def main():
     verdict = FAIL
     interrupted = False
     try:
-        while rclpy.ok() and not regression.complete:
+        # A declared fault ends the run now. Waiting out the remaining budget
+        # would buy nothing -- the dependency that stopped is the one producing
+        # the map -- and would spend the campaign's wall time proving it.
+        while rclpy.ok() and not regression.complete and not regression.failure_class:
             if time.monotonic() >= deadline:
                 break
             regression.note_sim_time(

@@ -418,3 +418,65 @@ def test_front_end_diagnostics_are_recorded_separately_from_explorer_state():
         regression.loop_verified_candidates,
         regression.loop_accepted_candidates,
     ) == (100, 80, 50, 30, 20, 7)
+
+
+def failing_checks():
+    """Return the checks a run reports after its dependency died."""
+    return {
+        "exploration_completed": False,
+        "known_free_area_grew": False,
+        "final_known_area": False,
+        "robot_explored_physically": False,
+        "collision_monitor_budget": True,
+        "navigation_recovery_budget": True,
+    }
+
+
+def test_a_dependency_fault_is_attributed_to_the_host_not_the_algorithm():
+    # Every check fails, because the dependency that stopped is the one
+    # producing the map. Going through the ordinary path would find core
+    # failures first and record an algorithm regression for something the
+    # algorithm never did.
+    verdict = MODULE.classify(
+        failing_checks(), True, MODULE.FAILURE_CLASS_DEPENDENCY_LOST
+    )
+
+    assert verdict == MODULE.INFRA_UNSTABLE
+
+
+def test_an_internal_fault_stays_a_core_failure():
+    verdict = MODULE.classify(
+        failing_checks(), True, MODULE.FAILURE_CLASS_INTERNAL
+    )
+
+    assert verdict == MODULE.FAIL
+
+
+def test_an_unrecognised_fault_class_does_not_excuse_the_algorithm():
+    # The safe direction. A class this file does not know about is far more
+    # likely to be a typo or a rename than a new kind of host failure, and
+    # silently converting it to INFRA_UNSTABLE would hide real regressions.
+    verdict = MODULE.classify(failing_checks(), True, "something_new")
+
+    assert verdict == MODULE.FAIL
+
+
+def test_no_fault_leaves_the_ordinary_rules_untouched():
+    passing = dict.fromkeys(failing_checks(), True)
+
+    assert MODULE.classify(passing, True, None) == MODULE.PASS
+    assert MODULE.classify(failing_checks(), True, None) == MODULE.FAIL
+
+
+def test_the_failure_vocabulary_matches_the_explorer():
+    # Pinned against the C++ constants. These two files have to agree for the
+    # verdict to mean anything, and nothing in the build makes them.
+    header = (
+        Path(__file__).parents[2] / "slam_robot_navigation" / "include"
+        / "slam_robot_navigation" / "navigation_availability.hpp"
+    ).read_text()
+
+    assert f'"{MODULE.FAILURE_CLASS_DEPENDENCY_LOST}"' in header
+    assert f'"{MODULE.FAILURE_CLASS_INTERNAL}"' in header
+    for code in MODULE.FAILURE_CODES:
+        assert f'"{code}"' in header

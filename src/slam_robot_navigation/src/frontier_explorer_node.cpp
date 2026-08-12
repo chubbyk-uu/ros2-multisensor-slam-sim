@@ -86,6 +86,13 @@ public:
     navigation_timeout_ = declare_parameter<double>("navigation_timeout", 120.0);
     action_response_timeout_ =
       declare_parameter<double>("action_response_timeout", 15.0);
+    // How long Nav2 may stay unable to take a goal before the run is called a
+    // dependency failure. Startup is generous because a lifecycle activation
+    // on a loaded host is a legitimate wait and its rejections are expected;
+    // runtime is short because a chain that was already carrying goals and
+    // stopped is a fault, and absorbing it silently wastes the whole budget.
+    nav2_startup_grace_ = declare_parameter<double>("nav2_startup_grace", 30.0);
+    nav2_runtime_grace_ = declare_parameter<double>("nav2_runtime_grace", 5.0);
     const int minimum_known_free_cells =
       declare_parameter<int>("minimum_known_free_cells", 100);
     const int completion_empty_cycles =
@@ -112,6 +119,8 @@ public:
       !std::isfinite(blacklist_duration_) || blacklist_duration_ <= 0.0 ||
       !std::isfinite(navigation_timeout_) || navigation_timeout_ <= 0.0 ||
       !std::isfinite(action_response_timeout_) || action_response_timeout_ <= 0.0 ||
+      !std::isfinite(nav2_startup_grace_) || nav2_startup_grace_ <= 0.0 ||
+      !std::isfinite(nav2_runtime_grace_) || nav2_runtime_grace_ <= 0.0 ||
       !std::isfinite(completion_map_stale_timeout_) ||
       completion_map_stale_timeout_ <= 0.0 ||
       map_topic_.empty() || (save_snapshot_on_completion_ && snapshot_service_.empty()) ||
@@ -294,16 +303,19 @@ private:
       publishDiagnostics();
       return;
     }
-    const auto navigation_status = navigation_availability_.observe(
-      compute_path_client_->action_server_is_ready(),
-      navigate_client_->action_server_is_ready());
-    if (navigation_status == NavigationAvailability::Status::kLost) {
-      abortExploration("Nav2 action servers became unavailable");
-      return;
-    }
-    if (navigation_status == NavigationAvailability::Status::kWaiting) {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "Waiting for Nav2 action servers");
-      publishDiagnostics();
+    // Only once the explorer has actually asked Nav2 for something. Before
+    // that there is nothing to be unavailable for, and a budget started at the
+    // first map would charge SLAM's initialisation to Nav2.
+    if (navigation_needed_ &&
+      navigation_availability_.observe(
+        navigationServersDiscovered(), now, navigationGrace()) ==
+      NavigationAvailability::Status::kLost)
+    {
+      abortExploration(
+        kFailureClassDependencyLost, navigation_availability_.failureCode(),
+        navigation_availability_.everOperational() ?
+        "Nav2 stopped accepting goals after the run had started" :
+        "Nav2 never accepted a navigation goal");
       return;
     }
     if (state_ == State::kNavigating) {
@@ -385,6 +397,14 @@ private:
       return;
     }
     empty_frontiers_.observeFrontier();
+    // Map, robot pose and a reachable frontier: this is the first moment the
+    // explorer genuinely needs Nav2, so this is where its budget starts.
+    navigation_needed_ = true;
+    if (!navigationServersDiscovered()) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "Waiting for Nav2 action servers");
+      publishDiagnostics();
+      return;
+    }
     if (detected.size() > evaluation_candidate_limit_) {
       detected.resize(evaluation_candidate_limit_);
     }
@@ -460,11 +480,18 @@ private:
           return;
         }
         if (!handle) {
+          // A rejection is a statement about the server, not about this
+          // frontier: Nav2 rejects while it is configured but not yet active.
+          // Blacklisting here would retire a good boundary for an
+          // infrastructure state, so the candidate is put back and retried
+          // until the availability budget runs out.
           active_planning_candidate_.reset();
           planning_deadline_.disarm();
-          navigation_availability_.goalRejected();
-          abortExploration("Nav2 rejected a frontier path request");
+          if (planning_index_ > 0U) {--planning_index_;}
+          navigation_availability_.observeGoalRejected();
+          path_request_pending_ = true;
         } else {
+          navigation_availability_.observePlannerGoalAccepted();
           std::lock_guard<std::mutex> lock(action_handle_mutex_);
           compute_goal_handle_ = handle;
         }
@@ -515,8 +542,16 @@ private:
           navigate_goal_handle_ = handle;
         }
         if (!handle) {
-          navigation_availability_.goalRejected();
-          abortExploration("Nav2 rejected a frontier navigation goal");
+          // Same reasoning as the path request: not a failed goal, not a
+          // blacklisted target, just a server that is not accepting yet. Back
+          // to kWaiting so the next cycle re-detects and tries again.
+          navigation_availability_.observeGoalRejected();
+          state_ = State::kWaiting;
+        } else {
+          // The only proof the whole chain is operational. The planner
+          // activates independently of bt_navigator, so a taken path request
+          // says nothing about whether a navigation goal would be taken.
+          navigation_availability_.observeNavigationGoalAccepted();
         }
       };
     options.result_callback = [this, request_id](const NavigateGoalHandle::WrappedResult & result) {
@@ -643,10 +678,31 @@ private:
     requestSnapshotSave();
   }
 
-  void abortExploration(const char * reason)
+  bool navigationServersDiscovered() const
+  {
+    return compute_path_client_->action_server_is_ready() &&
+           navigate_client_->action_server_is_ready();
+  }
+
+  // Two budgets, because the two situations have different natural lengths.
+  // Waiting for a lifecycle activation on a loaded host is a startup cost and
+  // deserves room; losing a chain that was already carrying goals is a fault
+  // and should be called quickly rather than absorbed for half a minute.
+  std::chrono::steady_clock::duration navigationGrace() const
+  {
+    return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double>(
+        navigation_availability_.everOperational() ?
+        nav2_runtime_grace_ : nav2_startup_grace_));
+  }
+
+  void abortExploration(
+    const char * failure_class, const char * failure_code, const char * reason)
   {
     if (state_ == State::kFault) {return;}
     state_ = State::kFault;
+    failure_class_ = failure_class;
+    failure_code_ = failure_code;
     failure_reason_ = reason;
     NavigateGoalHandle::SharedPtr navigate_handle;
     ComputeGoalHandle::SharedPtr compute_handle;
@@ -666,17 +722,21 @@ private:
     navigation_deadline_.disarm();
     planning_deadline_.disarm();
     cancellation_deadline_.disarm();
-    publishCompletion(false);
+    // Deliberately no completion message. Publishing false here would say
+    // "exploration is running", which is what the regression reads it as, so
+    // the abort would extend the run it is meant to end. The fault travels on
+    // the diagnostics instead, where it carries its own classification.
     publishStatusMarker(
       "EXPLORATION\nABORTED\nCHECK THE TERMINAL", 1.0F, 0.1F, 0.1F);
     RCLCPP_ERROR(
       get_logger(),
       "\n============================================================\n"
       "EXPLORATION ABORTED\n"
+      "Class: %s  Code: %s\n"
       "Reason: %s\n"
       "No completion message was published and no snapshot was saved.\n"
       "============================================================",
-      reason);
+      failure_class, failure_code, reason);
     publishDiagnostics();
   }
 
@@ -762,7 +822,16 @@ private:
       keyValue("last_selection_scores", last_selection_scores_),
       keyValue("selection_decisions", std::to_string(selection_decisions_)),
       keyValue("completion_reason", completion_reason_),
-      keyValue("failure_reason", failure_reason_)};
+      // Classification first, prose second. The regression reads only the two
+      // closed-vocabulary fields; failure_reason stays for people.
+      keyValue("failure_class", failure_class_),
+      keyValue("failure_code", failure_code_),
+      keyValue("failure_reason", failure_reason_),
+      keyValue(
+        "nav2_rejected_goals",
+        std::to_string(navigation_availability_.rejectedGoals())),
+      keyValue(
+        "nav2_operational", navigation_availability_.everOperational() ? "true" : "false")};
     array.status.push_back(std::move(status));
     diagnostics_publisher_->publish(array);
   }
@@ -832,7 +901,12 @@ private:
   std::string map_topic_{"/map"};
   std::string snapshot_service_{"/scan_to_map_odometry_3d/save_snapshot"};
   std::string completion_reason_;
+  std::string failure_class_;
+  std::string failure_code_;
   std::string failure_reason_;
+  double nav2_startup_grace_{30.0};
+  double nav2_runtime_grace_{5.0};
+  bool navigation_needed_{false};
   bool save_snapshot_on_completion_{true};
   bool running_marker_published_{false};
   State state_{State::kWaiting};

@@ -75,6 +75,12 @@ MEASUREMENT_PATTERNS = {
         r"map frame error:.*?yaw peak=([0-9.]+) deg",
 }
 HOST_HEALTHY_PATTERN = re.compile(r"healthy=(yes|no)")
+# Carried into the summary so a batch says which dependency failed, not just
+# that something did. The closed vocabulary is the explorer's; matching the
+# codes rather than the prose keeps a reworded message from silently dropping
+# the attribution.
+EXPLORATION_FAULT_PATTERN = re.compile(
+    r"exploration fault: class=(\w+) code=(\w+)")
 WALL_OVERSHOOT_PATTERN = re.compile(
     r"west=([0-9.]+) m south=([0-9.]+) m east=([0-9.]+) m north=([0-9.]+) m")
 
@@ -276,6 +282,9 @@ def parse_run(text, exit_code, timed_out=False, simulator_died=False):
         record[name] = float(found.group(1)) if found else None
     healthy = HOST_HEALTHY_PATTERN.search(text)
     record["host_healthy"] = None if healthy is None else healthy.group(1) == "yes"
+    fault = EXPLORATION_FAULT_PATTERN.search(text)
+    record["exploration_fault_class"] = None if fault is None else fault.group(1)
+    record["exploration_fault_code"] = None if fault is None else fault.group(2)
     overshoot = WALL_OVERSHOOT_PATTERN.search(text)
     # Kept per side. The one map distortion seen so far pushed north and south
     # out together, which a single width or height cannot distinguish from one
