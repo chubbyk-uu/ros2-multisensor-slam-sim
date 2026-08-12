@@ -243,6 +243,79 @@ TEST(SafeSpawnGrid, AReferencePointOffEveryFloorIsRefusedWithItsOwnReason)
   EXPECT_THROW(SafeSpawnGrid(std::move(geometry), parameters), std::runtime_error);
 }
 
+ParsedWorldGeometry raisedFloorWorld(double floor_height)
+{
+  ParsedWorldGeometry geometry;
+  geometry.world_name = "raised";
+  geometry.support_candidates.push_back(
+    flatSlab("deck", {0.0, 0.0}, 10.0, 10.0, floor_height, 0.10));
+  geometry.sampling_bounds = {-5.0, -5.0, 5.0, 5.0};
+  return geometry;
+}
+
+TEST(SafeSpawnGrid, AWallStandingOnARaisedFloorStillBlocks)
+{
+  // The silent failure: the swept volume used to be an absolute 0..0.48 m
+  // band, so a wall rising from a floor at 0.5 m had minimum_z 0.5, never
+  // overlapped it, and blocked nothing. The flood fill then covered the whole
+  // world and the sampler reported it all as safe.
+  auto geometry = raisedFloorWorld(0.5);
+  geometry.obstacles.push_back({
+        FootprintType::kRectangle, "wall", {2.0, 0.0}, 0.0, 1.0, 1.0,
+        0.0, 0.5, 3.0, false});
+  SafeSpawnGrid grid(std::move(geometry));
+
+  EXPECT_DOUBLE_EQ(grid.referenceHeight(), 0.5);
+  EXPECT_FALSE(grid.isSafe(2.0, 0.0));
+  EXPECT_FALSE(grid.isSafe(2.0 + 0.5 + 0.40, 0.0));
+  EXPECT_TRUE(grid.isSafe(2.0 + 0.5 + 0.60, 0.0));
+}
+
+TEST(SafeSpawnGrid, TheSpawnLiftIsMeasuredFromTheFloorNotTheWorldOrigin)
+{
+  // Creating the robot at an absolute 0.03 m would drop it 0.47 m below a
+  // floor at 0.5 m.
+  const SafeSpawnGrid grid(raisedFloorWorld(0.5));
+
+  const auto poses = grid.sample(1U, 11U);
+  ASSERT_EQ(poses.size(), 1U);
+  EXPECT_DOUBLE_EQ(poses.front().z, 0.53);
+}
+
+TEST(SafeSpawnGrid, AHeaderAboveARaisedFloorIsStillDrivenUnder)
+{
+  // The offset must move both ends of the band. Moving only the bottom would
+  // make everything overhead start blocking.
+  auto geometry = raisedFloorWorld(0.5);
+  geometry.obstacles.push_back({
+        FootprintType::kRectangle, "header", {2.0, 0.0}, 0.0, 1.0, 1.0,
+        0.0, 1.05, 1.25, false});
+  const SafeSpawnGrid grid(std::move(geometry));
+
+  EXPECT_TRUE(grid.isSafe(2.0, 0.0));
+}
+
+TEST(SafeSpawnGrid, AFloorAtTheOriginIsUnaffectedByTheOffset)
+{
+  // The identity case. Every measurement in docs/performance.md was taken
+  // with the reference plane at zero, so the offset has to be exactly nothing
+  // there or it silently invalidates all of them.
+  const std::filesystem::path directory(TEST_WORLD_DIRECTORY);
+  const std::pair<const char *, std::size_t> expected[] = {
+    {"structured_loop_3d.sdf", 43396U},
+    {"slam_world.sdf", 25030U},
+    {"large_warehouse.sdf", 160567U},
+  };
+  for (const auto & [name, cells] : expected) {
+    SCOPED_TRACE(name);
+    const SafeSpawnGrid grid(
+      SdfWorldGeometryParser{}.parse((directory / name).string()));
+    EXPECT_DOUBLE_EQ(grid.referenceHeight(), 0.0);
+    EXPECT_EQ(grid.safeCellCount(), cells);
+    EXPECT_DOUBLE_EQ(grid.sample(1U, 20260812U).front().z, 0.03);
+  }
+}
+
 TEST(SafeSpawnGrid, AVastGroundPlaneDoesNotDecideTheGridSize)
 {
   // slam_world's ground is 100 x 100 m around a 12 x 10 m interior, which

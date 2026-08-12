@@ -153,11 +153,20 @@ SafeSpawnGrid::SafeSpawnGrid(
   }
 
   safe_cells_.assign(width_ * height_, 0U);
-  // Gazebo creates base_footprint at spawn_z before contacts settle it onto
-  // the support. Include that transient lift so a pose cannot be declared
-  // safe and then clip a header during the first physics step.
-  const double swept_height = parameters_.spawn_z + parameters_.robot_height +
-    parameters_.vertical_margin;
+  // The robot stands on the floor, not on z=0. Both ends of the swept volume
+  // are measured from the reference plane: a world whose ground sits at 0.5 m
+  // used to compare its walls against an absolute 0..0.48 m band, so a wall
+  // rising from the floor had minimum_z 0.5 and blocked nothing at all -- the
+  // flood fill then spread over the whole world in silence. The single-layer
+  // contract makes this a plain offset: every support is at the same height by
+  // construction, so no per-cell bookkeeping is needed.
+  //
+  // Gazebo creates base_footprint at spawn_z above that floor before contacts
+  // settle it. Include that transient lift so a pose cannot be declared safe
+  // and then clip a header during the first physics step.
+  const double swept_bottom = reference_height_;
+  const double swept_top = reference_height_ + parameters_.spawn_z +
+    parameters_.robot_height + parameters_.vertical_margin;
   const double clearance =
     parameters_.robot_circumscribed_radius + parameters_.safety_margin;
   for (std::size_t cell = 0U; cell < safe_cells_.size(); ++cell) {
@@ -169,9 +178,9 @@ SafeSpawnGrid::SafeSpawnGrid(
     const double extra = parameters_.non_static_extra_margin;
     const bool blocked = std::any_of(
       geometry_.obstacles.begin(), geometry_.obstacles.end(),
-      [&point, clearance, swept_height, extra](const auto & obstacle) {
+      [&point, clearance, swept_bottom, swept_top, extra](const auto & obstacle) {
         const bool overlaps_height =
-        obstacle.maximum_z > 0.0 && obstacle.minimum_z < swept_height;
+        obstacle.maximum_z > swept_bottom && obstacle.minimum_z < swept_top;
         // A body that may move gets more room, because its recorded pose is
         // only true at t=0 and the simulator runs before the robot appears.
         const double required = obstacle.dynamic ? clearance + extra : clearance;
@@ -249,7 +258,10 @@ std::vector<SpawnPose> SafeSpawnGrid::sample(
                parameters_.minimum_spawn_separation;
       });
     if (!separated) {continue;}
-    result.push_back({point.x, point.y, parameters_.spawn_z, yaw_distribution(engine)});
+    // Above the floor, not above the world origin.
+    result.push_back(
+      {point.x, point.y, reference_height_ + parameters_.spawn_z,
+        yaw_distribution(engine)});
     if (result.size() == count) {break;}
   }
   if (result.size() != count) {

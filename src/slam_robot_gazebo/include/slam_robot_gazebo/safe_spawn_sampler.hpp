@@ -52,6 +52,8 @@ struct SpawnSamplingParameters
   double vertical_margin{0.10};
   double reference_x{0.0};
   double reference_y{0.0};
+  // Lift above the reference plane, not an absolute height. Gazebo creates
+  // base_footprint here and lets contacts settle it onto the floor.
   double spawn_z{0.03};
   double minimum_spawn_separation{2.0};
   // Applied on top of the ordinary clearance to collision geometry belonging
