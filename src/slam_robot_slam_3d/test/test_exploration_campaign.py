@@ -77,6 +77,14 @@ def test_a_timeout_does_not_excuse_a_verdict_that_was_reported():
     assert record["verdict"] == MODULE.FAIL
 
 
+def test_gazebo_dying_before_a_verdict_is_infrastructure_unstable():
+    text = "[ERROR] [gazebo-1]: process has died [pid 1, exit code 1, cmd 'gz sim']."
+    record = MODULE.parse_run(text, None, simulator_died=True)
+
+    assert record["verdict"] == MODULE.INFRA_UNSTABLE
+    assert record["simulator_died_before_verdict"]
+
+
 def test_launch_overrides_reach_every_run():
     arguments = MODULE.parse_arguments(
         ["-a", "exploration_seed:=0", "-a", "laps:=3"])

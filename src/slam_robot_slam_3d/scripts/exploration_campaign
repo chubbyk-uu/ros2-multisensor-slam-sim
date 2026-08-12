@@ -45,7 +45,9 @@ LEFTOVER_PROCESS_PATTERNS = (
 # tolerate arbitrary leading text rather than anchoring at the line start.
 VERDICT_PATTERN = re.compile(r"VERDICT (PASS|FAIL|INFRA_UNSTABLE)\s*$", re.M)
 FAILED_CHECK_PATTERN = re.compile(r"(?:^|\s)FAIL ([a-z_]+)\s*$", re.M)
-GAZEBO_CRASH_PATTERN = re.compile(r"\[gazebo-\d+\]: process has died.*exit code -\d+")
+GAZEBO_CRASH_PATTERN = re.compile(
+    r"\[gazebo-\d+\]: process has died.*exit code -?\d+"
+)
 
 # Pulled into the summary so a batch can be re-read without the logs and
 # without hand transcription. Documented run tables were previously copied out
@@ -196,7 +198,7 @@ def end_process_group(launch, group, settle_seconds):
             time.sleep(0.2)
 
 
-def parse_run(text, exit_code, timed_out=False):
+def parse_run(text, exit_code, timed_out=False, simulator_died=False):
     """Prefer the reported verdict over the exit code.
 
     They agree in normal operation. When the launch wrapper masks the child's
@@ -214,10 +216,11 @@ def parse_run(text, exit_code, timed_out=False):
     reported = match.group(1) if match else None
     verdict = {v: k for k, v in VERDICT_NAMES.items()}.get(reported)
     if verdict is None:
-        verdict = INFRA_UNSTABLE if timed_out else FAIL
+        verdict = INFRA_UNSTABLE if timed_out or simulator_died else FAIL
     record = {
         "verdict": verdict,
         "launch_timed_out": timed_out,
+        "simulator_died_before_verdict": simulator_died,
         "verdict_reported": reported,
         "exit_code": exit_code,
         "verdict_missing": reported is None,
@@ -363,6 +366,7 @@ def main():
         print(f"=== campaign run {index}/{arguments.runs} -> {log_path}", flush=True)
         started = time.monotonic()
         timed_out = False
+        simulator_died = False
         with open(log_path, "w", encoding="utf-8") as handle:
             # Own session, so this run's simulator and nodes share one process
             # group that can be ended without naming them. Matching on command
@@ -376,15 +380,34 @@ def main():
             # pid is the group id. Saved now because it is still needed after
             # the launch itself has gone.
             group = launch.pid
-            try:
-                completed_returncode = launch.wait(
-                    timeout=arguments.run_timeout_seconds)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                completed_returncode = None
-                end_process_group(launch, group, arguments.settle_seconds)
+            deadline = time.monotonic() + arguments.run_timeout_seconds
+            completed_returncode = None
+            while True:
+                completed_returncode = launch.poll()
+                if completed_returncode is not None:
+                    break
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    end_process_group(launch, group, arguments.settle_seconds)
+                    break
+                current_text = log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                # A dead Gazebo server leaves launch, SLAM and Nav2 alive, so
+                # waiting only for the launch timeout wastes many minutes and
+                # reports a misleading TF failure. Stop immediately unless a
+                # verdict already proves this was only the known teardown
+                # crash after scoring completed.
+                if (GAZEBO_CRASH_PATTERN.search(current_text) and
+                        VERDICT_PATTERN.search(current_text) is None):
+                    simulator_died = True
+                    end_process_group(launch, group, arguments.settle_seconds)
+                    break
+                time.sleep(1.0)
         text = log_path.read_text(encoding="utf-8", errors="replace")
-        record = parse_run(text, completed_returncode, timed_out)
+        record = parse_run(
+            text, completed_returncode, timed_out, simulator_died
+        )
         record["index"] = index
         record["wall_seconds"] = round(time.monotonic() - started, 1)
         record["log"] = str(log_path)
