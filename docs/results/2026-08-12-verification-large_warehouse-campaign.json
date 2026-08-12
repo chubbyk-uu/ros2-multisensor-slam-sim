@@ -1,0 +1,314 @@
+{
+  "core_failures": 0,
+  "criteria": {
+    "minimum_evaluable_runs": 4,
+    "runs": 5
+  },
+  "gazebo_teardown_crashes": 5,
+  "infra_unstable": 0,
+  "minimum_spawn_distance_m": 4.107614879708175,
+  "outcome": "ACCEPTED",
+  "passes": 5,
+  "reason": "5/5 evaluable runs passed, 0 attributed to the host",
+  "runs": [
+    {
+      "completion_wall_s": 434.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "exploration_fault_class": null,
+      "exploration_fault_code": null,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195292.0,
+      "front_end_peak_position_error_m": 0.026,
+      "front_end_peak_yaw_error_deg": 0.173,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 1,
+      "known_bbox_height_m": 19.999,
+      "known_bbox_width_m": 25.982,
+      "launch_timed_out": false,
+      "log": "campaign_logs/verify_large_warehouse_20260812/run_01.log",
+      "loop_accepted_candidates": 1.0,
+      "map_frame_peak_position_error_m": 0.02,
+      "map_frame_peak_yaw_error_deg": 0.123,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 1.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": 3.2750000000000004,
+        "y": -1.9749999999999996,
+        "yaw": 2.246938383424726,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 13.0,
+      "truth_distance_m": 123.575,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 440.1
+    },
+    {
+      "completion_wall_s": 436.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "exploration_fault_class": null,
+      "exploration_fault_code": null,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195319.0,
+      "front_end_peak_position_error_m": 0.031,
+      "front_end_peak_yaw_error_deg": 1.143,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 2,
+      "known_bbox_height_m": 19.975,
+      "known_bbox_width_m": 25.977,
+      "launch_timed_out": false,
+      "log": "campaign_logs/verify_large_warehouse_20260812/run_02.log",
+      "loop_accepted_candidates": 0.0,
+      "map_frame_peak_position_error_m": 0.027,
+      "map_frame_peak_yaw_error_deg": 0.135,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 0.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": -2.875,
+        "y": -0.875,
+        "yaw": -1.8682588292275195,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 13.0,
+      "truth_distance_m": 124.957,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 443.1
+    },
+    {
+      "completion_wall_s": 466.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "exploration_fault_class": null,
+      "exploration_fault_code": null,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195315.0,
+      "front_end_peak_position_error_m": 0.037,
+      "front_end_peak_yaw_error_deg": 1.239,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 3,
+      "known_bbox_height_m": 19.989,
+      "known_bbox_width_m": 25.982,
+      "launch_timed_out": false,
+      "log": "campaign_logs/verify_large_warehouse_20260812/run_03.log",
+      "loop_accepted_candidates": 0.0,
+      "map_frame_peak_position_error_m": 0.029,
+      "map_frame_peak_yaw_error_deg": 0.113,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 0.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": -10.075,
+        "y": -1.8249999999999993,
+        "yaw": -2.0747126499146162,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 14.0,
+      "truth_distance_m": 134.256,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 472.1
+    },
+    {
+      "completion_wall_s": 499.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "exploration_fault_class": null,
+      "exploration_fault_code": null,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195361.0,
+      "front_end_peak_position_error_m": 0.062,
+      "front_end_peak_yaw_error_deg": 1.552,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 4,
+      "known_bbox_height_m": 19.993,
+      "known_bbox_width_m": 25.976,
+      "launch_timed_out": false,
+      "log": "campaign_logs/verify_large_warehouse_20260812/run_04.log",
+      "loop_accepted_candidates": 0.0,
+      "map_frame_peak_position_error_m": 0.045,
+      "map_frame_peak_yaw_error_deg": 0.121,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 0.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": 1.125,
+        "y": 1.5250000000000004,
+        "yaw": 0.2678879933406604,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 11.0,
+      "truth_distance_m": 150.435,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 505.1
+    },
+    {
+      "completion_wall_s": 453.7,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "exploration_fault_class": null,
+      "exploration_fault_code": null,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195363.0,
+      "front_end_peak_position_error_m": 0.023,
+      "front_end_peak_yaw_error_deg": 1.071,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 5,
+      "known_bbox_height_m": 19.989,
+      "known_bbox_width_m": 25.986,
+      "launch_timed_out": false,
+      "log": "campaign_logs/verify_large_warehouse_20260812/run_05.log",
+      "loop_accepted_candidates": 0.0,
+      "map_frame_peak_position_error_m": 0.023,
+      "map_frame_peak_yaw_error_deg": 0.126,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 0.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": -9.625,
+        "y": 4.275,
+        "yaw": -2.0193401584513127,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 14.0,
+      "truth_distance_m": 127.678,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 459.1
+    }
+  ],
+  "source_revision": {
+    "commit": "ee2e57c51f94a7ad4b636804bc31947c7c2f0a86",
+    "dirty": false
+  },
+  "spawn_sampling": {
+    "parameters": {
+      "maximum_grid_cells": 4000000,
+      "minimum_spawn_separation": 2.0,
+      "non_static_extra_margin": 0.25,
+      "reference_x": 0.0,
+      "reference_y": 0.0,
+      "resolution": 0.05,
+      "robot_circumscribed_radius": 0.336,
+      "robot_height": 0.35,
+      "safety_margin": 0.15,
+      "spawn_z": 0.03,
+      "vertical_margin": 0.1
+    },
+    "poses": [
+      {
+        "x": 3.2750000000000004,
+        "y": -1.9749999999999996,
+        "yaw": 2.246938383424726,
+        "z": 0.03
+      },
+      {
+        "x": -2.875,
+        "y": -0.875,
+        "yaw": -1.8682588292275195,
+        "z": 0.03
+      },
+      {
+        "x": -10.075,
+        "y": -1.8249999999999993,
+        "yaw": -2.0747126499146162,
+        "z": 0.03
+      },
+      {
+        "x": 1.125,
+        "y": 1.5250000000000004,
+        "yaw": 0.2678879933406604,
+        "z": 0.03
+      },
+      {
+        "x": -9.625,
+        "y": 4.275,
+        "yaw": -2.0193401584513127,
+        "z": 0.03
+      }
+    ],
+    "safe_cells": 160567,
+    "sampling_bounds": {
+      "maximum_x": 13.9,
+      "maximum_y": 10.9,
+      "minimum_x": -13.9,
+      "minimum_y": -10.9
+    },
+    "schema_version": 3,
+    "seed": 2026081213,
+    "support_resolution": {
+      "demoted_supports": 0,
+      "reference_height": 0.0
+    },
+    "world": "/home/jerry/robot_ws/slam/install/slam_robot_gazebo/share/slam_robot_gazebo/worlds/large_warehouse.sdf",
+    "world_geometry": {
+      "non_static_collisions": 0,
+      "parsed_obstacles": 18,
+      "support_candidates": 1
+    },
+    "world_name": "slam_world",
+    "world_parsing_policy": {
+      "reject_non_static": true
+    }
+  },
+  "world": {
+    "path": "/home/jerry/robot_ws/slam/install/slam_robot_gazebo/share/slam_robot_gazebo/worlds/large_warehouse.sdf",
+    "profile": "large_warehouse",
+    "sha256": "eeaf3fb5b86c15db8a293a09bdd7adfa7921431eb265573256c28d27f93515ff"
+  }
+}
