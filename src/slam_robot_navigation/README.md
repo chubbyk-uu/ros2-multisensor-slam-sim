@@ -95,7 +95,10 @@ transient-local `/frontier_explorer/complete`。`map_topic`、候选数、评分
 3D SLAM 默认在完成时调用快照服务；接 RTAB-Map 时关闭该调用，由 RTAB-Map
 数据库自身负责持久化。
 
-通过 Nav2 路径验证的候选会按最终分数划出顶部区间，再从区间内随机选择目标；
-`selection_random_seed:=0` 每次生成新种子，传入非零种子可复现选择序列，正式
-回归固定使用非零种子。完成时当前终端先显示醒目提示，快照保存成功后再次提示
-可以安全按 `Ctrl+C`；同样的状态以持久 `TEXT_VIEW_FACING` Marker 显示在 RViz。
+节点支持按最终分数划出顶部区间并随机选择，`selection_random_seed:=0` 会生成新
+种子；但项目正式配置的区间宽度为 `0.0`，因此当前总是选择评分最高的可达候选，
+路线随机性由上层安全随机出生提供。完成时当前终端先显示醒目提示，快照保存成功后
+再次提示可以安全按 `Ctrl+C`；同样的状态以持久 `TEXT_VIEW_FACING` Marker 显示在
+RViz。Nav2 action server 在曾经就绪后失活或直接拒绝 goal 时属于运行故障：节点
+进入 `fault`、发布 ERROR 诊断和红色 `EXPLORATION ABORTED`，不拉黑候选、不发布
+完成消息，也不调用快照服务。

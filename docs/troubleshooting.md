@@ -14,6 +14,25 @@ pgrep -af 'gz sim|rtabmap|slam_toolbox|ekf_filter_node|nav2'
 
 不要在不确认目标的情况下批量杀进程；优先回到原启动终端按一次 `Ctrl+C`。
 
+## 关闭 Gazebo 后机器人不动、规划线反复变化
+
+Gazebo 提供 `/clock`、传感器和机器人动力学；关闭其窗口就等于终止本轮仿真，而
+不是只隐藏三维视图。正式 launch 会在 Gazebo 退出时联动关闭其余节点。探索器若
+先检测到 Nav2 action server 失活，会显示红色 `EXPLORATION ABORTED` 并发布 ERROR
+诊断，不会把被拒绝的目标计入黑名单、发布 `complete=true` 或保存最终快照。
+
+旧版本若出现 RViz 仍开着、红色路径不断变化但机器人不动，应结束整个 launch 后
+重新启动，不要继续使用这次地图。诊断时检查：
+
+```bash
+ros2 topic hz /clock
+ros2 lifecycle get /bt_navigator
+ros2 topic echo /frontier_explorer/diagnostics --once
+```
+
+`/clock` 不再发布或 `bt_navigator` 为 inactive，说明是仿真/导航依赖失效，不是安全
+随机出生点本身不可通行。
+
 ## Gazebo 窗口空白或无法移动视角
 
 - 确认没有另一份 Gazebo server 或 GUI 使用相同世界。

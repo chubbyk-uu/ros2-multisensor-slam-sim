@@ -105,6 +105,11 @@ ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py \
 
 默认会打开 RViz；仅运行 Gazebo 时可传入 `rviz:=false`。
 
+Gazebo 是仿真栈的生命周期根节点：GUI 被关闭、服务器异常退出或无界面服务器结束时，
+`simulation.launch.py` 会触发整套 launch 关闭，避免 `/clock` 停止后留下仍在运行的
+SLAM、Nav2、RViz 或探索节点。正常结束完整入口应回到原 launch 终端按一次
+`Ctrl+C`；关闭 Gazebo 窗口等价于终止本轮仿真。
+
 在 WSL2 中 launch 默认启用 Mesa D3D12 并选择 NVIDIA 显卡，避免回退到 CPU 软件渲染。可使用 `wsl_gpu_adapter:=AMD` 或 `wsl_gpu_adapter:=Intel` 选择其他适配器，也可使用 `use_wsl_gpu:=false` 禁用该设置。
 
 `safe_spawn_sampler` 可直接从任意受支持 SDF 的静态 collision 生成确定性随机出生点：

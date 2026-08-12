@@ -100,6 +100,14 @@ if(BUILD_TESTING)
     test_empty_frontier_counter
     PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   )
+  ament_add_gtest(
+    test_navigation_availability
+    test/test_navigation_availability.cpp
+  )
+  target_include_directories(
+    test_navigation_availability
+    PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  )
 endif()
 
 ament_package()

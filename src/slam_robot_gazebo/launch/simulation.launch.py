@@ -3,10 +3,14 @@ from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    EmitEvent,
     ExecuteProcess,
+    RegisterEventHandler,
     SetEnvironmentVariable,
 )
 from launch.conditions import IfCondition, UnlessCondition
+from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.substitutions import (
     Command,
     FindExecutable,
@@ -201,6 +205,36 @@ def generate_launch_description():
         condition=UnlessCondition(gui),
         shell=False,
     )
+    stop_when_gazebo_gui_exits = RegisterEventHandler(
+        OnProcessExit(
+            target_action=gazebo_with_gui,
+            on_exit=[
+                EmitEvent(
+                    event=Shutdown(
+                        reason=(
+                            "Gazebo exited; stopping the simulation stack "
+                            "instead of leaving stale ROS nodes running"
+                        )
+                    )
+                )
+            ],
+        )
+    )
+    stop_when_gazebo_headless_exits = RegisterEventHandler(
+        OnProcessExit(
+            target_action=gazebo_headless,
+            on_exit=[
+                EmitEvent(
+                    event=Shutdown(
+                        reason=(
+                            "Gazebo exited; stopping the simulation stack "
+                            "instead of leaving stale ROS nodes running"
+                        )
+                    )
+                )
+            ],
+        )
+    )
 
     return LaunchDescription(
         [
@@ -386,6 +420,8 @@ def generate_launch_description():
                 wsl_gpu_adapter,
                 condition=IfCondition(use_wsl_gpu),
             ),
+            stop_when_gazebo_gui_exits,
+            stop_when_gazebo_headless_exits,
             gazebo_with_gui,
             gazebo_headless,
             Node(

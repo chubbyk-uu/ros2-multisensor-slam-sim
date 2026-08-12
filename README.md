@@ -169,7 +169,8 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py \
 采样器读取实际 collision 几何，只在原点所在的可通行连通区取样；安全包络包含
 底盘平面半径、0.15 m 余量、含 3D 雷达的 0.35 m 整机高度、0.10 m 顶部余量及
 Gazebo 生成时的 0.03 m 抬升。终端和 RViz 会在完成及快照保存成功时明确提示，
-此后再按 `Ctrl+C`。使用 RTAB-Map 成熟基线运行同一探索策略：
+此后再按 `Ctrl+C`。若 Gazebo 被关闭或异常退出，整套 launch 会立即停止，且不会
+把 Nav2 失活误报为探索完成或覆盖最终快照。使用 RTAB-Map 成熟基线运行同一探索策略：
 
 ```bash
 ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py

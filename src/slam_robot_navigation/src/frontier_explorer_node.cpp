@@ -35,6 +35,7 @@
 #include "slam_robot_navigation/frontier_action_deadline.hpp"
 #include "slam_robot_navigation/frontier_detector.hpp"
 #include "slam_robot_navigation/frontier_goal_selector.hpp"
+#include "slam_robot_navigation/navigation_availability.hpp"
 
 namespace slam_robot_navigation
 {
@@ -163,7 +164,7 @@ public:
   }
 
 private:
-  enum class State {kWaiting, kPlanning, kNavigating, kCanceling, kComplete};
+  enum class State {kWaiting, kPlanning, kNavigating, kCanceling, kComplete, kFault};
 
   struct BlacklistedGoal
   {
@@ -289,7 +290,19 @@ private:
       std::remove_if(blacklist_.begin(), blacklist_.end(),
       [now](const auto & entry) {return entry.expires <= now;}),
       blacklist_.end());
-    if (!latest_map_ || state_ == State::kComplete) {
+    if (!latest_map_ || state_ == State::kComplete || state_ == State::kFault) {
+      publishDiagnostics();
+      return;
+    }
+    const auto navigation_status = navigation_availability_.observe(
+      compute_path_client_->action_server_is_ready(),
+      navigate_client_->action_server_is_ready());
+    if (navigation_status == NavigationAvailability::Status::kLost) {
+      abortExploration("Nav2 action servers became unavailable");
+      return;
+    }
+    if (navigation_status == NavigationAvailability::Status::kWaiting) {
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "Waiting for Nav2 action servers");
       publishDiagnostics();
       return;
     }
@@ -372,12 +385,6 @@ private:
       return;
     }
     empty_frontiers_.observeFrontier();
-    if (!compute_path_client_->action_server_is_ready() ||
-      !navigate_client_->action_server_is_ready())
-    {
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 5000, "Waiting for Nav2 action servers");
-      return;
-    }
     if (detected.size() > evaluation_candidate_limit_) {
       detected.resize(evaluation_candidate_limit_);
     }
@@ -453,11 +460,10 @@ private:
           return;
         }
         if (!handle) {
-          ++unreachable_candidates_;
-          blacklistCandidate(candidate);
           active_planning_candidate_.reset();
           planning_deadline_.disarm();
-          path_request_pending_ = true;
+          navigation_availability_.goalRejected();
+          abortExploration("Nav2 rejected a frontier path request");
         } else {
           std::lock_guard<std::mutex> lock(action_handle_mutex_);
           compute_goal_handle_ = handle;
@@ -509,9 +515,8 @@ private:
           navigate_goal_handle_ = handle;
         }
         if (!handle) {
-          blacklistCurrentTarget();
-          ++failed_goals_;
-          state_ = State::kWaiting;
+          navigation_availability_.goalRejected();
+          abortExploration("Nav2 rejected a frontier navigation goal");
         }
       };
     options.result_callback = [this, request_id](const NavigateGoalHandle::WrappedResult & result) {
@@ -638,6 +643,43 @@ private:
     requestSnapshotSave();
   }
 
+  void abortExploration(const char * reason)
+  {
+    if (state_ == State::kFault) {return;}
+    state_ = State::kFault;
+    failure_reason_ = reason;
+    NavigateGoalHandle::SharedPtr navigate_handle;
+    ComputeGoalHandle::SharedPtr compute_handle;
+    {
+      std::lock_guard<std::mutex> lock(action_handle_mutex_);
+      navigate_handle = navigate_goal_handle_;
+      compute_handle = compute_goal_handle_;
+    }
+    if (navigate_handle) {
+      navigate_client_->async_cancel_goal(navigate_handle);
+    }
+    if (compute_handle) {
+      compute_path_client_->async_cancel_goal(compute_handle);
+    }
+    ++navigation_request_id_;
+    ++planning_request_id_;
+    navigation_deadline_.disarm();
+    planning_deadline_.disarm();
+    cancellation_deadline_.disarm();
+    publishCompletion(false);
+    publishStatusMarker(
+      "EXPLORATION\nABORTED\nCHECK THE TERMINAL", 1.0F, 0.1F, 0.1F);
+    RCLCPP_ERROR(
+      get_logger(),
+      "\n============================================================\n"
+      "EXPLORATION ABORTED\n"
+      "Reason: %s\n"
+      "No completion message was published and no snapshot was saved.\n"
+      "============================================================",
+      reason);
+    publishDiagnostics();
+  }
+
   void requestSnapshotSave()
   {
     if (!save_snapshot_on_completion_) {return;}
@@ -690,8 +732,11 @@ private:
     diagnostic_msgs::msg::DiagnosticStatus status;
     status.name = "frontier_explorer";
     status.hardware_id = "navigation";
-    status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
-    status.message = state_ == State::kComplete ? "complete" : "running";
+    status.level = state_ == State::kFault ?
+      diagnostic_msgs::msg::DiagnosticStatus::ERROR :
+      diagnostic_msgs::msg::DiagnosticStatus::OK;
+    status.message = state_ == State::kComplete ? "complete" :
+      (state_ == State::kFault ? "fault" : "running");
     status.values = {
       keyValue("state", std::to_string(static_cast<int>(state_))),
       keyValue("map_revision", std::to_string(map_revision_)),
@@ -716,7 +761,8 @@ private:
         std::to_string(last_selection_candidate_count_)),
       keyValue("last_selection_scores", last_selection_scores_),
       keyValue("selection_decisions", std::to_string(selection_decisions_)),
-      keyValue("completion_reason", completion_reason_)};
+      keyValue("completion_reason", completion_reason_),
+      keyValue("failure_reason", failure_reason_)};
     array.status.push_back(std::move(status));
     diagnostics_publisher_->publish(array);
   }
@@ -786,9 +832,11 @@ private:
   std::string map_topic_{"/map"};
   std::string snapshot_service_{"/scan_to_map_odometry_3d/save_snapshot"};
   std::string completion_reason_;
+  std::string failure_reason_;
   bool save_snapshot_on_completion_{true};
   bool running_marker_published_{false};
   State state_{State::kWaiting};
+  NavigationAvailability navigation_availability_;
   nav_msgs::msg::OccupancyGrid::ConstSharedPtr latest_map_;
   std::size_t map_revision_{0};
   std::size_t target_map_revision_{0};

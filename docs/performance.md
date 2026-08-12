@@ -1441,6 +1441,11 @@ band 为 `0.218`，softmax 为 **`0.399`**——**softmax 每米买到的多样�
 等待 900 秒。每轮评分完成后的既有 Gazebo teardown `-11` 仍单独记录，不改变
 算法 verdict。
 
+交互入口随后补齐同一故障边界：Gazebo 退出会触发整套 launch 关闭；探索器把运行中
+Nav2 action server 丢失或 goal 被服务器直接拒绝记为 `fault`，不再将基础设施失活
+累计为不可达目标、错误发布探索完成或覆盖快照。该修正不改变正常探索、随机出生、
+SLAM 或 Nav2 参数。
+
 可复核摘要：
 
 - `docs/results/2026-08-12-random-spawn-structured-campaign.json`

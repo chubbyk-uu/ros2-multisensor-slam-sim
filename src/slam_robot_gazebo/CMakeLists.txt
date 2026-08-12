@@ -62,6 +62,7 @@ install(DIRECTORY include/ DESTINATION include)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_flake8_FOUND TRUE)
@@ -72,6 +73,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_safe_spawn_sampler safe_spawn_sampler_core)
   target_compile_definitions(test_safe_spawn_sampler PRIVATE
     TEST_WORLD_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/worlds")
+  ament_add_pytest_test(
+    test_simulation_launch
+    test/test_simulation_launch.py
+  )
 endif()
 
 ament_package()
