@@ -35,10 +35,18 @@ struct SpawnPose
 struct SpawnSamplingParameters
 {
   double resolution{0.05};
-  // Circumscribed radius of the Nav2 footprint. Keeping this separate from
-  // the margin makes it clear which part is robot geometry and which part is
-  // deliberately conservative spawn clearance.
-  double robot_circumscribed_radius{0.335};
+  // Circumscribed radius of the Nav2 footprint polygon, rounded up. The
+  // polygon's farthest vertex is at hypot(0.295, 0.160) = 0.33560 m, so the
+  // 0.335 this used to hold was 0.6 mm *inside* the robot. The 0.15 m margin
+  // covered it and no measured spawn was ever unsafe, but a robot geometry
+  // that under-reports itself is the wrong direction to be wrong in, and
+  // test_footprint_contract.py now keeps the two in step.
+  //
+  // Kept separate from the margin so it stays obvious which part is the robot
+  // and which part is deliberately conservative clearance. It has no
+  // command-line flag on purpose: it is a contract with the robot model, and
+  // shrinking it to fit a world would quietly undo the guarantee.
+  double robot_circumscribed_radius{0.336};
   double safety_margin{0.15};
   double robot_height{0.35};
   double vertical_margin{0.10};

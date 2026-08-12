@@ -80,6 +80,10 @@ if(BUILD_TESTING)
     test_simulation_launch
     test/test_simulation_launch.py
   )
+  ament_add_pytest_test(
+    test_footprint_contract
+    test/test_footprint_contract.py
+  )
 endif()
 
 ament_package()
