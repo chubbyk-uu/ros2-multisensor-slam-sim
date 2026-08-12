@@ -1,4 +1,5 @@
-"""Keep the spawn sampler's robot envelope in step with the Nav2 footprint.
+"""
+Keep the spawn sampler's robot envelope in step with the Nav2 footprint.
 
 Nothing in the build connects these two. The sampler decides where the robot
 may be created; Nav2's costmaps decide what counts as a collision once it is
