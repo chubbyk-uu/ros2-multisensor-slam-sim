@@ -243,6 +243,100 @@ TEST(SafeSpawnGrid, AReferencePointOffEveryFloorIsRefusedWithItsOwnReason)
   EXPECT_THROW(SafeSpawnGrid(std::move(geometry), parameters), std::runtime_error);
 }
 
+TEST(SafeSpawnGrid, AVastGroundPlaneDoesNotDecideTheGridSize)
+{
+  // slam_world's ground is 100 x 100 m around a 12 x 10 m interior, which
+  // spent exactly the 4,000,000-cell cap describing 25,000 useful cells. The
+  // walls bound the reachable region anyway, so they say where to look.
+  ParsedWorldGeometry geometry;
+  geometry.support_candidates.push_back(
+    {{{0.0, 0.0}, 0.0, 100.0, 100.0, 0.0},
+      {FootprintType::kRectangle, "ground", {0.0, 0.0}, 0.0, 100.0, 100.0,
+        0.0, 0.0, 0.0, false}});
+  geometry.obstacles.push_back({
+        FootprintType::kRectangle, "wall", {5.0, 0.0}, 0.0, 0.4, 8.0, 0.0, 0.0, 1.0});
+  geometry.sampling_bounds = {-50.0, -50.0, 50.0, 50.0};
+
+  const SafeSpawnGrid grid(std::move(geometry));
+
+  // A hundred metres of empty ground is not worth a grid. What matters is that
+  // the reachable region -- the reference point and everything the walls
+  // enclose -- is still inside.
+  EXPECT_LT(grid.bounds().maximum_x - grid.bounds().minimum_x, 20.0);
+  EXPECT_LT(grid.bounds().maximum_y - grid.bounds().minimum_y, 20.0);
+  EXPECT_TRUE(grid.isSafe(0.0, 0.0));
+  EXPECT_FALSE(grid.isSafe(5.0, 0.0));
+}
+
+TEST(SafeSpawnGrid, TheClippedBoundsSitOnALatticeAnchoredAtTheWorldOrigin)
+{
+  // Otherwise the grid origin follows the outermost obstacle, and nudging one
+  // wall by a millimetre would shift every cell centre and change every
+  // sampled pose in the world.
+  ParsedWorldGeometry geometry;
+  geometry.support_candidates.push_back(
+    {{{0.0, 0.0}, 0.0, 40.0, 40.0, 0.0},
+      {FootprintType::kRectangle, "ground", {0.0, 0.0}, 0.0, 40.0, 40.0,
+        0.0, 0.0, 0.0, false}});
+  geometry.obstacles.push_back({
+        FootprintType::kRectangle, "wall", {5.137, -0.091}, 0.0, 0.4, 6.0,
+        0.0, 0.0, 1.0});
+  geometry.sampling_bounds = {-20.0, -20.0, 20.0, 20.0};
+  SpawnSamplingParameters parameters;
+  parameters.resolution = 0.05;
+
+  const SafeSpawnGrid grid(std::move(geometry), parameters);
+
+  for (const double edge : {grid.bounds().minimum_x, grid.bounds().minimum_y,
+      grid.bounds().maximum_x, grid.bounds().maximum_y})
+  {
+    EXPECT_NEAR(std::remainder(edge, 0.05), 0.0, 1.0e-9) << edge;
+  }
+}
+
+TEST(SafeSpawnGrid, AWallOutsideTheClippedBoundsStillBlocksInsideThem)
+{
+  // Only the grid extent is clipped. Filtering the obstacle list to match
+  // would leave the cells along the new edge looking free.
+  ParsedWorldGeometry geometry;
+  geometry.support_candidates.push_back(
+    {{{0.0, 0.0}, 0.0, 40.0, 40.0, 0.0},
+      {FootprintType::kRectangle, "ground", {0.0, 0.0}, 0.0, 40.0, 40.0,
+        0.0, 0.0, 0.0, false}});
+  geometry.obstacles.push_back({
+        FootprintType::kRectangle, "near", {2.0, 0.0}, 0.0, 0.4, 0.4, 0.0, 0.0, 1.0});
+  geometry.sampling_bounds = {-20.0, -20.0, 20.0, 20.0};
+
+  const SafeSpawnGrid grid(std::move(geometry));
+
+  EXPECT_TRUE(grid.isSafe(0.0, 0.0));
+  EXPECT_FALSE(grid.isSafe(2.0, 0.0));
+  EXPECT_FALSE(grid.isSafe(2.5, 0.0));
+}
+
+TEST(SafeSpawnGrid, AnOversizedGridSaysWhatItAskedForAndWhatTheLimitWas)
+{
+  ParsedWorldGeometry geometry;
+  geometry.support_candidates.push_back(
+    {{{0.0, 0.0}, 0.0, 200.0, 200.0, 0.0},
+      {FootprintType::kRectangle, "ground", {0.0, 0.0}, 0.0, 200.0, 200.0,
+        0.0, 0.0, 0.0, false}});
+  geometry.sampling_bounds = {-100.0, -100.0, 100.0, 100.0};
+  SpawnSamplingParameters parameters;
+  parameters.maximum_grid_cells = 1000U;
+
+  try {
+    SafeSpawnGrid grid(std::move(geometry), parameters);
+    FAIL() << "expected the grid to be refused";
+  } catch (const std::overflow_error & error) {
+    // "Exceeds the maximum" alone leaves no way to tell which knob to move.
+    const std::string message = error.what();
+    EXPECT_NE(message.find("4000 x 4000"), std::string::npos) << message;
+    EXPECT_NE(message.find("1000"), std::string::npos) << message;
+    EXPECT_NE(message.find("x -100.00..100.00"), std::string::npos) << message;
+  }
+}
+
 TEST(SpawnRecord, CarriesEveryValueThatMovesAPose)
 {
   SpawnSamplingParameters parameters;

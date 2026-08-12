@@ -172,6 +172,8 @@ private:
   Point2D cellCenter(std::size_t index) const;
 
   void resolveSupportLayer();
+  Bounds2D clipSamplingBounds() const;
+  Bounds2D snapToLattice(const Bounds2D & bounds) const;
 
   ParsedWorldGeometry geometry_;
   SpawnSamplingParameters parameters_;

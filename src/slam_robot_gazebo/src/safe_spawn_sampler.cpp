@@ -52,6 +52,49 @@ std::string formatHeight(double value)
   return stream.str();
 }
 
+Bounds2D surfaceBounds(const SupportSurface & surface)
+{
+  const double cosine = std::abs(std::cos(surface.yaw));
+  const double sine = std::abs(std::sin(surface.yaw));
+  const double half_x = (cosine * surface.size_x + sine * surface.size_y) * 0.5;
+  const double half_y = (sine * surface.size_x + cosine * surface.size_y) * 0.5;
+  return {
+    surface.center.x - half_x, surface.center.y - half_y,
+    surface.center.x + half_x, surface.center.y + half_y};
+}
+
+Bounds2D obstacleBounds(const CollisionFootprint & obstacle)
+{
+  if (obstacle.type == FootprintType::kCircle) {
+    return {
+      obstacle.center.x - obstacle.radius, obstacle.center.y - obstacle.radius,
+      obstacle.center.x + obstacle.radius, obstacle.center.y + obstacle.radius};
+  }
+  return surfaceBounds(
+    {obstacle.center, obstacle.yaw, obstacle.size_x, obstacle.size_y, 0.0});
+}
+
+void merge(Bounds2D & into, const Bounds2D & other, bool & initialized)
+{
+  if (!initialized) {
+    into = other;
+    initialized = true;
+    return;
+  }
+  into.minimum_x = std::min(into.minimum_x, other.minimum_x);
+  into.minimum_y = std::min(into.minimum_y, other.minimum_y);
+  into.maximum_x = std::max(into.maximum_x, other.maximum_x);
+  into.maximum_y = std::max(into.maximum_y, other.maximum_y);
+}
+
+std::string formatBounds(const Bounds2D & bounds)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(2) << "x " << bounds.minimum_x << ".."
+         << bounds.maximum_x << ", y " << bounds.minimum_y << ".." << bounds.maximum_y;
+  return stream.str();
+}
+
 double distanceToObstacle(const Point2D & point, const CollisionFootprint & obstacle)
 {
   if (obstacle.type == FootprintType::kCircle) {
@@ -88,6 +131,9 @@ SafeSpawnGrid::SafeSpawnGrid(
     throw std::invalid_argument("invalid safe-spawn sampling parameters");
   }
 
+  resolveSupportLayer();
+  geometry_.sampling_bounds = clipSamplingBounds();
+
   width_ = static_cast<std::size_t>(std::ceil(
       (geometry_.sampling_bounds.maximum_x - geometry_.sampling_bounds.minimum_x) /
       parameters_.resolution));
@@ -97,10 +143,14 @@ SafeSpawnGrid::SafeSpawnGrid(
   if (width_ == 0U || height_ == 0U ||
     width_ > parameters_.maximum_grid_cells / height_)
   {
-    throw std::overflow_error("safe-spawn grid exceeds maximum_grid_cells");
+    std::ostringstream message;
+    message << "safe-spawn grid of " << width_ << " x " << height_ << " = "
+            << (height_ == 0U ? 0U : width_ * height_) << " cells at "
+            << parameters_.resolution << " m exceeds maximum_grid_cells "
+            << parameters_.maximum_grid_cells << " over bounds "
+            << formatBounds(geometry_.sampling_bounds);
+    throw std::overflow_error(message.str());
   }
-
-  resolveSupportLayer();
 
   safe_cells_.assign(width_ * height_, 0U);
   // Gazebo creates base_footprint at spawn_z before contacts settle it onto
@@ -306,6 +356,66 @@ void SafeSpawnGrid::resolveSupportLayer()
       geometry_.obstacles.push_back(candidate.body);
     }
   }
+}
+
+Bounds2D SafeSpawnGrid::clipSamplingBounds() const
+{
+  // The floor decides how far the world can extend, but a ground plane is
+  // usually far larger than the building on it: slam_world's is 100 x 100 m
+  // around a 12 x 10 m interior, which spent 4,000,000 cells -- exactly the
+  // cap -- to describe 25,000 useful ones. The walls bound the reachable
+  // region anyway, so the obstacles say where it is worth looking.
+  //
+  // Only the grid's extent is clipped. The obstacle list stays whole: a wall
+  // outside these bounds must still block the cells inside them, and filtering
+  // the obstacles to match would leave the boundary cells looking free.
+  Bounds2D support_bounds{};
+  bool have_support = false;
+  for (const auto & support : supports_) {
+    merge(support_bounds, surfaceBounds(support), have_support);
+  }
+  if (!have_support) {return geometry_.sampling_bounds;}
+
+  Bounds2D obstacle_extent{};
+  bool have_obstacle = false;
+  for (const auto & obstacle : geometry_.obstacles) {
+    merge(obstacle_extent, obstacleBounds(obstacle), have_obstacle);
+  }
+  if (!have_obstacle) {return snapToLattice(support_bounds);}
+
+  // Enough room that an obstacle sitting on the clipped edge is still fully
+  // inflated inside it, plus a cell so rounding cannot eat into that.
+  const double room = parameters_.robot_circumscribed_radius +
+    parameters_.safety_margin + parameters_.non_static_extra_margin +
+    parameters_.resolution;
+  Bounds2D clipped{
+    std::max(support_bounds.minimum_x, obstacle_extent.minimum_x - room),
+    std::max(support_bounds.minimum_y, obstacle_extent.minimum_y - room),
+    std::min(support_bounds.maximum_x, obstacle_extent.maximum_x + room),
+    std::min(support_bounds.maximum_y, obstacle_extent.maximum_y + room)};
+  // The reference point has to survive the clip, or the grid is built around a
+  // start position it does not contain.
+  clipped.minimum_x = std::min(clipped.minimum_x, parameters_.reference_x - room);
+  clipped.minimum_y = std::min(clipped.minimum_y, parameters_.reference_y - room);
+  clipped.maximum_x = std::max(clipped.maximum_x, parameters_.reference_x + room);
+  clipped.maximum_y = std::max(clipped.maximum_y, parameters_.reference_y + room);
+  if (clipped.minimum_x >= clipped.maximum_x || clipped.minimum_y >= clipped.maximum_y) {
+    return snapToLattice(support_bounds);
+  }
+  return snapToLattice(clipped);
+}
+
+Bounds2D SafeSpawnGrid::snapToLattice(const Bounds2D & bounds) const
+{
+  // Anchored at the world origin, so a wall moved by less than a cell does not
+  // shift every cell centre in the world and change every sampled pose. Both
+  // ends move outward, so snapping never eats into the room reserved above.
+  const double resolution = parameters_.resolution;
+  return {
+    std::floor(bounds.minimum_x / resolution) * resolution,
+    std::floor(bounds.minimum_y / resolution) * resolution,
+    std::ceil(bounds.maximum_x / resolution) * resolution,
+    std::ceil(bounds.maximum_y / resolution) * resolution};
 }
 
 double SafeSpawnGrid::referenceHeight() const {return reference_height_;}
