@@ -33,6 +33,32 @@ ros2 topic echo /frontier_explorer/diagnostics --once
 `/clock` 不再发布或 `bt_navigator` 为 inactive，说明是仿真/导航依赖失效，不是安全
 随机出生点本身不可通行。
 
+探索器不会因为一次 goal 被拒就中止：Nav2 在 `on_configure` 建好 action server、
+`on_activate` 才开始接受，这段窗口内被拒是正常的，因此预算内的拒绝只重试。只有
+持续超过宽限期（启动期 `nav2_startup_grace`，默认 `30 s`；运行期
+`nav2_runtime_grace`，默认 `5 s`）才判故障，并在诊断里给出闭集字段：
+
+| `failure_class` | `failure_code` | 含义 |
+| --- | --- | --- |
+| `dependency_lost` | `nav2_startup_timeout` | 从未接受过导航目标，这一轮没有开始过 |
+| `dependency_lost` | `nav2_runtime_lost` | 曾经接受过目标，中途失去 |
+| `internal` | `internal_state_error` | 探索器自身状态错误 |
+
+回归读取的是这两个字段与 `DiagnosticStatus::ERROR`，不解析 `failure_reason`——
+后者只写给人看。`dependency_lost` 直接归为 `INFRA_UNSTABLE`，`internal` 归为核心
+`FAIL`，未识别的类别也落回核心 `FAIL`。宽限期用墙钟计时，因此 Gazebo 停摆、
+`/clock` 冻结时仍会到期。
+
+要验证这条链路本身是否还接通，跑故障注入回归（会真的把 Nav2 弄坏）：
+
+```bash
+ros2 run slam_robot_slam_3d nav2_fault_injection_regression --scenario startup
+ros2 run slam_robot_slam_3d nav2_fault_injection_regression --scenario runtime
+```
+
+退出码 `0` 通过、`1` 失败、`2` 表示故障没能注入（例如 Nav2 bringup 自己卡住），
+后者应重跑而不是排查状态机。
+
 ## Gazebo 窗口空白或无法移动视角
 
 - 确认没有另一份 Gazebo server 或 GUI 使用相同世界。
