@@ -146,6 +146,22 @@ CollisionFootprint circleFootprint(
   return result;
 }
 
+void extendBounds(Bounds2D & bounds, const SupportSurface & support, bool & initialized);
+
+// Reported, not decided. Whether a thin flat horizontal body is the floor
+// depends on where the robot starts, which the parser does not know; the grid
+// resolves it against the reference point. The old absolute -0.10..0.10 m band
+// tried to decide it here and could only be right for worlds authored at z=0 --
+// and it treated planes and boxes inconsistently, since the plane branch never
+// had a band at all.
+void addSupportCandidate(
+  ParsedWorldGeometry & result, const SupportSurface & surface,
+  const CollisionFootprint & body, bool & bounds_initialized)
+{
+  result.support_candidates.push_back({surface, body});
+  extendBounds(result.sampling_bounds, surface, bounds_initialized);
+}
+
 void extendBounds(Bounds2D & bounds, const SupportSurface & support, bool & initialized)
 {
   const double cosine = std::abs(std::cos(support.yaw));
@@ -166,18 +182,16 @@ void extendBounds(Bounds2D & bounds, const SupportSurface & support, bool & init
   bounds.maximum_y = std::max(bounds.maximum_y, candidate.maximum_y);
 }
 
-bool addSupportIfGround(
+// Thin, flat and horizontal is all the parser can say. The height at which it
+// sits is recorded, not judged.
+bool addSupportCandidateIfFlat(
   ParsedWorldGeometry & result, const CollisionFootprint & footprint,
   const gz::math::Pose3d & pose, bool & bounds_initialized)
 {
   const bool horizontal = std::abs(pose.Rot().Roll()) <= kHorizontalTolerance &&
     std::abs(pose.Rot().Pitch()) <= kHorizontalTolerance;
-  const bool ground_height = footprint.maximum_z >= -0.10 &&
-    footprint.maximum_z <= 0.10;
   const bool thin = footprint.maximum_z - footprint.minimum_z <= 0.20;
-  if (!horizontal || !ground_height || !thin ||
-    footprint.type != FootprintType::kRectangle)
-  {
+  if (!horizontal || !thin || footprint.type != FootprintType::kRectangle) {
     return false;
   }
   SupportSurface support;
@@ -186,8 +200,7 @@ bool addSupportIfGround(
   support.size_x = footprint.size_x;
   support.size_y = footprint.size_y;
   support.height = footprint.maximum_z;
-  result.supports.push_back(support);
-  extendBounds(result.sampling_bounds, support, bounds_initialized);
+  addSupportCandidate(result, support, footprint, bounds_initialized);
   return true;
 }
 
@@ -215,8 +228,20 @@ void addCollision(
     support.size_x = plane->Size().X();
     support.size_y = plane->Size().Y();
     support.height = pose.Pos().Z();
-    result.supports.push_back(support);
-    extendBounds(result.sampling_bounds, support, bounds_initialized);
+    // A plane has no volume, so if it turns out not to be the floor it stands
+    // in as a zero-thickness rectangle at its own height -- which is what a
+    // raised platform's deck is, seen from below.
+    CollisionFootprint body;
+    body.type = FootprintType::kRectangle;
+    body.name = collision.Name();
+    body.center = support.center;
+    body.yaw = support.yaw;
+    body.size_x = support.size_x;
+    body.size_y = support.size_y;
+    body.minimum_z = support.height;
+    body.maximum_z = support.height;
+    body.dynamic = dynamic;
+    addSupportCandidate(result, support, body, bounds_initialized);
     return;
   }
 
@@ -269,7 +294,7 @@ void addCollision(
   // A movable body is never treated as floor, however flat it lies: a pallet
   // that happens to be thin and low is not ground, and the moment it slides
   // the "support" underneath a spawn is gone.
-  if (dynamic || !addSupportIfGround(result, footprint, pose, bounds_initialized)) {
+  if (dynamic || !addSupportCandidateIfFlat(result, footprint, pose, bounds_initialized)) {
     result.obstacles.push_back(std::move(footprint));
   }
 }
@@ -335,8 +360,8 @@ ParsedWorldGeometry SdfWorldGeometryParser::parse(const std::string & world_path
       result, *world->ModelByIndex(index), gz::math::Pose3d::Zero,
       bounds_initialized, policy_, false);
   }
-  if (result.supports.empty() || !bounds_initialized) {
-    throw std::runtime_error("world contains no finite horizontal support collision");
+  if (result.support_candidates.empty() || !bounds_initialized) {
+    throw std::runtime_error("world contains no thin horizontal collision that could be a floor");
   }
   return result;
 }

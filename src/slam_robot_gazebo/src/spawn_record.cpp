@@ -43,9 +43,19 @@ nlohmann::json policyToJson(const WorldParsingPolicy & policy)
 nlohmann::json geometryToJson(const ParsedWorldGeometry & geometry)
 {
   return {
-    {"supports", geometry.supports.size()},
-    {"obstacles", geometry.obstacles.size()},
+    {"support_candidates", geometry.support_candidates.size()},
+    {"parsed_obstacles", geometry.obstacles.size()},
     {"non_static_collisions", geometry.non_static_collisions},
+  };
+}
+
+// The layer that was actually treated as floor, and what that decision
+// cost. Two runs of the same world can differ on nothing else.
+nlohmann::json resolutionToJson(const SafeSpawnGrid & grid)
+{
+  return {
+    {"reference_height", grid.referenceHeight()},
+    {"demoted_supports", grid.demotedSupportCount()},
   };
 }
 
@@ -83,6 +93,7 @@ std::string formatSpawnRecord(
     {"parameters", parametersToJson(parameters)},
     {"world_parsing_policy", policyToJson(policy)},
     {"world_geometry", geometryToJson(geometry)},
+    {"support_resolution", resolutionToJson(grid)},
     {"sampling_bounds", boundsToJson(grid.bounds())},
     {"safe_cells", grid.safeCellCount()},
     {"poses", encoded_poses},

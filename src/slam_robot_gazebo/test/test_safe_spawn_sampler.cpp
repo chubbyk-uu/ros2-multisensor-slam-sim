@@ -21,7 +21,9 @@ ParsedWorldGeometry simpleWorld()
 {
   ParsedWorldGeometry geometry;
   geometry.world_name = "test";
-  geometry.supports.push_back({{0.0, 0.0}, 0.0, 10.0, 10.0, 0.0});
+  geometry.support_candidates.push_back(
+    {{{0.0, 0.0}, 0.0, 10.0, 10.0, 0.0},
+      {FootprintType::kRectangle, "ground", {0.0, 0.0}, 0.0, 10.0, 10.0, 0.0, 0.0, 0.0, false}});
   geometry.sampling_bounds = {-5.0, -5.0, 5.0, 5.0};
   return geometry;
 }
@@ -102,7 +104,7 @@ TEST(SdfWorldGeometryParser, ParsesEveryProjectAcceptanceWorld)
     SCOPED_TRACE(name);
     const auto geometry = SdfWorldGeometryParser{}.parse((directory / name).string());
     EXPECT_FALSE(geometry.world_name.empty());
-    EXPECT_FALSE(geometry.supports.empty());
+    EXPECT_FALSE(geometry.support_candidates.empty());
     EXPECT_FALSE(geometry.obstacles.empty());
     const SafeSpawnGrid grid(geometry);
     EXPECT_GT(grid.safeCellCount(), 1000U);
@@ -160,6 +162,87 @@ TEST(SdfWorldGeometryParser, EveryAcceptanceWorldIsFullyStatic)
   }
 }
 
+SupportCandidate flatSlab(
+  const std::string & name, Point2D center, double size_x, double size_y,
+  double top, double thickness)
+{
+  SupportSurface surface{center, 0.0, size_x, size_y, top};
+  CollisionFootprint body{
+    FootprintType::kRectangle, name, center, 0.0, size_x, size_y, 0.0,
+    top - thickness, top, false};
+  return {surface, body};
+}
+
+TEST(SafeSpawnGrid, ALowKerbIsAnObstacleRatherThanFloor)
+{
+  // The failure the absolute height band allowed: a 0.08 m threshold sits
+  // inside -0.10..0.10, so it was read as ground, removed from the obstacle
+  // list, and the robot could be created straddling it.
+  auto geometry = simpleWorld();
+  geometry.support_candidates.push_back(
+    flatSlab("kerb", {2.0, 0.0}, 1.0, 1.0, 0.08, 0.08));
+  SafeSpawnGrid grid(std::move(geometry));
+
+  EXPECT_DOUBLE_EQ(grid.referenceHeight(), 0.0);
+  EXPECT_EQ(grid.demotedSupportCount(), 1U);
+  EXPECT_FALSE(grid.isSafe(2.0, 0.0));
+  // And it is inflated by the full footprint, not merely un-drivable: the
+  // robot must not overlap it either.
+  EXPECT_FALSE(grid.isSafe(2.0 + 0.5 + 0.40, 0.0));
+  EXPECT_TRUE(grid.isSafe(2.0 + 0.5 + 0.60, 0.0));
+}
+
+TEST(SafeSpawnGrid, FlushSlabsAreOneFloor)
+{
+  // A floor laid in pieces is still a floor, which is why the rule is a step
+  // height rather than "only the slab under the reference point".
+  auto geometry = simpleWorld();
+  geometry.support_candidates.push_back(
+    flatSlab("annex", {9.0, 0.0}, 8.0, 4.0, 0.0, 0.05));
+  geometry.sampling_bounds = {-5.0, -5.0, 13.0, 5.0};
+  SafeSpawnGrid grid(std::move(geometry));
+
+  EXPECT_EQ(grid.demotedSupportCount(), 0U);
+  EXPECT_TRUE(grid.isSafe(0.0, 0.0));
+  EXPECT_TRUE(grid.isSafe(9.0, 0.0));
+}
+
+TEST(SafeSpawnGrid, AHeaderOverheadStaysDrivableUnder)
+{
+  // Demoting a candidate does not by itself block anything: the vertical test
+  // still decides. This is the structured world's doorway header at 0.70 m.
+  auto geometry = simpleWorld();
+  geometry.support_candidates.push_back(
+    flatSlab("header", {2.0, 0.0}, 2.8, 0.3, 0.70, 0.15));
+  SafeSpawnGrid grid(std::move(geometry));
+
+  EXPECT_EQ(grid.demotedSupportCount(), 1U);
+  EXPECT_TRUE(grid.isSafe(2.0, 0.0));
+}
+
+TEST(SafeSpawnGrid, MultiLevelSupportUnderTheReferencePointIsRefused)
+{
+  // Silently taking the highest would make the ground beneath it an obstacle
+  // and leave almost nothing safe, which reads as a broken world rather than
+  // an unsupported one. Refusing says which it is.
+  auto geometry = simpleWorld();
+  geometry.support_candidates.push_back(
+    flatSlab("platform", {0.0, 0.0}, 4.0, 4.0, 0.50, 0.10));
+
+  EXPECT_THROW(SafeSpawnGrid(std::move(geometry)), std::runtime_error);
+}
+
+TEST(SafeSpawnGrid, AReferencePointOffEveryFloorIsRefusedWithItsOwnReason)
+{
+  auto geometry = simpleWorld();
+  SpawnSamplingParameters parameters;
+  parameters.reference_x = 20.0;
+  parameters.reference_y = 20.0;
+  geometry.sampling_bounds = {-5.0, -5.0, 25.0, 25.0};
+
+  EXPECT_THROW(SafeSpawnGrid(std::move(geometry), parameters), std::runtime_error);
+}
+
 TEST(SpawnRecord, CarriesEveryValueThatMovesAPose)
 {
   SpawnSamplingParameters parameters;
@@ -185,8 +268,8 @@ TEST(SpawnRecord, CarriesEveryValueThatMovesAPose)
     EXPECT_TRUE(record.at("parameters").contains(key)) << key;
   }
   for (const auto & key : {"schema_version", "world", "world_name", "seed",
-      "parameters", "world_parsing_policy", "world_geometry", "sampling_bounds",
-      "safe_cells", "poses"})
+      "parameters", "world_parsing_policy", "world_geometry", "support_resolution",
+      "sampling_bounds", "safe_cells", "poses"})
   {
     EXPECT_TRUE(record.contains(key)) << key;
   }

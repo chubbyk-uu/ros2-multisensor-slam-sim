@@ -8,7 +8,9 @@
 #include <cstdint>
 #include <deque>
 #include <fstream>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <random>
 #include <stdexcept>
 #include <utility>
@@ -41,6 +43,13 @@ bool pointInSupport(const Point2D & point, const SupportSurface & support)
   const auto local = localPoint(point, support.center, support.yaw);
   return std::abs(local.x) <= support.size_x * 0.5 &&
          std::abs(local.y) <= support.size_y * 0.5;
+}
+
+std::string formatHeight(double value)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(3) << value;
+  return stream.str();
 }
 
 double distanceToObstacle(const Point2D & point, const CollisionFootprint & obstacle)
@@ -91,6 +100,8 @@ SafeSpawnGrid::SafeSpawnGrid(
     throw std::overflow_error("safe-spawn grid exceeds maximum_grid_cells");
   }
 
+  resolveSupportLayer();
+
   safe_cells_.assign(width_ * height_, 0U);
   // Gazebo creates base_footprint at spawn_z before contacts settle it onto
   // the support. Include that transient lift so a pose cannot be declared
@@ -102,7 +113,7 @@ SafeSpawnGrid::SafeSpawnGrid(
   for (std::size_t cell = 0U; cell < safe_cells_.size(); ++cell) {
     const auto point = cellCenter(cell);
     const bool supported = std::any_of(
-      geometry_.supports.begin(), geometry_.supports.end(),
+      supports_.begin(), supports_.end(),
       [&point](const auto & support) {return pointInSupport(point, support);});
     if (!supported) {continue;}
     const double extra = parameters_.non_static_extra_margin;
@@ -250,6 +261,55 @@ void SafeSpawnGrid::writeDebugPgm(
   }
   if (!output) {throw std::runtime_error("failed to write debug PGM: " + path);}
 }
+
+void SafeSpawnGrid::resolveSupportLayer()
+{
+  // Which candidates lie under the reference point decides what "the floor"
+  // means for this world. Shape alone cannot: a ground slab, a doorway header
+  // and a canopy are all thin, flat and horizontal, and only their height
+  // relative to where the robot starts tells them apart.
+  const Point2D reference{parameters_.reference_x, parameters_.reference_y};
+  std::vector<double> heights_under_reference;
+  for (const auto & candidate : geometry_.support_candidates) {
+    if (pointInSupport(reference, candidate.surface)) {
+      heights_under_reference.push_back(candidate.surface.height);
+    }
+  }
+  if (heights_under_reference.empty()) {
+    throw std::runtime_error(
+            "the reference point is not on any support surface, so there is no "
+            "floor to sample from");
+  }
+  const auto extremes = std::minmax_element(
+    heights_under_reference.begin(), heights_under_reference.end());
+  if (*extremes.second - *extremes.first > parameters_.traversable_step) {
+    // Choosing the highest silently would make the ground beneath it an
+    // obstacle and leave almost nothing safe, which reads as a broken world
+    // rather than an unsupported one.
+    throw std::runtime_error(
+            "multi-level support at the reference point is not supported: found "
+            "surfaces at " + formatHeight(*extremes.first) + " m and " +
+            formatHeight(*extremes.second) + " m");
+  }
+  reference_height_ = *extremes.first;
+
+  for (auto & candidate : geometry_.support_candidates) {
+    if (std::abs(candidate.surface.height - reference_height_) <=
+      parameters_.traversable_step)
+    {
+      supports_.push_back(candidate.surface);
+    } else {
+      // Not the floor, so it is something the robot has to clear. The vertical
+      // test decides whether it actually blocks: a header at 0.70 m is driven
+      // under, a 0.08 m kerb is not.
+      ++demoted_supports_;
+      geometry_.obstacles.push_back(candidate.body);
+    }
+  }
+}
+
+double SafeSpawnGrid::referenceHeight() const {return reference_height_;}
+std::size_t SafeSpawnGrid::demotedSupportCount() const {return demoted_supports_;}
 
 std::size_t SafeSpawnGrid::index(std::size_t x, std::size_t y) const
 {

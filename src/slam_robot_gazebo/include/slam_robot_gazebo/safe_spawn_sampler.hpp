@@ -61,6 +61,13 @@ struct SpawnSamplingParameters
   // slid by the time it matters. This buys room for that without pretending to
   // predict it.
   double non_static_extra_margin{0.25};
+  // How far a surface may sit from the reference plane and still be the same
+  // floor. This is a step height, not a modelling tolerance: two slabs laid
+  // flush are one floor, and a 0.08 m threshold is an obstacle, because the
+  // robot's 0.075 m wheels cannot climb it. Deciding by height relative to the
+  // reference plane rather than by an absolute band is what keeps a low kerb
+  // from being read as ground.
+  double traversable_step{0.025};
   std::size_t maximum_grid_cells{4000000U};
 };
 
@@ -104,10 +111,22 @@ struct SupportSurface
   double height{0.0};
 };
 
+// Geometry that could be floor, decided later. The parser cannot tell a ground
+// slab from a doorway header or a canopy by shape alone -- all three are thin,
+// flat and horizontal -- and it does not know where the reference point is, so
+// it reports the fact and leaves the judgement to the grid.
+struct SupportCandidate
+{
+  SupportSurface surface;
+  // What this becomes if it is not the floor. A plane has no volume, so its
+  // body is a zero-thickness rectangle at its own height.
+  CollisionFootprint body;
+};
+
 struct ParsedWorldGeometry
 {
   std::string world_name;
-  std::vector<SupportSurface> supports;
+  std::vector<SupportCandidate> support_candidates;
   std::vector<CollisionFootprint> obstacles;
   Bounds2D sampling_bounds;
   // Reported rather than silently absorbed, so a record says whether the world
@@ -140,6 +159,10 @@ public:
   std::size_t safeCellCount() const;
   const Bounds2D & bounds() const;
   double resolution() const;
+  // The one drivable layer, and how many candidates were sent back to the
+  // obstacle list for not being on it.
+  double referenceHeight() const;
+  std::size_t demotedSupportCount() const;
   void writeDebugPgm(
     const std::string & path,
     const std::vector<SpawnPose> & samples = {}) const;
@@ -148,8 +171,13 @@ private:
   std::size_t index(std::size_t x, std::size_t y) const;
   Point2D cellCenter(std::size_t index) const;
 
+  void resolveSupportLayer();
+
   ParsedWorldGeometry geometry_;
   SpawnSamplingParameters parameters_;
+  std::vector<SupportSurface> supports_;
+  double reference_height_{0.0};
+  std::size_t demoted_supports_{0U};
   std::size_t width_{0U};
   std::size_t height_{0U};
   std::vector<std::uint8_t> safe_cells_;
