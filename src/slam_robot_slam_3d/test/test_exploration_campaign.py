@@ -1,4 +1,5 @@
 from importlib.machinery import SourceFileLoader
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -276,3 +277,69 @@ def test_spawn_pose_and_world_reach_the_launch_command():
     assert "spawn_x:=1.25" in command
     assert "spawn_y:=-2.5" in command
     assert "spawn_yaw:=0.75" in command
+
+
+def random_spawn_arguments():
+    return MODULE.parse_arguments([
+        "--random-spawn", "--world", "/tmp/structured_loop_3d.sdf",
+        "--runs", "2", "--minimum-evaluable-runs", "2",
+    ])
+
+
+def sampler_returning(monkeypatch, document):
+    def fake_run(command, **kwargs):
+        assert "safe_spawn_sampler" in command
+        return subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(document), stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+
+
+TWO_POSES = [{"x": 0.0, "y": 0.0, "z": 0.03, "yaw": 0.0},
+             {"x": 3.0, "y": 0.0, "z": 0.03, "yaw": 1.0}]
+
+
+def test_a_spawn_record_without_replay_parameters_is_refused(monkeypatch):
+    # The pre-schema sampler emitted exactly this: enough to launch, not enough
+    # to ever rerun. Recording it would produce a batch whose poses cannot be
+    # reproduced and whose difference from the next batch cannot be explained.
+    sampler_returning(monkeypatch, {"seed": 5, "poses": TWO_POSES})
+
+    with pytest.raises(RuntimeError, match="schema_version"):
+        MODULE.sample_spawns(random_spawn_arguments())
+
+
+def test_a_spawn_record_that_drops_the_parameters_is_refused(monkeypatch):
+    sampler_returning(monkeypatch, {
+        "schema_version": 2, "seed": 5, "poses": TWO_POSES,
+        "sampling_bounds": {"minimum_x": 0.0},
+    })
+
+    with pytest.raises(RuntimeError, match="could not be replayed"):
+        MODULE.sample_spawns(random_spawn_arguments())
+
+
+def test_a_complete_spawn_record_is_kept_whole(monkeypatch):
+    document = {
+        "schema_version": 2, "seed": 5, "poses": TWO_POSES,
+        "parameters": {"safety_margin": 0.15}, "sampling_bounds": {"minimum_x": 0.0},
+    }
+    sampler_returning(monkeypatch, document)
+
+    poses, record = MODULE.sample_spawns(random_spawn_arguments())
+
+    assert poses == TWO_POSES
+    # Whole, not summarised: the summary is what the next batch gets compared
+    # against, and a field dropped here cannot be recovered from the logs.
+    assert record == document
+
+
+def test_source_revision_locates_the_tree_without_claiming_to_prove_it():
+    revision = MODULE.source_revision()
+
+    assert set(revision) == {"commit", "dirty"}
+    # Absent rather than fabricated when git cannot answer: a made-up commit is
+    # worse than a missing one, because it reads as provenance.
+    if revision["commit"] is not None:
+        assert len(revision["commit"]) == 40
+        assert isinstance(revision["dirty"], bool)

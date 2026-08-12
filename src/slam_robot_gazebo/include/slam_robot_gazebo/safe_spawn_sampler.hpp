@@ -120,4 +120,23 @@ private:
 
 std::uint64_t makeSpawnSeed();
 
+// Version 1 was a hand-concatenated object carrying only the world, the seed,
+// the resolution, the safe-cell count and the poses. It could not be replayed:
+// every other value that moves a pose -- the robot envelope, the separation,
+// the reference point -- was left to whatever the caller happened to pass.
+// Anything that changes which fields exist bumps this again.
+constexpr int kSpawnRecordSchemaVersion = 2;
+
+// Returns the record as one line of JSON, so a caller that kept only a log can
+// still recover what produced these poses. Built here rather than in main so a
+// test can pin the field set: a record that silently loses a field is worse
+// than no record, because it still looks replayable.
+std::string formatSpawnRecord(
+  const std::string & world_path,
+  const ParsedWorldGeometry & geometry,
+  const SafeSpawnGrid & grid,
+  const SpawnSamplingParameters & parameters,
+  std::uint64_t seed,
+  const std::vector<SpawnPose> & poses);
+
 }  // namespace slam_robot_gazebo

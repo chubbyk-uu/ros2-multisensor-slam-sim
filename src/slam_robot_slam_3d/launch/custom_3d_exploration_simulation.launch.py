@@ -48,7 +48,7 @@ def resolve_spawn(context):
             "x": context.perform_substitution(LaunchConfiguration("spawn_x")),
             "y": context.perform_substitution(LaunchConfiguration("spawn_y")),
             "yaw": context.perform_substitution(LaunchConfiguration("spawn_yaw")),
-            "seed": None,
+            "record": None,
         }
     executable = (
         Path(get_package_prefix("slam_robot_gazebo"))
@@ -78,7 +78,7 @@ def resolve_spawn(context):
         "x": str(pose["x"]),
         "y": str(pose["y"]),
         "yaw": str(pose["yaw"]),
-        "seed": document["seed"],
+        "record": document,
     }
 
 
@@ -120,12 +120,19 @@ def launch_exploration(context):
             "selection_random_seed": LaunchConfiguration("exploration_seed"),
         }.items(),
     )
-    seed_text = "explicit" if spawn["seed"] is None else str(spawn["seed"])
-    message = (
-        "SAFE SPAWN world="
-        + context.perform_substitution(LaunchConfiguration("world"))
-        + f" seed={seed_text} x={spawn['x']} y={spawn['y']} yaw={spawn['yaw']}"
-    )
+    # The whole sampler record, not just the coordinates: without the envelope,
+    # the separation and the reference point, a log cannot tell a rerun from a
+    # different sampler. It locates the source, it does not prove the binary --
+    # the sampler runs from install/ and may predate the checkout.
+    if spawn["record"] is None:
+        message = (
+            "SAFE SPAWN RECORD explicit world="
+            + context.perform_substitution(LaunchConfiguration("world"))
+            + f" x={spawn['x']} y={spawn['y']} yaw={spawn['yaw']}"
+        )
+    else:
+        message = "SAFE SPAWN RECORD " + json.dumps(
+            spawn["record"], sort_keys=True)
     return [
         LogInfo(msg=message),
         GroupAction(scoped=True, actions=[navigation]),

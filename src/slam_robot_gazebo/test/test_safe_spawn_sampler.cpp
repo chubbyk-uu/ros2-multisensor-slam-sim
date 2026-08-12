@@ -3,9 +3,12 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "slam_robot_gazebo/safe_spawn_sampler.hpp"
 
@@ -106,6 +109,61 @@ TEST(SdfWorldGeometryParser, ParsesEveryProjectAcceptanceWorld)
     EXPECT_TRUE(grid.isSafe(0.0, 0.0));
     EXPECT_EQ(grid.sample(5U, 20260812U).size(), 5U);
   }
+}
+
+TEST(SpawnRecord, CarriesEveryValueThatMovesAPose)
+{
+  SpawnSamplingParameters parameters;
+  parameters.resolution = 0.05;
+  const auto geometry = simpleWorld();
+  const SafeSpawnGrid grid(geometry, parameters);
+  const auto poses = grid.sample(2U, 4242U);
+
+  const auto record = nlohmann::json::parse(
+    formatSpawnRecord("/tmp/w.sdf", geometry, grid, parameters, 4242U, poses));
+
+  // Pinned as a set, not spot-checked. A record that silently drops a field
+  // still parses and still looks replayable, so the failure would only surface
+  // when someone tried to reproduce a batch and could not say why it differed.
+  EXPECT_EQ(
+    record.at("parameters").get<nlohmann::json::object_t>().size(), 10U);
+  for (const auto & key : {"resolution", "robot_circumscribed_radius",
+      "safety_margin", "robot_height", "vertical_margin",
+      "minimum_spawn_separation", "spawn_z", "reference_x", "reference_y",
+      "maximum_grid_cells"})
+  {
+    EXPECT_TRUE(record.at("parameters").contains(key)) << key;
+  }
+  for (const auto & key : {"schema_version", "world", "world_name", "seed",
+      "parameters", "sampling_bounds", "safe_cells", "poses"})
+  {
+    EXPECT_TRUE(record.contains(key)) << key;
+  }
+  EXPECT_EQ(record.at("schema_version").get<int>(), 2);
+  EXPECT_EQ(record.at("seed").get<std::uint64_t>(), 4242U);
+  EXPECT_EQ(record.at("world").get<std::string>(), "/tmp/w.sdf");
+  EXPECT_EQ(record.at("sampling_bounds").at("minimum_x").get<double>(), -5.0);
+  ASSERT_EQ(record.at("poses").size(), 2U);
+  // Full precision, not the six places the hand-written version emitted: a
+  // truncated pose is not the pose the simulator was given.
+  EXPECT_DOUBLE_EQ(record.at("poses")[0].at("yaw").get<double>(), poses[0].yaw);
+}
+
+TEST(SpawnRecord, RecordsTheParametersItWasGivenRatherThanTheDefaults)
+{
+  SpawnSamplingParameters parameters;
+  parameters.safety_margin = 0.42;
+  parameters.minimum_spawn_separation = 3.5;
+  const auto geometry = simpleWorld();
+  const SafeSpawnGrid grid(geometry, parameters);
+
+  const auto record = nlohmann::json::parse(
+    formatSpawnRecord("/tmp/w.sdf", geometry, grid, parameters, 7U,
+    grid.sample(1U, 7U)));
+
+  EXPECT_DOUBLE_EQ(record.at("parameters").at("safety_margin").get<double>(), 0.42);
+  EXPECT_DOUBLE_EQ(
+    record.at("parameters").at("minimum_spawn_separation").get<double>(), 3.5);
 }
 
 TEST(SafeSpawnGrid, RejectsInvalidParametersAndUnsafeReference)

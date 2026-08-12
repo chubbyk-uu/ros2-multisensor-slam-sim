@@ -390,7 +390,18 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py \
 机器人外接圆加 `0.15 m` 平面余量膨胀障碍，再检查从地面到 `0.48 m` 的垂直
 扫掠区间（`0.03 m` 生成抬升 + `0.35 m` 机器人 + `0.10 m` 余量），因此低横梁
 会阻挡出生，高于扫掠体的门洞不会被误杀。最后只保留参考原点所在的四连通自由区，
-批量采样还要求点间至少相距 `2 m`。相同非零种子可完全复现位姿。
+批量采样还要求点间至少相距 `2 m`。
+
+采样器把整条记录以一行 JSON 输出（`schema_version: 2`），除种子和位姿外还包含
+`parameters`（分辨率、外接圆半径、平面余量、整机高度、垂直余量、最小间距、生成
+抬升、参考点、栅格上限）与 `sampling_bounds`。**复现位姿需要种子与这整组参数**：
+其中任何一项变化都会改变安全格集合，进而改变同一种子给出的位姿。交互式启动把
+同一条记录以 `SAFE SPAWN RECORD ...` 打进日志，campaign 则把它整体写入
+`campaign_summary.json` 的 `spawn_sampling`；campaign 另外记录世界文件的 SHA256
+与 `source_revision`（`git_commit` 与 `dirty` 标志）。
+
+`source_revision` 是**定位源码的线索，不是复现保证**：C++ 节点从 `install/`
+运行，构建时间早于运行时间，因此工作区干净并不证明当时跑的二进制就由该提交编出。
 
 连续若干周期没有未拉黑的可达 frontier，或连续到达目标但已知自由区不再增长，
 且已知自由单元达到下限后，节点发布 `/frontier_explorer/complete=true`，并调用

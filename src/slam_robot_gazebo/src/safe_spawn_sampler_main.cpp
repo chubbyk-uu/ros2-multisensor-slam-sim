@@ -3,7 +3,6 @@
 #include "slam_robot_gazebo/safe_spawn_sampler.hpp"
 
 #include <cstdlib>
-#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -71,18 +70,10 @@ int main(int argc, char ** argv)
     const slam_robot_gazebo::SafeSpawnGrid grid(geometry, arguments.parameters);
     const auto samples = grid.sample(arguments.count, arguments.seed);
     if (!arguments.debug_pgm.empty()) {grid.writeDebugPgm(arguments.debug_pgm, samples);}
-    std::cout << std::fixed << std::setprecision(6)
-              << "{\"world\":\"" << arguments.world << "\",\"world_name\":\""
-              << geometry.world_name << "\",\"seed\":" << arguments.seed
-              << ",\"resolution\":" << grid.resolution()
-              << ",\"safe_cells\":" << grid.safeCellCount() << ",\"poses\":[";
-    for (std::size_t index = 0U; index < samples.size(); ++index) {
-      if (index != 0U) {std::cout << ',';}
-      const auto & pose = samples[index];
-      std::cout << "{\"x\":" << pose.x << ",\"y\":" << pose.y
-                << ",\"z\":" << pose.z << ",\"yaw\":" << pose.yaw << '}';
-    }
-    std::cout << "]}" << std::endl;
+    // One line, so a caller that only owns a log can still recover the record.
+    std::cout << slam_robot_gazebo::formatSpawnRecord(
+      arguments.world, geometry, grid, arguments.parameters, arguments.seed, samples)
+              << std::endl;
     return EXIT_SUCCESS;
   } catch (const std::exception & error) {
     std::cerr << "safe_spawn_sampler: " << error.what() << std::endl;

@@ -109,6 +109,38 @@ def launch_command(arguments, spawn=None):
     return command
 
 
+# Anything below this omits the sampling parameters, and a spawn record without
+# them cannot be replayed: the envelope, the separation and the reference point
+# all move the poses a given seed produces. Refusing beats recording evidence
+# that will not survive the first question asked of it.
+MINIMUM_SPAWN_SCHEMA_VERSION = 2
+
+
+def source_revision():
+    """Record which source tree produced this batch.
+
+    A clue, not a proof. The C++ nodes run from install/, built at some earlier
+    time, so a clean tree does not establish that the running binaries were
+    compiled from this commit. It still narrows a later investigation from the
+    whole history down to one commit plus whatever the dirty flag admits.
+    """
+    def git(*command):
+        try:
+            completed = subprocess.run(
+                ("git",) + command, capture_output=True, text=True, check=True,
+                cwd=Path(__file__).resolve().parent)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return completed.stdout.strip()
+
+    commit = git("rev-parse", "HEAD")
+    status = None if commit is None else git("status", "--porcelain")
+    return {
+        "commit": commit,
+        "dirty": None if status is None else bool(status),
+    }
+
+
 def sample_spawns(arguments):
     if not arguments.random_spawn:
         return [None] * arguments.runs, None
@@ -127,6 +159,18 @@ def sample_spawns(arguments):
         command, capture_output=True, text=True, check=True
     )
     result = json.loads(completed.stdout.strip().splitlines()[-1])
+    version = result.get("schema_version")
+    if not isinstance(version, int) or version < MINIMUM_SPAWN_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"spawn sampler reported schema_version {version!r}, need at least "
+            f"{MINIMUM_SPAWN_SCHEMA_VERSION}; the installed sampler predates "
+            "recorded sampling parameters"
+        )
+    if not result.get("parameters") or not result.get("sampling_bounds"):
+        raise RuntimeError(
+            "spawn sampler omitted parameters or sampling_bounds, so this batch "
+            "could not be replayed"
+        )
     poses = result.get("poses", [])
     if len(poses) != arguments.runs:
         raise RuntimeError(
@@ -350,6 +394,10 @@ def main():
         return 3
     log_directory.mkdir(parents=True, exist_ok=True)
 
+    # Read once, before the first run, so a tree edited mid-batch is recorded as
+    # the tree the batch started from rather than the one it happened to end on.
+    revision = source_revision()
+
     try:
         spawn_poses, spawn_sampling = sample_spawns(arguments)
     except (ValueError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as error:
@@ -462,6 +510,7 @@ def main():
             "sha256": world_sha256,
             "profile": arguments.world_profile,
         },
+        "source_revision": revision,
         "spawn_sampling": spawn_sampling,
         "minimum_spawn_distance_m": (
             minimum_spawn_distance(spawn_poses)

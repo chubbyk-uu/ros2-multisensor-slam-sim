@@ -4,6 +4,7 @@ project(slam_robot_gazebo)
 find_package(ament_cmake REQUIRED)
 find_package(gz-common5 REQUIRED COMPONENTS graphics)
 find_package(nav_msgs REQUIRED)
+find_package(nlohmann_json REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sdformat14 REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -14,6 +15,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(safe_spawn_sampler_core
   src/safe_spawn_sampler.cpp
   src/sdf_world_geometry.cpp
+  src/spawn_record.cpp
 )
 target_include_directories(safe_spawn_sampler_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -21,6 +23,7 @@ target_include_directories(safe_spawn_sampler_core PUBLIC
 )
 target_link_libraries(safe_spawn_sampler_core
   gz-common5::graphics
+  nlohmann_json::nlohmann_json
   sdformat14::sdformat14
 )
 target_compile_options(safe_spawn_sampler_core PRIVATE -Wall -Wextra -Wpedantic)
