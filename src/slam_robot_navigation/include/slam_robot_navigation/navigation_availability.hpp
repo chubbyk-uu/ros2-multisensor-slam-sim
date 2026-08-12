@@ -20,6 +20,30 @@ constexpr const char * kFailureCodeNav2StartupTimeout = "nav2_startup_timeout";
 constexpr const char * kFailureCodeNav2RuntimeLost = "nav2_runtime_lost";
 constexpr const char * kFailureCodeInternalState = "internal_state_error";
 
+// What a goal response means once it arrives.
+//
+// Kept as a decision of its own because one of the four cases is easy to write
+// wrongly and impossible to see in a healthy run: a response for a request the
+// explorer stopped waiting for, carrying a handle the server did accept. The
+// obvious guard returns early on staleness and drops that handle, which leaves
+// the robot driving to a frontier nobody is tracking and no reference left to
+// cancel it by. A stale acceptance has to be cancelled, not ignored.
+enum class GoalResponse
+{
+  kAccepted,
+  kRejected,
+  kStaleAccepted,
+  kStaleRejected,
+};
+
+inline GoalResponse classifyGoalResponse(bool accepted, bool still_wanted)
+{
+  if (still_wanted) {
+    return accepted ? GoalResponse::kAccepted : GoalResponse::kRejected;
+  }
+  return accepted ? GoalResponse::kStaleAccepted : GoalResponse::kStaleRejected;
+}
+
 // Decides when a missing Nav2 stops being a wait and becomes a fault.
 //
 // Discovery is not readiness. Nav2 creates its action servers in on_configure
@@ -52,7 +76,7 @@ public:
   {
     if (status_ == Status::kLost) {return status_;}
     servers_discovered_ = servers_discovered;
-    if (servers_discovered && !rejected_since_accepted_) {
+    if (servers_discovered && !unusable_since_accepted_) {
       budget_.disarm();
       status_ = navigation_goal_accepted_once_ ? Status::kOperational : Status::kWaiting;
       return status_;
@@ -73,7 +97,7 @@ public:
   void observeNavigationGoalAccepted()
   {
     navigation_goal_accepted_once_ = true;
-    rejected_since_accepted_ = false;
+    unusable_since_accepted_ = false;
     budget_.disarm();
   }
 
@@ -82,10 +106,21 @@ public:
     planner_goal_accepted_once_ = true;
   }
 
+  // Two different observations of the same condition: the server did not take
+  // the goal. They share the budget, because a chain that answers "no" and one
+  // that does not answer are equally unable to explore, but they are counted
+  // apart -- reading a log afterwards, "rejected" and "never replied" point at
+  // different things to go and look at.
   void observeGoalRejected()
   {
     ++rejected_goals_;
-    rejected_since_accepted_ = true;
+    unusable_since_accepted_ = true;
+  }
+
+  void observeGoalUnanswered()
+  {
+    ++unanswered_goals_;
+    unusable_since_accepted_ = true;
   }
 
   Status status() const {return status_;}
@@ -93,6 +128,7 @@ public:
   bool everOperational() const {return navigation_goal_accepted_once_;}
   bool plannerEverAccepted() const {return planner_goal_accepted_once_;}
   std::size_t rejectedGoals() const {return rejected_goals_;}
+  std::size_t unansweredGoals() const {return unanswered_goals_;}
 
   // Which of the two ways this went wrong. "Was a navigation goal ever taken"
   // is the only honest discriminator: a run whose servers appeared but never
@@ -109,8 +145,9 @@ private:
   bool servers_discovered_{false};
   bool navigation_goal_accepted_once_{false};
   bool planner_goal_accepted_once_{false};
-  bool rejected_since_accepted_{false};
+  bool unusable_since_accepted_{false};
   std::size_t rejected_goals_{0};
+  std::size_t unanswered_goals_{0};
 };
 
 }  // namespace slam_robot_navigation

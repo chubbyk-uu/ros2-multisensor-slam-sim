@@ -13,6 +13,6 @@
   "log": "fault_injection_logs/runtime.log",
   "scenario": "runtime",
   "verdict": "PASS",
-  "wall_seconds": 55.8,
+  "wall_seconds": 68.8,
   "wall_timeout": 300.0
 }

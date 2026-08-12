@@ -12,6 +12,6 @@
   "log": "fault_injection_logs/startup.log",
   "scenario": "startup",
   "verdict": "PASS",
-  "wall_seconds": 48.8,
+  "wall_seconds": 46.3,
   "wall_timeout": 300.0
 }

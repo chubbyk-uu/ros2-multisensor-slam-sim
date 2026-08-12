@@ -142,5 +142,81 @@ TEST(NavigationAvailability, TheLostStateIsTerminal)
     NavigationAvailability::Status::kLost);
 }
 
+TEST(GoalResponse, ALateAcceptanceIsCancelledRatherThanIgnored)
+{
+  // The race no Gazebo run will show: the explorer gave up waiting, the server
+  // accepted anyway, and the response arrives afterwards. Returning early on
+  // staleness drops the only handle that could cancel it, so the robot drives
+  // to a frontier nobody is tracking while the explorer sends the next goal.
+  EXPECT_EQ(
+    classifyGoalResponse(true, false), GoalResponse::kStaleAccepted);
+}
+
+TEST(GoalResponse, ALateRejectionNeedsNothing)
+{
+  // Nothing is running, so there is nothing to cancel; cancelling a rejected
+  // goal would be an error against the server.
+  EXPECT_EQ(
+    classifyGoalResponse(false, false), GoalResponse::kStaleRejected);
+}
+
+TEST(GoalResponse, ATimelyResponseIsHandledNormally)
+{
+  EXPECT_EQ(classifyGoalResponse(true, true), GoalResponse::kAccepted);
+  EXPECT_EQ(classifyGoalResponse(false, true), GoalResponse::kRejected);
+}
+
+TEST(NavigationAvailability, AnUnansweredGoalRunsTheSameBudgetAsARejectedOne)
+{
+  NavigationAvailability availability;
+  const auto start = Clock::now();
+  availability.observe(true, start, kBudget);
+
+  // A server that never replies has not taken the goal either. Counting this
+  // as usable would restart the budget on every retry and the fault would
+  // never fire.
+  availability.observeGoalUnanswered();
+
+  ASSERT_EQ(
+    availability.observe(true, start + std::chrono::seconds(1), kBudget),
+    NavigationAvailability::Status::kWaiting);
+  EXPECT_EQ(
+    availability.observe(true, start + std::chrono::seconds(7), kBudget),
+    NavigationAvailability::Status::kLost);
+  EXPECT_STREQ(availability.failureCode(), kFailureCodeNav2StartupTimeout);
+}
+
+TEST(NavigationAvailability, RetriesDoNotRestartTheBudget)
+{
+  NavigationAvailability availability;
+  const auto start = Clock::now();
+  availability.observe(true, start, kBudget);
+
+  // Each retry observes the failure again. If that rearmed the deadline the
+  // explorer would retry for ever, which is the failure mode the budget was
+  // added to prevent.
+  for (int second = 0; second < 7; ++second) {
+    availability.observeGoalUnanswered();
+    availability.observe(true, start + std::chrono::seconds(second), kBudget);
+  }
+
+  EXPECT_EQ(availability.status(), NavigationAvailability::Status::kLost);
+  EXPECT_EQ(availability.unansweredGoals(), 7U);
+  EXPECT_EQ(availability.rejectedGoals(), 0U);
+}
+
+TEST(NavigationAvailability, RejectionsAndSilenceAreCountedApart)
+{
+  NavigationAvailability availability;
+  availability.observeGoalRejected();
+  availability.observeGoalUnanswered();
+  availability.observeGoalUnanswered();
+
+  // Same budget, different diagnosis: "refused" and "never replied" send an
+  // investigation to different places.
+  EXPECT_EQ(availability.rejectedGoals(), 1U);
+  EXPECT_EQ(availability.unansweredGoals(), 2U);
+}
+
 }  // namespace
 }  // namespace slam_robot_navigation

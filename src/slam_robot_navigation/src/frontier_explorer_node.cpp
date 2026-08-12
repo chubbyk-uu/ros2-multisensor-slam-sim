@@ -319,6 +319,21 @@ private:
       return;
     }
     if (state_ == State::kNavigating) {
+      // Checked before the arrival deadline, and separately from it. "The
+      // server never replied" is a dependency problem; "the robot never got
+      // there" is this frontier's problem. Only the second one may blacklist.
+      if (navigation_response_deadline_.expired(now)) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Nav2 did not answer a frontier navigation goal; retrying");
+        navigation_availability_.observeGoalUnanswered();
+        ++navigation_request_id_;
+        navigation_response_deadline_.disarm();
+        navigation_deadline_.disarm();
+        state_ = State::kWaiting;
+        publishDiagnostics();
+        return;
+      }
       if (navigation_deadline_.expired(now)) {
         RCLCPP_WARN(get_logger(), "Frontier navigation timed out; canceling goal");
         cancelNavigation(true, true);
@@ -335,12 +350,19 @@ private:
     }
     if (state_ == State::kPlanning) {
       if (active_planning_candidate_ && planning_deadline_.expired(now)) {
-        RCLCPP_WARN(get_logger(), "Frontier path request timed out; skipping candidate");
-        blacklistCandidate(*active_planning_candidate_);
-        ++unreachable_candidates_;
+        // A server that never answers is the same statement as one that says
+        // no: it did not take the goal. Blacklisting here retired a perfectly
+        // good boundary for an infrastructure state, and doing that to every
+        // candidate in turn used to end with "no reachable frontier remains"
+        // and a completion message, while the real cause was a stuck Nav2.
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Nav2 did not answer a frontier path request; retrying");
+        navigation_availability_.observeGoalUnanswered();
         active_planning_candidate_.reset();
         planning_deadline_.disarm();
         ++planning_request_id_;
+        if (planning_index_ > 0U) {--planning_index_;}
         path_request_pending_ = true;
       }
       if (path_request_pending_) {
@@ -476,9 +498,17 @@ private:
     auto options = rclcpp_action::Client<ComputePath>::SendGoalOptions();
     options.goal_response_callback = [this,
         candidate, request_id](const ComputeGoalHandle::SharedPtr & handle) {
-        if (state_ != State::kPlanning || request_id != planning_request_id_) {
+        const auto response = classifyGoalResponse(
+          handle != nullptr,
+          request_id == planning_request_id_ && state_ == State::kPlanning);
+        if (response == GoalResponse::kStaleAccepted) {
+          // A slow server may have taken the goal after we stopped waiting.
+          // Best effort: one sick enough to miss the deadline may miss this
+          // too, but the common case is merely slow, and there it works.
+          compute_path_client_->async_cancel_goal(handle);
           return;
         }
+        if (response == GoalResponse::kStaleRejected) {return;}
         if (!handle) {
           // A rejection is a statement about the server, not about this
           // frontier: Nav2 rejects while it is configured but not yet active.
@@ -534,9 +564,17 @@ private:
     const std::size_t request_id = ++navigation_request_id_;
     options.goal_response_callback = [this,
         request_id](const NavigateGoalHandle::SharedPtr & handle) {
-        if (state_ != State::kNavigating || request_id != navigation_request_id_) {
+        const auto response = classifyGoalResponse(
+          handle != nullptr,
+          request_id == navigation_request_id_ && state_ == State::kNavigating);
+        if (response == GoalResponse::kStaleAccepted) {
+          // The dangerous one. Dropped rather than cancelled, this leaves the
+          // robot driving to a frontier nobody is tracking while the explorer
+          // believes nothing is running.
+          navigate_client_->async_cancel_goal(handle);
           return;
         }
+        if (response == GoalResponse::kStaleRejected) {return;}
         {
           std::lock_guard<std::mutex> lock(action_handle_mutex_);
           navigate_goal_handle_ = handle;
@@ -548,6 +586,14 @@ private:
           navigation_availability_.observeGoalRejected();
           state_ = State::kWaiting;
         } else {
+          // Accepted, so the arrival budget starts now rather than at send
+          // time: a goal the server sat on for ten seconds should still get
+          // its full travel allowance.
+          navigation_response_deadline_.disarm();
+          navigation_deadline_.arm(
+            std::chrono::steady_clock::now(),
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+              std::chrono::duration<double>(navigation_timeout_)));
           // The only proof the whole chain is operational. The planner
           // activates independently of bt_navigator, so a taken path request
           // says nothing about whether a navigation goal would be taken.
@@ -611,10 +657,12 @@ private:
     state_ = State::kNavigating;
     cancel_with_blacklist_ = false;
     cancel_counts_as_failure_ = false;
-    navigation_deadline_.arm(
-      std::chrono::steady_clock::now(),
-      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-      std::chrono::duration<double>(navigation_timeout_)));
+    // Only the response deadline runs until the goal is taken. Arming the
+    // arrival deadline here would let an unanswered goal consume the whole
+    // 120 s travel budget before anything noticed the server was silent.
+    navigation_deadline_.disarm();
+    navigation_response_deadline_.arm(
+      std::chrono::steady_clock::now(), actionResponseTimeout());
     navigate_client_->async_send_goal(goal, options);
     RCLCPP_INFO(
       get_logger(), "Navigating to frontier (%.2f, %.2f), score %.2f",
@@ -728,6 +776,7 @@ private:
     ++navigation_request_id_;
     ++planning_request_id_;
     navigation_deadline_.disarm();
+    navigation_response_deadline_.disarm();
     planning_deadline_.disarm();
     cancellation_deadline_.disarm();
     // Deliberately no completion message. Publishing false here would say
@@ -839,6 +888,9 @@ private:
         "nav2_rejected_goals",
         std::to_string(navigation_availability_.rejectedGoals())),
       keyValue(
+        "nav2_unanswered_goals",
+        std::to_string(navigation_availability_.unansweredGoals())),
+      keyValue(
         "nav2_operational", navigation_availability_.everOperational() ? "true" : "false")};
     array.status.push_back(std::move(status));
     diagnostics_publisher_->publish(array);
@@ -945,6 +997,7 @@ private:
   bool cancel_with_blacklist_{false};
   bool cancel_counts_as_failure_{false};
   FrontierActionDeadline navigation_deadline_;
+  FrontierActionDeadline navigation_response_deadline_;
   FrontierActionDeadline planning_deadline_;
   FrontierActionDeadline cancellation_deadline_;
   std::size_t planning_request_id_{0U};
