@@ -107,6 +107,18 @@ ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py \
 
 在 WSL2 中 launch 默认启用 Mesa D3D12 并选择 NVIDIA 显卡，避免回退到 CPU 软件渲染。可使用 `wsl_gpu_adapter:=AMD` 或 `wsl_gpu_adapter:=Intel` 选择其他适配器，也可使用 `use_wsl_gpu:=false` 禁用该设置。
 
+`safe_spawn_sampler` 可直接从任意受支持 SDF 的静态 collision 生成确定性随机出生点：
+
+```bash
+ros2 run slam_robot_gazebo safe_spawn_sampler \
+  --world /absolute/path/to/world.sdf --count 5 --seed 42
+```
+
+默认安全体积为平面外接半径 `0.335 m` 加 `0.15 m` 余量，以及从地面到
+`0.48 m` 的垂直扫掠体；后者包含 3D 机器人 `0.35 m` 高度、`0.10 m` 顶部余量
+和 Gazebo `0.03 m` 生成抬升。采样只发生在参考原点所在的连通支撑面，输出 JSON；
+`--debug-pgm` 可输出安全栅格和样本位置。
+
 当前性能配置：
 
 - 物理循环为 250 Hz，仿真实时率目标为 1.0。

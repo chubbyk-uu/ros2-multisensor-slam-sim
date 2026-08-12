@@ -1,0 +1,269 @@
+{
+  "core_failures": 0,
+  "criteria": {
+    "minimum_evaluable_runs": 4,
+    "runs": 5
+  },
+  "gazebo_teardown_crashes": 5,
+  "infra_unstable": 0,
+  "minimum_spawn_distance_m": 4.790093944798996,
+  "outcome": "ACCEPTED",
+  "passes": 5,
+  "reason": "5/5 evaluable runs passed, 0 attributed to the host",
+  "runs": [
+    {
+      "completion_wall_s": 364.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195199.0,
+      "front_end_peak_position_error_m": 0.033,
+      "front_end_peak_yaw_error_deg": 0.061,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 1,
+      "known_bbox_height_m": 19.979,
+      "known_bbox_width_m": 25.976,
+      "launch_timed_out": false,
+      "log": "random_spawn_large_warehouse_20260812/run_01.log",
+      "loop_accepted_candidates": 0.0,
+      "map_frame_peak_position_error_m": 0.034,
+      "map_frame_peak_yaw_error_deg": 0.099,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 0.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": 11.075,
+        "y": 6.975,
+        "yaw": -1.108493,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 14.0,
+      "truth_distance_m": 91.736,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 371.1
+    },
+    {
+      "completion_wall_s": 478.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195300.0,
+      "front_end_peak_position_error_m": 0.05,
+      "front_end_peak_yaw_error_deg": 1.395,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 2,
+      "known_bbox_height_m": 19.985,
+      "known_bbox_width_m": 25.981,
+      "launch_timed_out": false,
+      "log": "random_spawn_large_warehouse_20260812/run_02.log",
+      "loop_accepted_candidates": 1.0,
+      "map_frame_peak_position_error_m": 0.029,
+      "map_frame_peak_yaw_error_deg": 0.138,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 1.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": -9.075,
+        "y": -1.775,
+        "yaw": 2.053703,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 14.0,
+      "truth_distance_m": 142.859,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 490.1
+    },
+    {
+      "completion_wall_s": 359.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195248.0,
+      "front_end_peak_position_error_m": 0.029,
+      "front_end_peak_yaw_error_deg": 0.993,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 3,
+      "known_bbox_height_m": 19.964,
+      "known_bbox_width_m": 25.963,
+      "launch_timed_out": false,
+      "log": "random_spawn_large_warehouse_20260812/run_03.log",
+      "loop_accepted_candidates": 0.0,
+      "map_frame_peak_position_error_m": 0.029,
+      "map_frame_peak_yaw_error_deg": 0.14,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 0.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": -11.925,
+        "y": 2.075,
+        "yaw": -0.03559,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 13.0,
+      "truth_distance_m": 92.096,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 366.1
+    },
+    {
+      "completion_wall_s": 458.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195421.0,
+      "front_end_peak_position_error_m": 0.047,
+      "front_end_peak_yaw_error_deg": 1.352,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 4,
+      "known_bbox_height_m": 19.977,
+      "known_bbox_width_m": 25.964,
+      "launch_timed_out": false,
+      "log": "random_spawn_large_warehouse_20260812/run_04.log",
+      "loop_accepted_candidates": 0.0,
+      "map_frame_peak_position_error_m": 0.046,
+      "map_frame_peak_yaw_error_deg": 0.169,
+      "planner_starvation_per_minute": 0.0,
+      "pose_graph_commits": 0.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": 8.375,
+        "y": 2.825,
+        "yaw": 0.008309,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 14.0,
+      "truth_distance_m": 126.474,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 465.1
+    },
+    {
+      "completion_wall_s": 443.8,
+      "control_starvation_per_minute": 0.0,
+      "exit_code": 0,
+      "failed_checks": [],
+      "failed_goals": 0.0,
+      "free_cells": 195291.0,
+      "front_end_peak_position_error_m": 0.039,
+      "front_end_peak_yaw_error_deg": 1.386,
+      "gazebo_teardown_crash": true,
+      "host_healthy": true,
+      "index": 5,
+      "known_bbox_height_m": 19.995,
+      "known_bbox_width_m": 25.99,
+      "launch_timed_out": false,
+      "log": "random_spawn_large_warehouse_20260812/run_05.log",
+      "loop_accepted_candidates": 0.0,
+      "map_frame_peak_position_error_m": 0.022,
+      "map_frame_peak_yaw_error_deg": 0.121,
+      "planner_starvation_per_minute": 0.27,
+      "pose_graph_commits": 0.0,
+      "simulator_died_before_verdict": false,
+      "spawn": {
+        "x": 9.575,
+        "y": -6.775,
+        "yaw": -2.597515,
+        "z": 0.03
+      },
+      "submap_reinitializations": 0.0,
+      "successful_goals": 12.0,
+      "truth_distance_m": 130.229,
+      "verdict": 0,
+      "verdict_missing": false,
+      "verdict_reported": "PASS",
+      "wall_overshoot_m": {
+        "east": 0.0,
+        "north": 0.0,
+        "south": 0.0,
+        "west": 0.0
+      },
+      "wall_seconds": 450.1
+    }
+  ],
+  "spawn_sampling": {
+    "poses": [
+      {
+        "x": 11.075,
+        "y": 6.975,
+        "yaw": -1.108493,
+        "z": 0.03
+      },
+      {
+        "x": -9.075,
+        "y": -1.775,
+        "yaw": 2.053703,
+        "z": 0.03
+      },
+      {
+        "x": -11.925,
+        "y": 2.075,
+        "yaw": -0.03559,
+        "z": 0.03
+      },
+      {
+        "x": 8.375,
+        "y": 2.825,
+        "yaw": 0.008309,
+        "z": 0.03
+      },
+      {
+        "x": 9.575,
+        "y": -6.775,
+        "yaw": -2.597515,
+        "z": 0.03
+      }
+    ],
+    "resolution": 0.05,
+    "safe_cells": 160627,
+    "seed": 2026081203,
+    "world": "large_warehouse.sdf",
+    "world_name": "slam_world"
+  },
+  "world": {
+    "path": "large_warehouse.sdf",
+    "profile": "large_warehouse",
+    "sha256": "eeaf3fb5b86c15db8a293a09bdd7adfa7921431eb265573256c28d27f93515ff"
+  }
+}

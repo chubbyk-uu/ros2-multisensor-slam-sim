@@ -378,6 +378,20 @@ RTAB-Map 是成熟算法验收基线；自研链路已经完成点云预处理�
 ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 ```
 
+默认沿用显式原点，便于复现历史基准。开启通用 SDF 安全随机出生：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py \
+  world:=$(ros2 pkg prefix slam_robot_gazebo)/share/slam_robot_gazebo/worlds/large_warehouse.sdf \
+  random_spawn:=true spawn_seed:=42
+```
+
+`safe_spawn_sampler` 解析 SDF 的 collision，而不是 visual 或手写坐标清单。它先按
+机器人外接圆加 `0.15 m` 平面余量膨胀障碍，再检查从地面到 `0.48 m` 的垂直
+扫掠区间（`0.03 m` 生成抬升 + `0.35 m` 机器人 + `0.10 m` 余量），因此低横梁
+会阻挡出生，高于扫掠体的门洞不会被误杀。最后只保留参考原点所在的四连通自由区，
+批量采样还要求点间至少相距 `2 m`。相同非零种子可完全复现位姿。
+
 连续若干周期没有未拉黑的可达 frontier，或连续到达目标但已知自由区不再增长，
 且已知自由单元达到下限后，节点发布 `/frontier_explorer/complete=true`，并调用
 自研 SLAM 快照服务保存 `~/.ros/custom_slam_3d.snapshot`。不可达候选会进入长于
@@ -423,11 +437,26 @@ ros2 launch slam_robot_slam_3d frontier_exploration_regression.launch.py
 ros2 launch slam_robot_slam_3d rtabmap_frontier_exploration_regression.launch.py
 ```
 
-回归从固定出生点和未知地图开始，检查至少一个导航目标成功、自由区增长、
+回归默认从固定出生点开始，也可由 campaign 为每轮注入预生成的随机安全位姿；
+它检查至少一个导航目标成功、自由区增长、
 真值行程、导航恢复预算、失败/成功目标预算、Collision Monitor 触发和进程级错误；
 自研链路还限制地图已知区的宽、高、包围盒面积和子图重启次数，并检查探索完成后
 快照服务能够成功保存。单圈探索不强制出现回环；正向召回由
 `custom_3d_loop_regression.launch.py` 的固定包双圈回归负责。
+
+三个世界各跑 5 次随机出生的活动验收命令示例：
+
+```bash
+ros2 run slam_robot_slam_3d exploration_campaign \
+  --runs 5 --minimum-evaluable-runs 4 --random-spawn \
+  --world /absolute/path/to/structured_loop_3d.sdf \
+  --world-profile structured_loop_3d --campaign-seed 2026081201 \
+  --log-directory campaign_logs/structured
+```
+
+`slam_world` 和 `large_warehouse` 分别改用同名 profile。摘要记录 SDF SHA-256、
+实际种子、每轮出生位姿和最小点间距。Gazebo 若在评分前因 WSL D3D12/GLX 初始化
+失败，campaign 会立即清理并记为 `INFRA_UNSTABLE`，不会让 Nav2 空等总超时。
 
 ## 后续路线
 

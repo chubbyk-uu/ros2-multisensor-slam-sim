@@ -3,8 +3,8 @@ structured_loop_3d:
   outer_bounds: [-1.6, -1.6, 25.6, 13.6]
   wall_timeout: 900.0
   minimum_successful_goals: 1
-  minimum_final_free_cells: 38000
-  minimum_travel_distance: 35.0
+  minimum_final_free_cells: 60000
+  minimum_travel_distance: 50.0
   maximum_successful_goals: 30
   maximum_free_area_m2: 240.0
   maximum_known_bbox_width_m: 28.0
@@ -16,8 +16,8 @@ slam_world:
   outer_bounds: [-6.1, -5.1, 6.1, 5.1]
   wall_timeout: 900.0
   minimum_successful_goals: 1
-  minimum_final_free_cells: 15000
-  minimum_travel_distance: 10.0
+  minimum_final_free_cells: 35000
+  minimum_travel_distance: 25.0
   maximum_successful_goals: 80
   maximum_free_area_m2: 130.0
   maximum_known_bbox_width_m: 13.0
@@ -29,8 +29,8 @@ large_warehouse:
   outer_bounds: [-13.1, -10.1, 13.1, 10.1]
   wall_timeout: 900.0
   minimum_successful_goals: 1
-  minimum_final_free_cells: 70000
-  minimum_travel_distance: 40.0
+  minimum_final_free_cells: 150000
+  minimum_travel_distance: 70.0
   maximum_successful_goals: 120
   maximum_free_area_m2: 550.0
   maximum_known_bbox_width_m: 27.0

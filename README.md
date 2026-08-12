@@ -158,9 +158,18 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 ```
 
 该入口从未知地图开始，探索器只向 Nav2 发送标准导航目标，不发布速度；完成后
-自动保存 `~/.ros/custom_slam_3d.snapshot`。日常运行只在评分接近的可达目标中
-随机选择，既保留探索效率又避免每次固定路线；终端和 RViz 会在完成及快照保存
-成功时明确提示，此后再按 `Ctrl+C`。使用 RTAB-Map 成熟基线运行同一探索策略：
+自动保存 `~/.ros/custom_slam_3d.snapshot`。需要从 SDF 中自动选择随机且安全的
+初始位姿时使用：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py \
+  random_spawn:=true spawn_seed:=42
+```
+
+采样器读取实际 collision 几何，只在原点所在的可通行连通区取样；安全包络包含
+底盘平面半径、0.15 m 余量、含 3D 雷达的 0.35 m 整机高度、0.10 m 顶部余量及
+Gazebo 生成时的 0.03 m 抬升。终端和 RViz 会在完成及快照保存成功时明确提示，
+此后再按 `Ctrl+C`。使用 RTAB-Map 成熟基线运行同一探索策略：
 
 ```bash
 ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py

@@ -171,6 +171,10 @@ Scan Context 初始位姿搜索，不能用“成功加载地图”冒充已经�
 # 自研 3D SLAM + Nav2 + Frontier Exploration
 ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 
+# 从 SDF collision 自动选取可复现的三维安全随机出生点
+ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py \
+  random_spawn:=true spawn_seed:=42
+
 # 同一探索器切换到 RTAB-Map 成熟基线
 ros2 launch slam_robot_slam_3d rtabmap_3d_exploration_simulation.launch.py
 ```

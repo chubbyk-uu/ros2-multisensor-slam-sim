@@ -73,10 +73,16 @@ def test_map_bounds_applies_random_spawn_translation_and_yaw():
 
 
 def test_each_target_world_has_a_profile():
-    for name in ("structured_loop_3d", "slam_world", "large_warehouse"):
+    minimum_coverage = {
+        "structured_loop_3d": 60000,
+        "slam_world": 35000,
+        "large_warehouse": 150000,
+    }
+    for name in minimum_coverage:
         profile = MODULE.load_world_profile(name)
         assert profile["world_file"] == f"{name}.sdf"
         assert len(profile["outer_bounds"]) == 4
+        assert profile["minimum_final_free_cells"] >= minimum_coverage[name]
 
 
 def test_default_acceptance_requires_motion_growth_and_success():
