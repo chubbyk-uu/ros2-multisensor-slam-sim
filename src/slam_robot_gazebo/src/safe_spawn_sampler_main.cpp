@@ -17,6 +17,7 @@ struct Arguments
   std::size_t count{1U};
   std::uint64_t seed{0U};
   slam_robot_gazebo::SpawnSamplingParameters parameters;
+  slam_robot_gazebo::WorldParsingPolicy policy;
 };
 
 Arguments parseArguments(int argc, char ** argv)
@@ -50,6 +51,11 @@ Arguments parseArguments(int argc, char ** argv)
       result.parameters.reference_x = std::stod(value());
     } else if (argument == "--reference-y") {
       result.parameters.reference_y = std::stod(value());
+    } else if (argument == "--non-static-margin") {
+      result.parameters.non_static_extra_margin = std::stod(value());
+    } else if (argument == "--reject-non-static") {
+      result.policy.reject_non_static = true;
+      continue;
     } else {
       throw std::invalid_argument("unknown argument: " + argument);
     }
@@ -66,13 +72,15 @@ int main(int argc, char ** argv)
 {
   try {
     const auto arguments = parseArguments(argc, argv);
-    const auto geometry = slam_robot_gazebo::SdfWorldGeometryParser{}.parse(arguments.world);
+    const auto geometry =
+      slam_robot_gazebo::SdfWorldGeometryParser{arguments.policy}.parse(arguments.world);
     const slam_robot_gazebo::SafeSpawnGrid grid(geometry, arguments.parameters);
     const auto samples = grid.sample(arguments.count, arguments.seed);
     if (!arguments.debug_pgm.empty()) {grid.writeDebugPgm(arguments.debug_pgm, samples);}
     // One line, so a caller that only owns a log can still recover the record.
     std::cout << slam_robot_gazebo::formatSpawnRecord(
-      arguments.world, geometry, grid, arguments.parameters, arguments.seed, samples)
+      arguments.world, geometry, grid, arguments.parameters, arguments.policy,
+      arguments.seed, samples)
               << std::endl;
     return EXIT_SUCCESS;
   } catch (const std::exception & error) {

@@ -193,13 +193,15 @@ bool addSupportIfGround(
 
 void addCollision(
   ParsedWorldGeometry & result, const sdf::Collision & collision,
-  const gz::math::Pose3d & link_world_pose, bool & bounds_initialized)
+  const gz::math::Pose3d & link_world_pose, bool & bounds_initialized,
+  bool dynamic)
 {
   const auto pose = link_world_pose * resolveLocalPose(collision, collision.Name());
   const auto * geometry = collision.Geom();
   if (geometry == nullptr) {
     throw std::runtime_error("collision has no geometry: " + collision.Name());
   }
+  if (dynamic) {++result.non_static_collisions;}
   if (geometry->Type() == sdf::GeometryType::PLANE) {
     const auto * plane = geometry->PlaneShape();
     if (plane == nullptr || std::abs(plane->Normal().Z()) < 0.99 ||
@@ -263,16 +265,31 @@ void addCollision(
       throw std::runtime_error(
               "unsupported collision geometry in safe-spawn sampler: " + collision.Name());
   }
-  if (!addSupportIfGround(result, footprint, pose, bounds_initialized)) {
+  footprint.dynamic = dynamic;
+  // A movable body is never treated as floor, however flat it lies: a pallet
+  // that happens to be thin and low is not ground, and the moment it slides
+  // the "support" underneath a spawn is gone.
+  if (dynamic || !addSupportIfGround(result, footprint, pose, bounds_initialized)) {
     result.obstacles.push_back(std::move(footprint));
   }
 }
 
 void addModel(
   ParsedWorldGeometry & result, const sdf::Model & model,
-  const gz::math::Pose3d & parent_world_pose, bool & bounds_initialized)
+  const gz::math::Pose3d & parent_world_pose, bool & bounds_initialized,
+  const WorldParsingPolicy & policy, bool inherited_dynamic)
 {
-  if (!model.Static()) {return;}
+  // A model Gazebo may move used to be skipped outright, which meant a crate
+  // that is simply not marked static was invisible and could be spawned into.
+  // Its SDF pose is exact at t=0, which is the only instant that matters for
+  // choosing a spawn, so avoiding it conservatively is both safer than
+  // ignoring it and more usable than refusing the world.
+  const bool dynamic = inherited_dynamic || !model.Static();
+  if (dynamic && policy.reject_non_static) {
+    throw std::runtime_error(
+            "world contains a non-static model and reject_non_static is set: " +
+            model.Name());
+  }
   const auto model_world_pose =
     parent_world_pose * resolveLocalPose(model, model.Name());
   for (std::uint64_t link_index = 0U; link_index < model.LinkCount(); ++link_index) {
@@ -284,13 +301,13 @@ void addModel(
     {
       addCollision(
         result, *link->CollisionByIndex(collision_index), link_world_pose,
-        bounds_initialized);
+        bounds_initialized, dynamic);
     }
   }
   for (std::uint64_t model_index = 0U; model_index < model.ModelCount(); ++model_index) {
     addModel(
       result, *model.ModelByIndex(model_index), model_world_pose,
-      bounds_initialized);
+      bounds_initialized, policy, dynamic);
   }
 }
 
@@ -316,7 +333,7 @@ ParsedWorldGeometry SdfWorldGeometryParser::parse(const std::string & world_path
   for (std::uint64_t index = 0U; index < world->ModelCount(); ++index) {
     addModel(
       result, *world->ModelByIndex(index), gz::math::Pose3d::Zero,
-      bounds_initialized);
+      bounds_initialized, policy_, false);
   }
   if (result.supports.empty() || !bounds_initialized) {
     throw std::runtime_error("world contains no finite horizontal support collision");

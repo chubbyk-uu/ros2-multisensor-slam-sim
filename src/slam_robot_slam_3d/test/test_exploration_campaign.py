@@ -311,7 +311,7 @@ def test_a_spawn_record_without_replay_parameters_is_refused(monkeypatch):
 
 def test_a_spawn_record_that_drops_the_parameters_is_refused(monkeypatch):
     sampler_returning(monkeypatch, {
-        "schema_version": 2, "seed": 5, "poses": TWO_POSES,
+        "schema_version": 3, "seed": 5, "poses": TWO_POSES,
         "sampling_bounds": {"minimum_x": 0.0},
     })
 
@@ -321,7 +321,7 @@ def test_a_spawn_record_that_drops_the_parameters_is_refused(monkeypatch):
 
 def test_a_complete_spawn_record_is_kept_whole(monkeypatch):
     document = {
-        "schema_version": 2, "seed": 5, "poses": TWO_POSES,
+        "schema_version": 3, "seed": 5, "poses": TWO_POSES,
         "parameters": {"safety_margin": 0.15}, "sampling_bounds": {"minimum_x": 0.0},
     }
     sampler_returning(monkeypatch, document)
@@ -368,3 +368,32 @@ def test_a_healthy_run_records_no_fault():
 
     assert record["exploration_fault_class"] is None
     assert record["exploration_fault_code"] is None
+
+
+def test_strict_mode_reaches_the_sampler_only_when_asked(monkeypatch):
+    seen = []
+
+    def fake_run(command, **kwargs):
+        seen.append(list(command))
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps({
+            "schema_version": 3, "seed": 5, "poses": TWO_POSES,
+            "parameters": {"safety_margin": 0.15},
+            "sampling_bounds": {"minimum_x": 0.0},
+        }), stderr="")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+    MODULE.sample_spawns(random_spawn_arguments())
+    assert "--reject-non-static" not in seen[-1]
+
+    strict = MODULE.parse_arguments([
+        "--random-spawn", "--world", "/tmp/w.sdf", "--runs", "2",
+        "--minimum-evaluable-runs", "2", "--reject-non-static",
+    ])
+    MODULE.sample_spawns(strict)
+    assert "--reject-non-static" in seen[-1]
+
+
+def test_a_schema_2_record_no_longer_satisfies_the_campaign():
+    # It carried the parameters but not the non-static policy, so it cannot say
+    # whether the world held anything the sampler could only approximate.
+    assert MODULE.MINIMUM_SPAWN_SCHEMA_VERSION == 3

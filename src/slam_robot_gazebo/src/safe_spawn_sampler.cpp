@@ -72,7 +72,9 @@ SafeSpawnGrid::SafeSpawnGrid(
     !std::isfinite(parameters_.vertical_margin) || parameters_.vertical_margin < 0.0 ||
     !std::isfinite(parameters_.spawn_z) || parameters_.spawn_z < 0.0 ||
     !std::isfinite(parameters_.minimum_spawn_separation) ||
-    parameters_.minimum_spawn_separation < 0.0 || parameters_.maximum_grid_cells == 0U)
+    parameters_.minimum_spawn_separation < 0.0 ||
+    !std::isfinite(parameters_.non_static_extra_margin) ||
+    parameters_.non_static_extra_margin < 0.0 || parameters_.maximum_grid_cells == 0U)
   {
     throw std::invalid_argument("invalid safe-spawn sampling parameters");
   }
@@ -103,12 +105,16 @@ SafeSpawnGrid::SafeSpawnGrid(
       geometry_.supports.begin(), geometry_.supports.end(),
       [&point](const auto & support) {return pointInSupport(point, support);});
     if (!supported) {continue;}
+    const double extra = parameters_.non_static_extra_margin;
     const bool blocked = std::any_of(
       geometry_.obstacles.begin(), geometry_.obstacles.end(),
-      [&point, clearance, swept_height](const auto & obstacle) {
+      [&point, clearance, swept_height, extra](const auto & obstacle) {
         const bool overlaps_height =
         obstacle.maximum_z > 0.0 && obstacle.minimum_z < swept_height;
-        return overlaps_height && distanceToObstacle(point, obstacle) < clearance;
+        // A body that may move gets more room, because its recorded pose is
+        // only true at t=0 and the simulator runs before the robot appears.
+        const double required = obstacle.dynamic ? clearance + extra : clearance;
+        return overlaps_height && distanceToObstacle(point, obstacle) < required;
       });
     safe_cells_[cell] = blocked ? 0U : 1U;
   }

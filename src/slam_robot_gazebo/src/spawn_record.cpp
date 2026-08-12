@@ -28,7 +28,24 @@ nlohmann::json parametersToJson(const SpawnSamplingParameters & parameters)
     {"spawn_z", parameters.spawn_z},
     {"reference_x", parameters.reference_x},
     {"reference_y", parameters.reference_y},
+    {"non_static_extra_margin", parameters.non_static_extra_margin},
     {"maximum_grid_cells", parameters.maximum_grid_cells},
+  };
+}
+
+// The policy is not a parameter of the grid but it decides what reaches it, so
+// a record without it cannot say why two runs of the same world differed.
+nlohmann::json policyToJson(const WorldParsingPolicy & policy)
+{
+  return {{"reject_non_static", policy.reject_non_static}};
+}
+
+nlohmann::json geometryToJson(const ParsedWorldGeometry & geometry)
+{
+  return {
+    {"supports", geometry.supports.size()},
+    {"obstacles", geometry.obstacles.size()},
+    {"non_static_collisions", geometry.non_static_collisions},
   };
 }
 
@@ -49,6 +66,7 @@ std::string formatSpawnRecord(
   const ParsedWorldGeometry & geometry,
   const SafeSpawnGrid & grid,
   const SpawnSamplingParameters & parameters,
+  const WorldParsingPolicy & policy,
   std::uint64_t seed,
   const std::vector<SpawnPose> & poses)
 {
@@ -63,6 +81,8 @@ std::string formatSpawnRecord(
     {"world_name", geometry.world_name},
     {"seed", seed},
     {"parameters", parametersToJson(parameters)},
+    {"world_parsing_policy", policyToJson(policy)},
+    {"world_geometry", geometryToJson(geometry)},
     {"sampling_bounds", boundsToJson(grid.bounds())},
     {"safe_cells", grid.safeCellCount()},
     {"poses", encoded_poses},

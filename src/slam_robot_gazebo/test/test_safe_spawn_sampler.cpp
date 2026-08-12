@@ -111,6 +111,55 @@ TEST(SdfWorldGeometryParser, ParsesEveryProjectAcceptanceWorld)
   }
 }
 
+TEST(SdfWorldGeometryParser, AMovableCrateIsAvoidedRatherThanIgnored)
+{
+  const std::filesystem::path world =
+    std::filesystem::path(TEST_FIXTURE_WORLD_DIRECTORY) / "non_static_prop.sdf";
+
+  const auto geometry = SdfWorldGeometryParser{}.parse(world.string());
+
+  // It used to be skipped outright, which made a crate that is simply not
+  // marked static invisible to the sampler and legal to spawn into.
+  EXPECT_EQ(geometry.non_static_collisions, 1U);
+  ASSERT_EQ(geometry.obstacles.size(), 1U);
+  EXPECT_TRUE(geometry.obstacles.front().dynamic);
+
+  SpawnSamplingParameters parameters;
+  const SafeSpawnGrid grid(geometry, parameters);
+  EXPECT_FALSE(grid.isSafe(3.0, 0.0));
+  // Beyond the crate's own half width plus the ordinary envelope, but inside
+  // the extra room a movable body gets, because its pose is only true at t=0.
+  EXPECT_FALSE(grid.isSafe(3.0 + 0.25 + 0.486 + 0.10, 0.0));
+  EXPECT_TRUE(grid.isSafe(3.0 + 0.25 + 0.486 + 0.30, 0.0));
+}
+
+TEST(SdfWorldGeometryParser, StrictModeRefusesAWorldItCanOnlyAvoidApproximately)
+{
+  const std::filesystem::path world =
+    std::filesystem::path(TEST_FIXTURE_WORLD_DIRECTORY) / "non_static_prop.sdf";
+  WorldParsingPolicy policy;
+  policy.reject_non_static = true;
+
+  EXPECT_THROW(
+    SdfWorldGeometryParser{policy}.parse(world.string()), std::runtime_error);
+}
+
+TEST(SdfWorldGeometryParser, EveryAcceptanceWorldIsFullyStatic)
+{
+  // The reason strict mode is not the default is that it would cost nothing
+  // here and everything on a world with one movable prop. If this ever fails,
+  // the campaigns have started measuring a world the sampler can only
+  // approximate, and that belongs in the record rather than in a surprise.
+  const std::filesystem::path directory(TEST_WORLD_DIRECTORY);
+  WorldParsingPolicy policy;
+  policy.reject_non_static = true;
+  for (const auto & name : {"slam_world.sdf", "structured_loop_3d.sdf", "large_warehouse.sdf"}) {
+    SCOPED_TRACE(name);
+    EXPECT_NO_THROW(
+      SdfWorldGeometryParser{policy}.parse((directory / name).string()));
+  }
+}
+
 TEST(SpawnRecord, CarriesEveryValueThatMovesAPose)
 {
   SpawnSamplingParameters parameters;
@@ -120,26 +169,28 @@ TEST(SpawnRecord, CarriesEveryValueThatMovesAPose)
   const auto poses = grid.sample(2U, 4242U);
 
   const auto record = nlohmann::json::parse(
-    formatSpawnRecord("/tmp/w.sdf", geometry, grid, parameters, 4242U, poses));
+    formatSpawnRecord(
+      "/tmp/w.sdf", geometry, grid, parameters, WorldParsingPolicy{}, 4242U, poses));
 
   // Pinned as a set, not spot-checked. A record that silently drops a field
   // still parses and still looks replayable, so the failure would only surface
   // when someone tried to reproduce a batch and could not say why it differed.
   EXPECT_EQ(
-    record.at("parameters").get<nlohmann::json::object_t>().size(), 10U);
+    record.at("parameters").get<nlohmann::json::object_t>().size(), 11U);
   for (const auto & key : {"resolution", "robot_circumscribed_radius",
       "safety_margin", "robot_height", "vertical_margin",
       "minimum_spawn_separation", "spawn_z", "reference_x", "reference_y",
-      "maximum_grid_cells"})
+      "non_static_extra_margin", "maximum_grid_cells"})
   {
     EXPECT_TRUE(record.at("parameters").contains(key)) << key;
   }
   for (const auto & key : {"schema_version", "world", "world_name", "seed",
-      "parameters", "sampling_bounds", "safe_cells", "poses"})
+      "parameters", "world_parsing_policy", "world_geometry", "sampling_bounds",
+      "safe_cells", "poses"})
   {
     EXPECT_TRUE(record.contains(key)) << key;
   }
-  EXPECT_EQ(record.at("schema_version").get<int>(), 2);
+  EXPECT_EQ(record.at("schema_version").get<int>(), 3);
   EXPECT_EQ(record.at("seed").get<std::uint64_t>(), 4242U);
   EXPECT_EQ(record.at("world").get<std::string>(), "/tmp/w.sdf");
   EXPECT_EQ(record.at("sampling_bounds").at("minimum_x").get<double>(), -5.0);
@@ -158,8 +209,9 @@ TEST(SpawnRecord, RecordsTheParametersItWasGivenRatherThanTheDefaults)
   const SafeSpawnGrid grid(geometry, parameters);
 
   const auto record = nlohmann::json::parse(
-    formatSpawnRecord("/tmp/w.sdf", geometry, grid, parameters, 7U,
-    grid.sample(1U, 7U)));
+    formatSpawnRecord(
+      "/tmp/w.sdf", geometry, grid, parameters, WorldParsingPolicy{}, 7U,
+      grid.sample(1U, 7U)));
 
   EXPECT_DOUBLE_EQ(record.at("parameters").at("safety_margin").get<double>(), 0.42);
   EXPECT_DOUBLE_EQ(

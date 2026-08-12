@@ -75,7 +75,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_safe_spawn_sampler test/test_safe_spawn_sampler.cpp)
   target_link_libraries(test_safe_spawn_sampler safe_spawn_sampler_core)
   target_compile_definitions(test_safe_spawn_sampler PRIVATE
-    TEST_WORLD_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/worlds")
+    TEST_WORLD_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/worlds"
+    TEST_FIXTURE_WORLD_DIRECTORY="${CMAKE_CURRENT_SOURCE_DIR}/test/worlds")
   ament_add_pytest_test(
     test_simulation_launch
     test/test_simulation_launch.py

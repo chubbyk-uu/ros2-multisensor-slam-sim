@@ -54,7 +54,24 @@ struct SpawnSamplingParameters
   double reference_y{0.0};
   double spawn_z{0.03};
   double minimum_spawn_separation{2.0};
+  // Applied on top of the ordinary clearance to collision geometry belonging
+  // to models Gazebo is free to move. Their SDF pose is exact at t=0, but the
+  // sampler runs before the simulator starts and the robot is spawned later
+  // still, with `gz sim -r` running in between, so a crate can have settled or
+  // slid by the time it matters. This buys room for that without pretending to
+  // predict it.
+  double non_static_extra_margin{0.25};
   std::size_t maximum_grid_cells{4000000U};
+};
+
+struct WorldParsingPolicy
+{
+  // Refuse a world containing collision geometry that may move, instead of
+  // avoiding it conservatively. Off by default: refusing makes the sampler
+  // unusable on any world holding a single movable prop, which pushes the
+  // operator back to hand-picked coordinates -- a worse safety outcome than
+  // a conservative envelope. Formal campaigns can turn it on.
+  bool reject_non_static{false};
 };
 
 enum class FootprintType
@@ -74,6 +91,8 @@ struct CollisionFootprint
   double radius{0.0};
   double minimum_z{0.0};
   double maximum_z{0.0};
+  // From a model Gazebo may move, so its pose is only true at t=0.
+  bool dynamic{false};
 };
 
 struct SupportSurface
@@ -91,12 +110,22 @@ struct ParsedWorldGeometry
   std::vector<SupportSurface> supports;
   std::vector<CollisionFootprint> obstacles;
   Bounds2D sampling_bounds;
+  // Reported rather than silently absorbed, so a record says whether the world
+  // held anything the sampler could only avoid approximately.
+  std::size_t non_static_collisions{0U};
 };
 
 class SdfWorldGeometryParser
 {
 public:
+  SdfWorldGeometryParser() = default;
+  explicit SdfWorldGeometryParser(WorldParsingPolicy policy)
+  : policy_(policy) {}
+
   ParsedWorldGeometry parse(const std::string & world_path) const;
+
+private:
+  WorldParsingPolicy policy_;
 };
 
 class SafeSpawnGrid
@@ -133,7 +162,11 @@ std::uint64_t makeSpawnSeed();
 // every other value that moves a pose -- the robot envelope, the separation,
 // the reference point -- was left to whatever the caller happened to pass.
 // Anything that changes which fields exist bumps this again.
-constexpr int kSpawnRecordSchemaVersion = 2;
+// Version 2 added the parameters and the sampling bounds. Version 3 added the
+// non-static policy and the parsed-geometry counts: without them a record
+// cannot say whether the world held anything that might have moved, or which
+// of the two ways the sampler was told to treat it.
+constexpr int kSpawnRecordSchemaVersion = 3;
 
 // Returns the record as one line of JSON, so a caller that kept only a log can
 // still recover what produced these poses. Built here rather than in main so a
@@ -144,6 +177,7 @@ std::string formatSpawnRecord(
   const ParsedWorldGeometry & geometry,
   const SafeSpawnGrid & grid,
   const SpawnSamplingParameters & parameters,
+  const WorldParsingPolicy & policy,
   std::uint64_t seed,
   const std::vector<SpawnPose> & poses);
 
