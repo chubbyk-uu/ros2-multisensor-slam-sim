@@ -3,9 +3,11 @@ Run one phase of the snapshot save/restore regression on the fixed dataset.
 
 The regression needs the front end to actually die and come back, which one
 launch cannot express, so it runs this twice: `phase:=record` maps the first
-part of the bag and saves, `phase:=resume` restarts from that snapshot and
-plays the rest. Use `snapshot_resume_regression` rather than driving the two
-phases by hand; it is what compares their reports.
+part of the bag and saves; `phase:=resume` restarts from that snapshot in
+mapping mode and plays the rest; `phase:=localize` restarts from it in
+localization mode instead. Use `snapshot_resume_regression` or
+`snapshot_localization_regression` rather than driving the phases by hand;
+they are what compare the reports.
 """
 
 from launch import LaunchDescription
@@ -29,8 +31,9 @@ from launch_ros.substitutions import FindPackageShare
 
 def phase_actions(context):
     phase = context.perform_substitution(LaunchConfiguration("phase"))
-    if phase not in ("record", "resume"):
-        raise RuntimeError(f"phase must be record or resume, not {phase!r}")
+    if phase not in ("record", "resume", "localize"):
+        raise RuntimeError(
+            f"phase must be record, resume or localize, not {phase!r}")
     split = float(context.perform_substitution(LaunchConfiguration("split")))
     window = float(context.perform_substitution(LaunchConfiguration("window")))
     bag = context.perform_substitution(LaunchConfiguration("bag"))
@@ -68,9 +71,12 @@ def phase_actions(context):
         launch_arguments={
             "params_file": LaunchConfiguration("params_file"),
             "use_sim_time": "true",
-            "mode": "mapping",
+            # localize is the whole point of the third phase: the same
+            # snapshot, restored down the read-only branch instead of the one
+            # that keeps mapping.
+            "mode": "localization" if phase == "localize" else "mapping",
             "snapshot_path": LaunchConfiguration("snapshot_path"),
-            "load_snapshot": "true" if phase == "resume" else "false",
+            "load_snapshot": "false" if phase == "record" else "true",
             # Saving is requested through the service the exploration stack
             # calls on completion, so the regression covers that path and does
             # not depend on how much time a shutdown happens to allow.
@@ -133,7 +139,8 @@ def phase_actions(context):
 def generate_launch_description():
     return LaunchDescription(
         [
-            DeclareLaunchArgument("phase", description="record or resume."),
+            DeclareLaunchArgument(
+                "phase", description="record, resume or localize."),
             DeclareLaunchArgument("bag"),
             DeclareLaunchArgument("report"),
             DeclareLaunchArgument("snapshot_path"),

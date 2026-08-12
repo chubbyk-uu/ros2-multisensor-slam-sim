@@ -277,6 +277,7 @@ install(
     scripts/preprocessing_regression
     scripts/recorded_odom_tf_publisher
     scripts/recorded_static_tf_publisher
+    scripts/snapshot_localization_regression
     scripts/snapshot_resume_probe
     scripts/snapshot_resume_regression
     scripts/structured_loop_regression
@@ -461,6 +462,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_snapshot_resume_regression
     test/test_snapshot_resume_regression.py
+  )
+  ament_add_pytest_test(
+    test_snapshot_localization_regression
+    test/test_snapshot_localization_regression.py
   )
   ament_add_pytest_test(
     test_trinary_projection_contract

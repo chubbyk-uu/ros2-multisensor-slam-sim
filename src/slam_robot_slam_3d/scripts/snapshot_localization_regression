@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+
+"""Restore a saved map read-only and require the robot to localize in it.
+
+`localization` mode shares a snapshot file with `mapping` and almost nothing
+else. It takes a different branch on restore -- the whole global cloud becomes
+the match target instead of a rolling twelve-keyframe submap -- and then
+suppresses every write: no keyframes, no pose graph, no submap recovery, no
+snapshot on shutdown. None of that had ever been run. Unit tests cover the file
+format and the pose rebasing, which the two modes share; the branch that makes
+localization different had no entry point at all, and every launch file
+defaults load_snapshot to false.
+
+The reference dataset is two laps of one loop, which is what makes this
+testable: the recorded phase maps the first lap, so the prior map already
+covers the ground the second lap drives over. The localize phase then replays
+that second lap against it.
+
+Accuracy alone would not prove anything. A front end that failed every match
+and coasted on wheel odometry would look accurate for a while over a short
+window, so the acceptance rate is a criterion of its own: the estimate has to
+come from matching against the restored cloud. The read-only claim is measured
+the same way -- not "did the map look unchanged at the end" but "how many
+distinct local-map sizes were ever published", which is one if nothing was
+added and more if anything was.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+LAUNCH_FILE = "snapshot_resume_phase.launch.py"
+
+
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--bag", default=str(Path.cwd() / "bags" / "structured_3d_reference")
+    )
+    parser.add_argument(
+        "--split", type=float, default=240.0,
+        help="Seconds of the dataset the recorded phase maps before saving. The "
+             "localize phase starts here, so the prior map has to cover what "
+             "comes after it.",
+    )
+    parser.add_argument(
+        "--window", type=float, default=0.0,
+        help="Seconds the localize phase plays; 0 plays to the end of the bag.",
+    )
+    parser.add_argument("--rate", type=float, default=1.0)
+    parser.add_argument(
+        "--report-directory", default="snapshot_localization_reports",
+        help="Holds both phase reports, their logs, and the snapshot itself.",
+    )
+    parser.add_argument("--overwrite-report-directory", action="store_true")
+    parser.add_argument("--phase-timeout-seconds", type=float, default=1500.0)
+    parser.add_argument("--settle-seconds", type=float, default=10.0)
+    # Localization has no loop closure to correct it: it rides the prior map
+    # and whatever the scan matcher gives it, so its error is expected to sit
+    # near the recorded phase's rather than beat it. The allowance is the same
+    # shape as the resume regression's for that reason.
+    parser.add_argument("--maximum-position-error-growth-m", type=float, default=0.10)
+    parser.add_argument("--maximum-yaw-error-growth-deg", type=float, default=0.50)
+    parser.add_argument("--maximum-join-position-error-m", type=float, default=0.10)
+    parser.add_argument("--maximum-join-yaw-error-deg", type=float, default=0.50)
+    # The number that separates localizing from dead reckoning. Set well below
+    # the healthy rate rather than at it: what this rejects is a run that
+    # matched almost nothing, not one that dropped a few scans.
+    parser.add_argument("--minimum-match-acceptance-rate", type=float, default=0.80)
+    parser.add_argument("--minimum-map-frame-samples", type=int, default=200)
+    parser.add_argument(
+        "--minimum-restored-known-cell-ratio", type=float, default=0.90,
+        help="Known cells the localize phase must rebuild, as a fraction of the "
+             "recorded phase's final map.",
+    )
+    arguments = parser.parse_args(argv)
+    if arguments.split <= 0.0:
+        parser.error("--split must be positive")
+    if arguments.window < 0.0:
+        parser.error("--window cannot be negative")
+    if arguments.rate <= 0.0:
+        parser.error("--rate must be positive")
+    if not 0.0 < arguments.minimum_match_acceptance_rate <= 1.0:
+        parser.error("--minimum-match-acceptance-rate must be within (0, 1]")
+    return arguments
+
+
+def phase_command(arguments, phase, report, previous_report, snapshot):
+    command = [
+        "ros2", "launch", "slam_robot_slam_3d", LAUNCH_FILE,
+        f"phase:={phase}",
+        f"bag:={arguments.bag}",
+        f"split:={arguments.split}",
+        f"window:={arguments.window}",
+        f"rate:={arguments.rate}",
+        f"snapshot_path:={snapshot}",
+        f"report:={report}",
+    ]
+    # Passed only when there is one: ros2 launch rejects an empty value rather
+    # than treating it as the argument's default.
+    if previous_report:
+        command.append(f"previous_report:={previous_report}")
+    return command
+
+
+def end_process_group(launch, group, settle_seconds):
+    """Stop a phase and everything it started, and nothing else.
+
+    The group id is the one saved when the launch started, because the case
+    worth cleaning up is the one where the launch exited first and left nodes
+    orphaned behind it. Progress is judged on the group rather than on the
+    parent, and the parent is reaped inside the loop, because a zombie is still
+    a member of its group and still answers signal 0.
+    """
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(group, sig)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + settle_seconds
+        while True:
+            launch.poll()
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+
+
+def run_phase(arguments, phase, report, previous_report, snapshot, log_path):
+    command = phase_command(arguments, phase, report, previous_report, snapshot)
+    print(f"=== {phase} phase -> {log_path}", flush=True)
+    with open(log_path, "w", encoding="utf-8") as handle:
+        launch = subprocess.Popen(
+            command, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True
+        )
+        group = launch.pid
+        try:
+            launch.wait(timeout=arguments.phase_timeout_seconds)
+        except subprocess.TimeoutExpired:
+            print(f"    {phase} phase hit its timeout; stopping it", flush=True)
+        end_process_group(launch, group, arguments.settle_seconds)
+    return launch.returncode
+
+
+def check(name, passed, detail):
+    return {"name": name, "passed": bool(passed), "detail": detail}
+
+
+def evaluate(record, localize, snapshot_before, snapshot_after, arguments):
+    """Apply the pre-registered criteria to the two phase reports."""
+    checks = []
+    save = record.get("snapshot_save") or {}
+    checks.append(check(
+        "snapshot_written", save.get("success"),
+        f"save service reported {save.get('success')}: {save.get('message')!r}",
+    ))
+    checks.append(check(
+        "phases_measured_enough_poses",
+        (record.get("map_frame_samples") or 0) >= arguments.minimum_map_frame_samples
+        and (localize.get("map_frame_samples") or 0)
+        >= arguments.minimum_map_frame_samples,
+        f"map-frame samples recorded={record.get('map_frame_samples')} "
+        f"localized={localize.get('map_frame_samples')} "
+        f"minimum={arguments.minimum_map_frame_samples}",
+    ))
+    checks.append(check(
+        "ran_in_localization_mode",
+        localize.get("operation_mode") == "localization",
+        f"front end reported operation_mode={localize.get('operation_mode')!r}",
+    ))
+    restored = localize.get("first_global_keyframes")
+    checks.append(check(
+        "snapshot_restored",
+        localize.get("first_snapshot_loaded")
+        and restored is not None
+        and restored >= (record.get("last_global_keyframes") or 0),
+        f"localized session started with {restored} keyframes, "
+        f"snapshot_loaded={localize.get('first_snapshot_loaded')}, "
+        f"saved session ended with {record.get('last_global_keyframes')}",
+    ))
+    # The branch that makes this mode different: the restored global cloud
+    # replaces the local map wholesale, so there are no local keyframes behind
+    # it and the point count is the whole prior map rather than twelve scans.
+    checks.append(check(
+        "match_target_is_the_restored_map",
+        (localize.get("maximum_local_keyframes") == 0)
+        and (localize.get("local_map_points") or 0)
+        > (record.get("local_map_points") or 0),
+        f"local keyframes={localize.get('maximum_local_keyframes')} (mapping "
+        f"phase reached {record.get('maximum_local_keyframes')}), local map "
+        f"points={localize.get('local_map_points')} against "
+        f"{record.get('local_map_points')} while mapping",
+    ))
+    checks.append(check(
+        "localized_by_matching_not_dead_reckoning",
+        (localize.get("match_acceptance_rate") or 0.0)
+        >= arguments.minimum_match_acceptance_rate,
+        f"accepted {localize.get('match_accepted')} of "
+        f"{localize.get('match_attempts')} scans "
+        f"(rate {localize.get('match_acceptance_rate')}, floor "
+        f"{arguments.minimum_match_acceptance_rate})",
+    ))
+    join_position = localize.get("join_peak_position_error_m")
+    join_yaw = localize.get("join_peak_yaw_error_deg")
+    checks.append(check(
+        "localized_without_a_jump",
+        join_position is not None
+        and join_position <= arguments.maximum_join_position_error_m
+        and join_yaw <= arguments.maximum_join_yaw_error_deg,
+        f"peak error over the join: position={join_position} m yaw={join_yaw} deg "
+        f"(limits {arguments.maximum_join_position_error_m} m, "
+        f"{arguments.maximum_join_yaw_error_deg} deg)",
+    ))
+    recorded_peak = record.get("peak_position_error_m")
+    localized_peak = localize.get("peak_position_error_m")
+    recorded_yaw = record.get("peak_yaw_error_deg")
+    localized_yaw = localize.get("peak_yaw_error_deg")
+    checks.append(check(
+        "localized_accuracy_holds",
+        None not in (recorded_peak, localized_peak, recorded_yaw, localized_yaw)
+        and localized_peak <= recorded_peak + arguments.maximum_position_error_growth_m
+        and localized_yaw <= recorded_yaw + arguments.maximum_yaw_error_growth_deg,
+        f"peak map-frame error recorded={recorded_peak} m / {recorded_yaw} deg, "
+        f"localized={localized_peak} m / {localized_yaw} deg "
+        f"(allowed growth {arguments.maximum_position_error_growth_m} m, "
+        f"{arguments.maximum_yaw_error_growth_deg} deg)",
+    ))
+    # Read-only, measured as it happens rather than inspected afterwards. One
+    # distinct local-map size means the cloud the restore installed is the one
+    # every match ran against; a second size means something was added to it.
+    checks.append(check(
+        "the_prior_map_was_never_written_to",
+        localize.get("distinct_local_map_sizes") == 1
+        and localize.get("last_global_keyframes") == restored
+        and (localize.get("pose_graph_commits") or 0) == 0
+        and (localize.get("submap_reinitializations") or 0) == 0,
+        f"distinct local map sizes={localize.get('distinct_local_map_sizes')}, "
+        f"keyframes {restored} -> {localize.get('last_global_keyframes')}, "
+        f"pose graph commits={localize.get('pose_graph_commits')}, "
+        f"submap reinitializations={localize.get('submap_reinitializations')}",
+    ))
+    # The mode refuses to save on shutdown. Checked on the file rather than on
+    # a log line, because the guard being wrong would overwrite the very map
+    # the robot was localizing against.
+    checks.append(check(
+        "the_snapshot_file_was_not_rewritten",
+        snapshot_before is not None and snapshot_before == snapshot_after,
+        f"snapshot (size, mtime_ns) before={snapshot_before} after={snapshot_after}",
+    ))
+    recorded_cells = record.get("final_known_cells") or 0
+    restored_cells = localize.get("restored_known_cells")
+    checks.append(check(
+        "restored_map_rebuilt",
+        restored_cells is not None
+        and restored_cells
+        >= arguments.minimum_restored_known_cell_ratio * recorded_cells,
+        f"localized session rebuilt {restored_cells} known cells against "
+        f"{recorded_cells} saved "
+        f"(ratio floor {arguments.minimum_restored_known_cell_ratio})",
+    ))
+    return checks
+
+
+def report_lines(checks):
+    lines = ["RESULT snapshot restore and localize"]
+    for entry in checks:
+        lines.append(
+            f"  {'PASS' if entry['passed'] else 'FAIL'} {entry['name']}: {entry['detail']}"
+        )
+    lines.append(
+        f"  VERDICT {'PASS' if all(entry['passed'] for entry in checks) else 'FAIL'}"
+    )
+    return lines
+
+
+def load_report(path, phase):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError) as error:
+        print(
+            f"ABORTING: the {phase} phase wrote no usable report at {path}: {error}",
+            flush=True,
+        )
+        return None
+
+
+def snapshot_fingerprint(path):
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return [stat.st_size, stat.st_mtime_ns]
+
+
+def main(argv=None):
+    arguments = parse_arguments(argv)
+    bag = Path(arguments.bag).expanduser()
+    if not bag.exists():
+        print(f"ABORTING: dataset {bag} does not exist", flush=True)
+        return 3
+    directory = Path(arguments.report_directory)
+    if directory.exists() and not arguments.overwrite_report_directory:
+        print(
+            f"ABORTING: {directory} already holds a run; pass "
+            "--overwrite-report-directory to discard it.",
+            flush=True,
+        )
+        return 3
+    directory.mkdir(parents=True, exist_ok=True)
+    snapshot = directory / "custom_slam_3d.snapshot"
+    record_report = directory / "record.json"
+    localize_report = directory / "localize.json"
+    for stale in (snapshot, record_report, localize_report):
+        if stale.exists():
+            stale.unlink()
+
+    run_phase(
+        arguments, "record", record_report, "", snapshot, directory / "record.log"
+    )
+    if not snapshot.exists() or snapshot.stat().st_size == 0:
+        print(
+            f"ABORTING: the recorded phase left no snapshot at {snapshot}; "
+            f"see {directory / 'record.log'}",
+            flush=True,
+        )
+        return 1
+    before = snapshot_fingerprint(snapshot)
+    print(f"    snapshot: {snapshot} ({before[0]} bytes)", flush=True)
+    run_phase(
+        arguments, "localize", localize_report, record_report, snapshot,
+        directory / "localize.log",
+    )
+    after = snapshot_fingerprint(snapshot)
+
+    record = load_report(record_report, "record")
+    localize = load_report(localize_report, "localize")
+    if record is None or localize is None:
+        return 1
+    checks = evaluate(record, localize, before, after, arguments)
+    for line in report_lines(checks):
+        print(line, flush=True)
+    return 0 if all(entry["passed"] for entry in checks) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
-"""Measure one phase of the snapshot save/restore regression.
+"""Measure one phase of a snapshot save/restore regression.
 
-The regression runs this twice over one recorded dataset: once while mapping
-the first part and saving a snapshot, once after restarting the front end from
-that snapshot on the rest of the dataset. Each phase writes a JSON report and
-the driver compares the two.
+Two regressions drive this over one recorded dataset. Both start with a
+`record` phase that maps the first part and saves a snapshot. The `resume`
+phase restarts the front end from that snapshot in mapping mode and keeps
+adding to the map; the `localize` phase restarts it in localization mode,
+where the restored global cloud is the match target and nothing is ever added
+to it. Each phase writes a JSON report and the driver compares them.
 
 The measurement that makes the comparison meaningful is the anchor. Every other
 trajectory check in this package anchors an estimate to its own first sample,
@@ -106,8 +108,9 @@ class SnapshotResumeProbe(Node):
     def __init__(self):
         super().__init__("snapshot_resume_probe")
         self.phase = self.declare_parameter("phase", "record").value
-        if self.phase not in ("record", "resume"):
-            raise RuntimeError(f"phase must be record or resume, not {self.phase!r}")
+        if self.phase not in ("record", "resume", "localize"):
+            raise RuntimeError(
+                f"phase must be record, resume or localize, not {self.phase!r}")
         self.report_path = self.declare_parameter("report_path", "").value
         if not self.report_path:
             raise RuntimeError("report_path is required")
@@ -129,7 +132,7 @@ class SnapshotResumeProbe(Node):
 
         self.estimate_origin = None
         self.truth_origin = None
-        if self.phase == "resume":
+        if self.phase in ("resume", "localize"):
             previous = json.loads(Path(self.previous_report_path).read_text())
             anchor = previous.get("anchor")
             if not anchor:
@@ -151,6 +154,14 @@ class SnapshotResumeProbe(Node):
         self.known_cell_samples = []
         self.final_free_cells = None
         self.final_occupied_cells = None
+        # Counted here rather than sampled, because the claim being tested is
+        # about every scan: an estimate that merely looks accurate can be dead
+        # reckoning, and only the acceptance rate separates "matched against
+        # the restored map" from "coasted on wheel odometry".
+        self.match_attempts = 0
+        self.match_accepted = 0
+        self.local_map_points = set()
+        self.local_keyframes = set()
         self.started_wall = time.monotonic()
         self.snapshot_save = None
 
@@ -202,6 +213,16 @@ class SnapshotResumeProbe(Node):
             if self.first_status is None:
                 self.first_status = values
             self.last_status = values
+            accepted = values.get("match_accepted")
+            if accepted is not None:
+                self.match_attempts += 1
+                self.match_accepted += accepted == "true"
+            for key, sink in (
+                ("local_map_points", self.local_map_points),
+                ("local_keyframes", self.local_keyframes),
+            ):
+                if values.get(key) is not None:
+                    sink.add(int(values[key]))
 
     def map_callback(self, message):
         self.known_cell_samples.append(
@@ -280,6 +301,25 @@ class SnapshotResumeProbe(Node):
             "wall_seconds": round(time.monotonic() - self.started_wall, 1),
             "snapshot_save": self.snapshot_save,
         }
+        report["match_attempts"] = self.match_attempts
+        report["match_accepted"] = self.match_accepted
+        report["match_acceptance_rate"] = (
+            None if self.match_attempts == 0
+            else round(self.match_accepted / self.match_attempts, 4)
+        )
+        # A set, not a last value: localization replaces the whole local map
+        # with the restored global cloud once and must never touch it again, so
+        # "how many distinct sizes were seen" is the read-only claim itself.
+        report["distinct_local_map_sizes"] = len(self.local_map_points)
+        report["local_map_points"] = (
+            max(self.local_map_points) if self.local_map_points else None
+        )
+        report["maximum_local_keyframes"] = (
+            max(self.local_keyframes) if self.local_keyframes else None
+        )
+        report["operation_mode"] = (
+            None if self.last_status is None else self.last_status.get("operation_mode")
+        )
         if self.phase == "record":
             # Only the recorded phase publishes an anchor: the resumed phase
             # borrows this one so its errors are measured in the same frame.

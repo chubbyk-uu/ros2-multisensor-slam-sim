@@ -36,6 +36,7 @@ __pycache__/
 campaign_logs/
 snapshot_resume_reports/
 snapshot_resume_reports_run.log
+snapshot_localization_reports/
 selection_logs/
 band_random_seed_logs/
 band_random_seed.log
