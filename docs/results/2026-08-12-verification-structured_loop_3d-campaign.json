@@ -295,7 +295,7 @@
       "demoted_supports": 1,
       "reference_height": 0.0
     },
-    "world": "/home/jerry/robot_ws/slam/install/slam_robot_gazebo/share/slam_robot_gazebo/worlds/structured_loop_3d.sdf",
+    "world": "package://slam_robot_gazebo/worlds/structured_loop_3d.sdf",
     "world_geometry": {
       "non_static_collisions": 0,
       "parsed_obstacles": 29,
@@ -307,7 +307,7 @@
     }
   },
   "world": {
-    "path": "/home/jerry/robot_ws/slam/install/slam_robot_gazebo/share/slam_robot_gazebo/worlds/structured_loop_3d.sdf",
+    "path": "package://slam_robot_gazebo/worlds/structured_loop_3d.sdf",
     "profile": "structured_loop_3d",
     "sha256": "9fba4a68aba8e7a82a81d94805cba06c1d15a12451ab98e9c4a8074eb5e95173"
   }

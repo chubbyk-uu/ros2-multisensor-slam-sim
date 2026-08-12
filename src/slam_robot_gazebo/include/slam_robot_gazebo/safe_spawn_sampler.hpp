@@ -197,8 +197,12 @@ std::uint64_t makeSpawnSeed();
 // Version 2 added the parameters and the sampling bounds. Version 3 added the
 // non-static policy and the parsed-geometry counts: without them a record
 // cannot say whether the world held anything that might have moved, or which
-// of the two ways the sampler was told to treat it.
-constexpr int kSpawnRecordSchemaVersion = 3;
+// of the two ways the sampler was told to treat it. Version 4 added
+// traversable_step, which was missing from the "complete" parameter set in 2
+// and 3 even though it decides which surfaces count as floor and therefore
+// which cells are safe -- the omission was pinned in place by a test that
+// asserted the field count.
+constexpr int kSpawnRecordSchemaVersion = 4;
 
 // Returns the record as one line of JSON, so a caller that kept only a log can
 // still recover what produced these poses. Built here rather than in main so a

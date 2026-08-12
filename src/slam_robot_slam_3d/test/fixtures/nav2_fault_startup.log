@@ -1,0 +1,4 @@
+[frontier_exploration_regression-21] RESULT frontier exploration
+[frontier_exploration_regression-21]   host health: control starvation=0 (0.00/min) planner starvation=0 (0.00/min) healthy=yes
+[frontier_exploration_regression-21]   exploration fault: class=dependency_lost code=nav2_startup_timeout error_level=yes reason=Nav2 never accepted a navigation goal
+[frontier_exploration_regression-21]   VERDICT INFRA_UNSTABLE

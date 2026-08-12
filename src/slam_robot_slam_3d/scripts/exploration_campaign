@@ -24,6 +24,9 @@ import sys
 import time
 from pathlib import Path
 
+from ament_index_python.packages import PackageNotFoundError
+from ament_index_python.packages import get_package_share_directory
+
 PASS = 0
 FAIL = 1
 INFRA_UNSTABLE = 2
@@ -116,10 +119,44 @@ def launch_command(arguments, spawn=None):
 
 
 # Anything below this omits values a spawn record cannot be replayed without:
-# schema 2 added the sampling parameters and bounds, schema 3 added the
-# non-static policy and the parsed geometry counts. Refusing beats recording
-# evidence that will not survive the first question asked of it.
-MINIMUM_SPAWN_SCHEMA_VERSION = 3
+# schema 2 added the sampling parameters and bounds, schema 3 the non-static
+# policy and the parsed geometry counts, schema 4 the traversable step that
+# decides which surfaces count as floor. Refusing beats recording evidence that
+# will not survive the first question asked of it -- accepting an older record
+# would keep letting incomplete-but-plausible evidence into the repository,
+# which is the thing this whole mechanism exists to stop.
+MINIMUM_SPAWN_SCHEMA_VERSION = 4
+
+
+def portable_world_path(path):
+    """
+    Describe the world without naming this machine.
+
+    The SHA256 already identifies the contents, so the path is only a locating
+    hint -- and an absolute one is a bad hint: it points into somebody's home
+    directory, or worse into install/, which is a build artefact that does not
+    exist anywhere else. Prefer package://, fall back to the bare file name.
+    """
+    if not path:
+        return None
+    # Absolute but *not* resolved. Under --symlink-install the installed
+    # worlds/ directory is a link into the source tree, so resolving the file
+    # first walks straight out of the share directory and nothing matches.
+    given = Path(path).absolute()
+    parts = given.parts
+    for index in range(len(parts) - 2, 0, -1):
+        if parts[index] != "share":
+            continue
+        package = parts[index + 1]
+        try:
+            share = get_package_share_directory(package)
+        except (PackageNotFoundError, ValueError):
+            continue
+        # Only the candidate prefix is resolved, on both sides, so a symlinked
+        # install still recognises its own package.
+        if Path(share).resolve() == Path(*parts[:index + 2]).resolve():
+            return f"package://{package}/" + "/".join(parts[index + 2:])
+    return given.name
 
 
 def source_revision():
@@ -171,6 +208,9 @@ def sample_spawns(arguments):
         command, capture_output=True, text=True, check=True
     )
     result = json.loads(completed.stdout.strip().splitlines()[-1])
+    # The sampler is told an absolute path because that is what it has to open;
+    # the record does not have to keep it.
+    result["world"] = portable_world_path(result.get("world"))
     version = result.get("schema_version")
     if not isinstance(version, int) or version < MINIMUM_SPAWN_SCHEMA_VERSION:
         raise RuntimeError(
@@ -537,7 +577,7 @@ def main():
             "minimum_evaluable_runs": arguments.minimum_evaluable_runs,
         },
         "world": {
-            "path": arguments.world,
+            "path": portable_world_path(arguments.world),
             "sha256": world_sha256,
             "profile": arguments.world_profile,
         },

@@ -295,7 +295,7 @@
       "demoted_supports": 0,
       "reference_height": 0.0
     },
-    "world": "/home/jerry/robot_ws/slam/install/slam_robot_gazebo/share/slam_robot_gazebo/worlds/large_warehouse.sdf",
+    "world": "package://slam_robot_gazebo/worlds/large_warehouse.sdf",
     "world_geometry": {
       "non_static_collisions": 0,
       "parsed_obstacles": 18,
@@ -307,7 +307,7 @@
     }
   },
   "world": {
-    "path": "/home/jerry/robot_ws/slam/install/slam_robot_gazebo/share/slam_robot_gazebo/worlds/large_warehouse.sdf",
+    "path": "package://slam_robot_gazebo/worlds/large_warehouse.sdf",
     "profile": "large_warehouse",
     "sha256": "eeaf3fb5b86c15db8a293a09bdd7adfa7921431eb265573256c28d27f93515ff"
   }

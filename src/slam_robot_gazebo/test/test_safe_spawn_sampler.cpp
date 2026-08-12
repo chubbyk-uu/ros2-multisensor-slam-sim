@@ -426,11 +426,11 @@ TEST(SpawnRecord, CarriesEveryValueThatMovesAPose)
   // still parses and still looks replayable, so the failure would only surface
   // when someone tried to reproduce a batch and could not say why it differed.
   EXPECT_EQ(
-    record.at("parameters").get<nlohmann::json::object_t>().size(), 11U);
+    record.at("parameters").get<nlohmann::json::object_t>().size(), 12U);
   for (const auto & key : {"resolution", "robot_circumscribed_radius",
       "safety_margin", "robot_height", "vertical_margin",
       "minimum_spawn_separation", "spawn_z", "reference_x", "reference_y",
-      "non_static_extra_margin", "maximum_grid_cells"})
+      "non_static_extra_margin", "traversable_step", "maximum_grid_cells"})
   {
     EXPECT_TRUE(record.at("parameters").contains(key)) << key;
   }
@@ -440,7 +440,7 @@ TEST(SpawnRecord, CarriesEveryValueThatMovesAPose)
   {
     EXPECT_TRUE(record.contains(key)) << key;
   }
-  EXPECT_EQ(record.at("schema_version").get<int>(), 3);
+  EXPECT_EQ(record.at("schema_version").get<int>(), 4);
   EXPECT_EQ(record.at("seed").get<std::uint64_t>(), 4242U);
   EXPECT_EQ(record.at("world").get<std::string>(), "/tmp/w.sdf");
   EXPECT_EQ(record.at("sampling_bounds").at("minimum_x").get<double>(), -5.0);
@@ -473,6 +473,12 @@ TEST(SafeSpawnGrid, RejectsInvalidParametersAndUnsafeReference)
   auto invalid = SpawnSamplingParameters{};
   invalid.robot_height = 0.0;
   EXPECT_THROW(SafeSpawnGrid(simpleWorld(), invalid), std::invalid_argument);
+
+  // It decides which surfaces are floor, so it belongs in the same check as
+  // every other value that moves a pose. It was the one that got left out.
+  auto negative_step = SpawnSamplingParameters{};
+  negative_step.traversable_step = -0.01;
+  EXPECT_THROW(SafeSpawnGrid(simpleWorld(), negative_step), std::invalid_argument);
 
   auto geometry = simpleWorld();
   geometry.obstacles.push_back({

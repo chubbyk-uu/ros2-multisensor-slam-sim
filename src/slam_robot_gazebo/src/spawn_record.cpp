@@ -29,6 +29,7 @@ nlohmann::json parametersToJson(const SpawnSamplingParameters & parameters)
     {"reference_x", parameters.reference_x},
     {"reference_y", parameters.reference_y},
     {"non_static_extra_margin", parameters.non_static_extra_margin},
+    {"traversable_step", parameters.traversable_step},
     {"maximum_grid_cells", parameters.maximum_grid_cells},
   };
 }

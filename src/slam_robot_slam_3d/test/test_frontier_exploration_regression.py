@@ -1,6 +1,7 @@
 from importlib.machinery import SourceFileLoader
 import math
 from pathlib import Path
+import re
 import time
 
 import pytest
@@ -437,16 +438,17 @@ def test_a_dependency_fault_is_attributed_to_the_host_not_the_algorithm():
     # producing the map. Going through the ordinary path would find core
     # failures first and record an algorithm regression for something the
     # algorithm never did.
-    verdict = MODULE.classify(
-        failing_checks(), True, MODULE.FAILURE_CLASS_DEPENDENCY_LOST
-    )
-
-    assert verdict == MODULE.INFRA_UNSTABLE
+    for code in ("nav2_startup_timeout", "nav2_runtime_lost"):
+        verdict = MODULE.classify(
+            failing_checks(), True, MODULE.FAILURE_CLASS_DEPENDENCY_LOST, code
+        )
+        assert verdict == MODULE.INFRA_UNSTABLE, code
 
 
 def test_an_internal_fault_stays_a_core_failure():
     verdict = MODULE.classify(
-        failing_checks(), True, MODULE.FAILURE_CLASS_INTERNAL
+        failing_checks(), True, MODULE.FAILURE_CLASS_INTERNAL,
+        "internal_state_error"
     )
 
     assert verdict == MODULE.FAIL
@@ -456,27 +458,50 @@ def test_an_unrecognised_fault_class_does_not_excuse_the_algorithm():
     # The safe direction. A class this file does not know about is far more
     # likely to be a typo or a rename than a new kind of host failure, and
     # silently converting it to INFRA_UNSTABLE would hide real regressions.
-    verdict = MODULE.classify(failing_checks(), True, "something_new")
+    verdict = MODULE.classify(
+        failing_checks(), True, "something_new", "nav2_runtime_lost")
 
     assert verdict == MODULE.FAIL
+
+
+def test_a_dependency_class_with_an_unknown_code_does_not_excuse_it_either():
+    # The class alone is not the licence. Taking a run out of the algorithm's
+    # denominator is a claim about what went wrong, and a code this file does
+    # not recognise means it does not know what went wrong.
+    for code in (None, "", "nav2_something_new"):
+        verdict = MODULE.classify(
+            failing_checks(), True, MODULE.FAILURE_CLASS_DEPENDENCY_LOST, code
+        )
+        assert verdict == MODULE.FAIL, code
 
 
 def test_no_fault_leaves_the_ordinary_rules_untouched():
     passing = dict.fromkeys(failing_checks(), True)
 
-    assert MODULE.classify(passing, True, None) == MODULE.PASS
-    assert MODULE.classify(failing_checks(), True, None) == MODULE.FAIL
+    assert MODULE.classify(passing, True, None, None) == MODULE.PASS
+    assert MODULE.classify(failing_checks(), True, None, None) == MODULE.FAIL
 
 
-def test_the_failure_vocabulary_matches_the_explorer():
-    # Pinned against the C++ constants. These two files have to agree for the
-    # verdict to mean anything, and nothing in the build makes them.
+def explorer_vocabulary():
     header = (
         Path(__file__).parents[2] / "slam_robot_navigation" / "include"
         / "slam_robot_navigation" / "navigation_availability.hpp"
     ).read_text()
+    return set(re.findall(r'constexpr const char \* kFailure\w+ = "([^"]+)"', header))
 
-    assert f'"{MODULE.FAILURE_CLASS_DEPENDENCY_LOST}"' in header
-    assert f'"{MODULE.FAILURE_CLASS_INTERNAL}"' in header
-    for code in MODULE.FAILURE_CODES:
-        assert f'"{code}"' in header
+
+def test_the_failure_vocabulary_matches_the_explorer_in_both_directions():
+    # Set equality, not containment. A one-way check passes when the explorer
+    # grows a code this file has never heard of -- and that code would then be
+    # classified as a core failure, recording an infrastructure outage as an
+    # algorithm regression, silently.
+    ours = {MODULE.FAILURE_CLASS_DEPENDENCY_LOST, MODULE.FAILURE_CLASS_INTERNAL}
+    ours.update(MODULE.FAILURE_CODES)
+
+    assert ours == explorer_vocabulary()
+
+
+def test_every_infrastructure_pair_uses_the_declared_vocabulary():
+    for failure_class, code in MODULE.INFRASTRUCTURE_FAULTS:
+        assert failure_class in explorer_vocabulary()
+        assert code in MODULE.FAILURE_CODES

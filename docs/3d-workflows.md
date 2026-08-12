@@ -406,16 +406,26 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py \
 - **栅格范围由墙体决定**，取地面 ∩ 障碍包围盒外扩，并吸附到以世界原点为锚的
   格网，因此小于一格的墙体编辑不会平移全局格心。
 
-采样器把整条记录以一行 JSON 输出（`schema_version: 2`），除种子和位姿外还包含
-`parameters`（分辨率、外接圆半径、平面余量、整机高度、垂直余量、最小间距、生成
-抬升、参考点、栅格上限）与 `sampling_bounds`。**复现位姿需要种子与这整组参数**：
-其中任何一项变化都会改变安全格集合，进而改变同一种子给出的位姿。交互式启动把
-同一条记录以 `SAFE SPAWN RECORD ...` 打进日志，campaign 则把它整体写入
-`campaign_summary.json` 的 `spawn_sampling`；campaign 另外记录世界文件的 SHA256
-与 `source_revision`（`git_commit` 与 `dirty` 标志）。
+采样器把整条记录以一行 JSON 输出（当前 `schema_version: 4`），除种子和位姿外还
+包含 `parameters`（分辨率、外接圆半径、平面余量、整机高度、垂直余量、最小间距、
+生成抬升、参考点、非静态额外余量、可通过台阶、栅格上限）、`world_parsing_policy`、
+`world_geometry`、`support_resolution` 与 `sampling_bounds`。**复现位姿需要种子与
+这整组参数**：其中任何一项变化都会改变安全格集合，进而改变同一种子给出的位姿。
+`spawn_z` 是**相对参考地面的生成抬升**，不是绝对高度。
 
-`source_revision` 是**定位源码的线索，不是复现保证**：C++ 节点从 `install/`
-运行，构建时间早于运行时间，因此工作区干净并不证明当时跑的二进制就由该提交编出。
+交互式启动把同一条记录以 `SAFE SPAWN RECORD ...` 打进日志，campaign 则把它整体
+写入 `campaign_summary.json` 的 `spawn_sampling`；campaign 另外记录世界文件的
+SHA256 与 `source_revision`（commit 与 `dirty` 标志），并**拒绝低于 schema 4 的
+采样器**——接受旧记录等于继续放行"不完整却看起来可复现"的正式证据。
+
+两条关于记录含义的限制：
+
+- **SHA256 才是世界的内容标识，路径只是定位线索。**记录里的路径归一化为
+  `package://slam_robot_gazebo/worlds/xxx.sdf`，无法识别为包内资源时退化为裸
+  文件名；绝对路径不写入，因为它指向个人目录或 `install/` 这种构建产物位置。
+- **`source_revision` 是定位源码的线索，不是复现保证**：C++ 节点从 `install/`
+  运行，构建时间早于运行时间，因此工作区干净并不证明当时跑的二进制就由该提交
+  编出。
 
 连续若干周期没有未拉黑的可达 frontier，或连续到达目标但已知自由区不再增长，
 且已知自由单元达到下限后，节点发布 `/frontier_explorer/complete=true`，并调用

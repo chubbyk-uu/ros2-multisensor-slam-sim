@@ -764,9 +764,17 @@ FAILURE_CODES = (
     "nav2_runtime_lost",
     "internal_state_error",
 )
+# The only faults that may excuse the algorithm, named as whole pairs. A class
+# on its own is not enough: a dependency_lost carrying an unknown or empty code
+# is a fault this file does not understand, and understanding it is the whole
+# basis for taking the run out of the algorithm's denominator.
+INFRASTRUCTURE_FAULTS = frozenset({
+    (FAILURE_CLASS_DEPENDENCY_LOST, "nav2_startup_timeout"),
+    (FAILURE_CLASS_DEPENDENCY_LOST, "nav2_runtime_lost"),
+})
 
 
-def classify(checks, host_healthy, failure_class=None):
+def classify(checks, host_healthy, failure_class=None, failure_code=None):
     """Split "the algorithm regressed" from "this host was starved".
 
     The three outcomes partition every combination, which matters because an
@@ -781,9 +789,9 @@ def classify(checks, host_healthy, failure_class=None):
     evaluated first, so the run would be recorded as an algorithm regression
     for something the algorithm never did.
     """
-    if failure_class == FAILURE_CLASS_DEPENDENCY_LOST:
-        return INFRA_UNSTABLE
     if failure_class is not None:
+        if (failure_class, failure_code) in INFRASTRUCTURE_FAULTS:
+            return INFRA_UNSTABLE
         return FAIL
     core_failures = [
         name for name, passed in checks.items()
@@ -988,7 +996,9 @@ def evaluate(regression, arguments):
             f"reason={regression.failure_reason}",
             flush=True,
         )
-    verdict = classify(checks, host_healthy, regression.failure_class or None)
+    verdict = classify(
+        checks, host_healthy, regression.failure_class or None,
+        regression.failure_code or None)
     print(
         f"  VERDICT {['PASS', 'FAIL', 'INFRA_UNSTABLE'][verdict]}",
         flush=True,

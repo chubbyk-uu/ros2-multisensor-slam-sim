@@ -126,7 +126,9 @@ SafeSpawnGrid::SafeSpawnGrid(
     !std::isfinite(parameters_.minimum_spawn_separation) ||
     parameters_.minimum_spawn_separation < 0.0 ||
     !std::isfinite(parameters_.non_static_extra_margin) ||
-    parameters_.non_static_extra_margin < 0.0 || parameters_.maximum_grid_cells == 0U)
+    parameters_.non_static_extra_margin < 0.0 ||
+    !std::isfinite(parameters_.traversable_step) ||
+    parameters_.traversable_step < 0.0 || parameters_.maximum_grid_cells == 0U)
   {
     throw std::invalid_argument("invalid safe-spawn sampling parameters");
   }

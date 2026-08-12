@@ -295,7 +295,7 @@
       "demoted_supports": 0,
       "reference_height": 0.0
     },
-    "world": "/home/jerry/robot_ws/slam/install/slam_robot_gazebo/share/slam_robot_gazebo/worlds/slam_world.sdf",
+    "world": "package://slam_robot_gazebo/worlds/slam_world.sdf",
     "world_geometry": {
       "non_static_collisions": 0,
       "parsed_obstacles": 11,
@@ -307,7 +307,7 @@
     }
   },
   "world": {
-    "path": "/home/jerry/robot_ws/slam/install/slam_robot_gazebo/share/slam_robot_gazebo/worlds/slam_world.sdf",
+    "path": "package://slam_robot_gazebo/worlds/slam_world.sdf",
     "profile": "slam_world",
     "sha256": "03756ea66dff10db4907271faee915cb53e486a2910a21383d868e42df48fe4c"
   }

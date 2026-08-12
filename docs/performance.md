@@ -1549,11 +1549,17 @@ campaign 追加 `source_revision`（commit 与 dirty 标志）。**后者是定�
 最差门限余量：自由格 `+25.1%`，行程 `+38.0%`，已知包围盒宽 `+3.6%`、高 `+4.8%`。
 宽度那 `3.6%` 看着薄，但跑间离散度只有几厘米——它由墙体几何锁死，不是随机量。
 
-可复核摘要（自带完整采样参数、世界哈希与 `source_revision`）：
+可复核摘要：
 
 - `docs/results/2026-08-12-verification-structured_loop_3d-campaign.json`
 - `docs/results/2026-08-12-verification-slam_world-campaign.json`
 - `docs/results/2026-08-12-verification-large_warehouse-campaign.json`
+
+这三份是 **schema 3 记录**：运行时使用的是当时提交的默认 `traversable_step =
+0.025 m`，而该字段在 schema 3 里没有写进 JSON。复核需检出记录的提交并使用当时的
+默认参数。schema 4 补上了该字段，campaign 此后只接受 schema 4；这三份不伪装升级。
+文件里的世界路径事后做过脱敏（绝对路径改写为 `package://`），不影响任何运行数据
+或 SHA256。
 
 `structured_loop_3d` 那份记录的 `dirty` 为 `true`，原因是启动批次前仓库根目录留了
 一个未跟踪的临时日志文件，随后删除；`commit` 与另外两批同为 `ee2e57c`，无任何被

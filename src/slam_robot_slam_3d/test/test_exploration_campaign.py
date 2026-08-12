@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import time
 
+from ament_index_python.packages import get_package_share_directory
 import pytest
 
 MODULE = SourceFileLoader(
@@ -312,7 +313,7 @@ def test_a_spawn_record_without_replay_parameters_is_refused(monkeypatch):
 
 def test_a_spawn_record_that_drops_the_parameters_is_refused(monkeypatch):
     sampler_returning(monkeypatch, {
-        "schema_version": 3, "seed": 5, "poses": TWO_POSES,
+        "schema_version": 4, "seed": 5, "poses": TWO_POSES,
         "sampling_bounds": {"minimum_x": 0.0},
     })
 
@@ -321,18 +322,23 @@ def test_a_spawn_record_that_drops_the_parameters_is_refused(monkeypatch):
 
 
 def test_a_complete_spawn_record_is_kept_whole(monkeypatch):
+    world = os.path.join(
+        get_package_share_directory("slam_robot_gazebo"), "worlds", "slam_world.sdf")
     document = {
-        "schema_version": 3, "seed": 5, "poses": TWO_POSES,
+        "schema_version": 4, "seed": 5, "poses": TWO_POSES, "world": world,
         "parameters": {"safety_margin": 0.15}, "sampling_bounds": {"minimum_x": 0.0},
     }
-    sampler_returning(monkeypatch, document)
+    sampler_returning(monkeypatch, dict(document))
 
     poses, record = MODULE.sample_spawns(random_spawn_arguments())
 
     assert poses == TWO_POSES
     # Whole, not summarised: the summary is what the next batch gets compared
     # against, and a field dropped here cannot be recovered from the logs.
-    assert record == document
+    # The one field that is rewritten is the path, which the sampler needs
+    # absolute and the record does not.
+    assert record == dict(
+        document, world="package://slam_robot_gazebo/worlds/slam_world.sdf")
 
 
 def test_source_revision_locates_the_tree_without_claiming_to_prove_it():
@@ -377,7 +383,7 @@ def test_strict_mode_reaches_the_sampler_only_when_asked(monkeypatch):
     def fake_run(command, **kwargs):
         seen.append(list(command))
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps({
-            "schema_version": 3, "seed": 5, "poses": TWO_POSES,
+            "schema_version": 4, "seed": 5, "poses": TWO_POSES,
             "parameters": {"safety_margin": 0.15},
             "sampling_bounds": {"minimum_x": 0.0},
         }), stderr="")
@@ -395,10 +401,10 @@ def test_strict_mode_reaches_the_sampler_only_when_asked(monkeypatch):
     assert "--reject-non-static" in seen[-1]
 
 
-def test_a_schema_2_record_no_longer_satisfies_the_campaign():
+def test_an_incomplete_record_no_longer_satisfies_the_campaign():
     # It carried the parameters but not the non-static policy, so it cannot say
     # whether the world held anything the sampler could only approximate.
-    assert MODULE.MINIMUM_SPAWN_SCHEMA_VERSION == 3
+    assert MODULE.MINIMUM_SPAWN_SCHEMA_VERSION == 4
 
 
 def test_a_world_and_its_profile_must_travel_together():
@@ -419,7 +425,7 @@ def test_minimum_separation_reaches_the_sampler(monkeypatch):
     def fake_run(command, **kwargs):
         seen.append(list(command))
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps({
-            "schema_version": 3, "seed": 5, "poses": TWO_POSES,
+            "schema_version": 4, "seed": 5, "poses": TWO_POSES,
             "parameters": {"safety_margin": 0.15},
             "sampling_bounds": {"minimum_x": 0.0},
         }), stderr="")
@@ -433,3 +439,79 @@ def test_minimum_separation_reaches_the_sampler(monkeypatch):
 
     assert "--minimum-separation" in seen[-1]
     assert seen[-1][seen[-1].index("--minimum-separation") + 1] == "3.5"
+
+
+def fault_fixture(name):
+    """
+    Return real launch output from a fault-injection run, not a typed shape.
+
+    The prefix is the load-bearing part: the patterns have to tolerate whatever
+    ros2 launch puts in front of a line, and a fixture typed by hand only ever
+    proves the parser matches what its author imagined.
+    """
+    return (Path(__file__).parent / "fixtures" / f"nav2_fault_{name}.log").read_text()
+
+
+def test_real_startup_fault_output_is_parsed_as_infrastructure():
+    record = MODULE.parse_run(fault_fixture("startup"), 2)
+
+    assert record["verdict"] == MODULE.INFRA_UNSTABLE
+    assert record["exploration_fault_class"] == "dependency_lost"
+    assert record["exploration_fault_code"] == "nav2_startup_timeout"
+
+
+def test_real_runtime_fault_output_is_parsed_as_infrastructure():
+    record = MODULE.parse_run(fault_fixture("runtime"), 2)
+
+    assert record["verdict"] == MODULE.INFRA_UNSTABLE
+    assert record["exploration_fault_class"] == "dependency_lost"
+    assert record["exploration_fault_code"] == "nav2_runtime_lost"
+
+
+def test_a_batch_of_real_dependency_faults_says_nothing_about_the_algorithm():
+    record = MODULE.parse_run(fault_fixture("runtime"), 2)
+    arguments = MODULE.parse_arguments([])
+
+    outcome, reason = MODULE.judge([record] * 5, arguments)
+
+    # Not REJECTED. Every run was the host, so the batch has no evaluable runs
+    # left and cannot condemn the algorithm for something it never did.
+    assert outcome == "BATCH_INVALID"
+    assert "attributed to the host" in reason
+
+
+def test_real_fault_runs_leave_the_algorithm_denominator_empty():
+    faults = [MODULE.parse_run(fault_fixture("startup"), 2)] * 2
+    passes = [MODULE.parse_run(PASSING_RUN, 0)] * 3
+    arguments = MODULE.parse_arguments(["--minimum-evaluable-runs", "3"])
+
+    assert MODULE.judge(faults + passes, arguments)[0] == "ACCEPTED"
+
+
+def test_a_package_world_is_recorded_without_naming_this_machine():
+    share = get_package_share_directory("slam_robot_gazebo")
+
+    recorded = MODULE.portable_world_path(
+        os.path.join(share, "worlds", "slam_world.sdf"))
+
+    # Resolving the file first would walk out of the share directory under
+    # --symlink-install, where worlds/ is a link into the source tree, and
+    # silently degrade every package world to a bare file name.
+    assert recorded == "package://slam_robot_gazebo/worlds/slam_world.sdf"
+
+
+def test_a_world_outside_any_package_keeps_only_its_name():
+    assert MODULE.portable_world_path("/home/someone/scratch/custom.sdf") == "custom.sdf"
+    assert MODULE.portable_world_path("/tmp/share/not_a_package/x.sdf") == "x.sdf"
+    assert MODULE.portable_world_path(None) is None
+
+
+def test_no_recorded_path_leaks_a_home_or_build_directory():
+    for value in (
+        MODULE.portable_world_path("/home/someone/ws/install/a/share/b/w.sdf"),
+        MODULE.portable_world_path(
+            os.path.join(get_package_share_directory("slam_robot_gazebo"),
+                         "worlds", "slam_world.sdf")),
+    ):
+        assert "/home/" not in value
+        assert "install/" not in value
