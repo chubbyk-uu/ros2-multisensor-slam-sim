@@ -94,6 +94,11 @@ def generate_launch_description():
             DeclareLaunchArgument("spawn_x", default_value="0.0"),
             DeclareLaunchArgument("spawn_y", default_value="0.0"),
             DeclareLaunchArgument("spawn_yaw", default_value="0.0"),
+            # Declared rather than left to leak through the scoped group: an
+            # undeclared value does reach the include, but only by inheritance
+            # that a later refactor would silently remove, and the fault
+            # injection regression would then quietly stop injecting anything.
+            DeclareLaunchArgument("nav2_autostart", default_value="true"),
             GroupAction(
                 scoped=True,
                 actions=[
@@ -109,6 +114,7 @@ def generate_launch_description():
                             "spawn_y": LaunchConfiguration("spawn_y"),
                             "spawn_yaw": LaunchConfiguration("spawn_yaw"),
                             "exploration_seed": LaunchConfiguration("exploration_seed"),
+                            "nav2_autostart": LaunchConfiguration("nav2_autostart"),
                             "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
                             "wsl_gpu_adapter": LaunchConfiguration(
                                 "wsl_gpu_adapter"

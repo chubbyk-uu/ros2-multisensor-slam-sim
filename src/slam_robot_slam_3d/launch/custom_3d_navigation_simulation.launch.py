@@ -95,6 +95,7 @@ def generate_launch_description():
             "rviz_config": LaunchConfiguration("rviz_config"),
             "map_topic": "/map",
             "lidar_topic": "/lidar_3d/points",
+            "autostart": LaunchConfiguration("nav2_autostart"),
         }.items(),
     )
     return LaunchDescription(
@@ -102,6 +103,13 @@ def generate_launch_description():
             DeclareLaunchArgument("spawn_x", default_value="0.0"),
             DeclareLaunchArgument("spawn_y", default_value="0.0"),
             DeclareLaunchArgument("spawn_yaw", default_value="0.0"),
+            # Exposed for the fault-injection regression only. Held false, the
+            # lifecycle manager waits for an explicit manage_nodes call, which
+            # is the one way to park Nav2 in the configured-but-not-active
+            # state where its action servers exist and reject every goal. That
+            # window is a real race during normal autostart; this is how it is
+            # held still long enough to assert on.
+            DeclareLaunchArgument("nav2_autostart", default_value="true"),
             DeclareLaunchArgument("world", default_value=default_world),
             DeclareLaunchArgument("gui", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),

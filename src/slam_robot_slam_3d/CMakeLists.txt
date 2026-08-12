@@ -272,6 +272,7 @@ install(
     scripts/launch_smoke_check
     scripts/map_projection_census
     scripts/map_projection_compare
+    scripts/nav2_fault_injection_regression
     scripts/pointcloud_contract_check
     scripts/preprocessing_regression
     scripts/recorded_odom_tf_publisher
@@ -412,6 +413,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_exploration_campaign
     test/test_exploration_campaign.py
+  )
+  ament_add_pytest_test(
+    test_nav2_fault_injection_regression
+    test/test_nav2_fault_injection_regression.py
   )
   ament_add_pytest_test(
     test_recorded_odom_tf_publisher

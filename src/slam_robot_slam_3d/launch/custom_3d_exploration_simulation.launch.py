@@ -104,6 +104,7 @@ def launch_exploration(context):
             "spawn_x": spawn["x"],
             "spawn_y": spawn["y"],
             "spawn_yaw": spawn["yaw"],
+            "nav2_autostart": LaunchConfiguration("nav2_autostart"),
             "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
             "wsl_gpu_adapter": LaunchConfiguration("wsl_gpu_adapter"),
         }.items(),
@@ -187,6 +188,9 @@ def generate_launch_description():
                 "snapshot_path", default_value=default_snapshot
             ),
             DeclareLaunchArgument("load_snapshot", default_value="false"),
+            # See custom_3d_navigation_simulation.launch.py: fault injection
+            # only, so the Nav2 startup race can be held still and asserted on.
+            DeclareLaunchArgument("nav2_autostart", default_value="true"),
             DeclareLaunchArgument("exploration_seed", default_value="0"),
             DeclareLaunchArgument(
                 "use_wsl_gpu",

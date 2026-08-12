@@ -551,7 +551,15 @@ private:
           // The only proof the whole chain is operational. The planner
           // activates independently of bt_navigator, so a taken path request
           // says nothing about whether a navigation goal would be taken.
+          const bool first = !navigation_availability_.everOperational();
           navigation_availability_.observeNavigationGoalAccepted();
+          if (first) {
+            // Said once, because it is the fact that separates a run that
+            // never started from one that stopped, and the fault injection
+            // regression has no other way to know the difference happened.
+            RCLCPP_INFO(
+              get_logger(), "Nav2 accepted a navigation goal; the chain is operational");
+          }
         }
       };
     options.result_callback = [this, request_id](const NavigateGoalHandle::WrappedResult & result) {

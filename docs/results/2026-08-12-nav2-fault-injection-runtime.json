@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "explorer_declared_a_fault": true,
+    "fault_code_names_the_right_failure": true,
+    "fault_fired_while_simulation_time_was_frozen": true,
+    "fault_is_a_dependency_loss": true,
+    "regression_classified_it_as_infrastructure": true,
+    "regression_reported_a_verdict": true,
+    "run_ended_well_before_its_budget": true
+  },
+  "fault_class": "dependency_lost",
+  "fault_code": "nav2_runtime_lost",
+  "log": "fault_injection_logs/runtime.log",
+  "scenario": "runtime",
+  "verdict": "PASS",
+  "wall_seconds": 55.8,
+  "wall_timeout": 300.0
+}

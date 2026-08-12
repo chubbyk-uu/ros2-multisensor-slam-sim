@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+
+"""Prove the Nav2 dependency-fault chain by actually breaking Nav2.
+
+Every link in that chain has an inverted failure mode and none of them can be
+exercised by a healthy run. The explorer must call a fault rather than absorb
+it; the regression must classify it rather than run out its budget; the
+campaign must attribute it to the host rather than to the algorithm. Each of
+those is unit tested on its own, and each unit test would still pass if the
+three never talked to each other.
+
+Two scenarios, because they fail differently:
+
+  startup  Nav2 is parked configured-but-not-active, so its action servers
+           exist on the graph and reject every goal. This is the real race
+           during normal autostart, held still. It must end as
+           nav2_startup_timeout.
+
+  runtime  A navigation goal is accepted first, establishing that the chain
+           was operational, and only then is Nav2 shut down and Gazebo
+           *paused*. Paused, not killed: killing it trips the campaign's own
+           simulator watchdog, which would end the run for the right reason by
+           the wrong route and prove nothing about the explorer. Pausing also
+           freezes /clock, which is the point -- a budget measured in
+           simulation time would never expire here, and that is the one bug
+           this scenario can catch that no unit test can.
+"""
+
+import argparse
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+STARTUP = "startup"
+RUNTIME = "runtime"
+
+PASS = 0
+FAIL = 1
+# The scenario never got to test anything: Nav2 has to work before "Nav2
+# stopped working" can be injected. Kept apart from FAIL because retrying is
+# the right response to one and investigating is the right response to the
+# other, and a bringup that hangs is a property of the host.
+VOID = 2
+
+# Same list the campaign refuses to start against. Two simulators on one
+# machine is exactly the condition that produced the hung Nav2 bringup this
+# check was added after.
+LEFTOVER_PROCESS_PATTERNS = (
+    "gz sim",
+    "frontier_explorer_node",
+    "scan_to_map_odometry_node",
+    "bt_navigator",
+    "controller_server",
+    "planner_server",
+)
+
+MANAGED_NODES = ("/planner_server", "/bt_navigator")
+# The explorer's own report line, which is what the regression prints and the
+# campaign parses. Asserting on it rather than on the diagnostics keeps this
+# checking the same surface the campaign reads.
+FAULT_PATTERN = re.compile(r"exploration fault: class=(\w+) code=(\w+)")
+VERDICT_PATTERN = re.compile(r"VERDICT (PASS|FAIL|INFRA_UNSTABLE)")
+# rclcpp stamps its log lines with system time, not the node clock, so this
+# stays readable and comparable even while simulation time is frozen -- which
+# is precisely the condition being tested.
+ABORT_STAMP_PATTERN = re.compile(
+    r"\[frontier_explorer_node-\d+\] \[ERROR\] \[(\d+\.\d+)\]")
+# The explorer says this once, the first time a NavigateToPose goal is taken.
+# It is the fact that separates "never started" from "stopped", so the runtime
+# scenario cannot begin until it appears -- otherwise breaking Nav2 would just
+# reproduce the startup scenario under a different name.
+OPERATIONAL_PATTERN = re.compile(r"the chain is operational")
+
+
+def run_quiet(command, timeout=30.0):
+    try:
+        return subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def leftover_processes():
+    found = []
+    for pattern in LEFTOVER_PROCESS_PATTERNS:
+        result = run_quiet(["pgrep", "-af", pattern], timeout=10.0)
+        if result is not None and result.stdout.strip():
+            found.append(pattern)
+    return found
+
+
+def gazebo_pids():
+    found = run_quiet(["pgrep", "-f", "gz sim"])
+    if found is None or not found.stdout.strip():
+        return []
+    return [int(line) for line in found.stdout.split()]
+
+
+def signal_gazebo(number):
+    for pid in gazebo_pids():
+        try:
+            os.kill(pid, number)
+        except ProcessLookupError:
+            continue
+
+
+def node_is_up(name):
+    found = run_quiet(["ros2", "node", "list"], timeout=20.0)
+    return found is not None and name in found.stdout.split()
+
+
+def wait_for(predicate, timeout, description, log):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(1.0)
+    print(f"  gave up waiting for {description}", flush=True)
+    return False
+
+
+def log_text(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def end_process_group(launch, group, settle_seconds):
+    for number in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(group, number)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + settle_seconds
+        while True:
+            launch.poll()
+            try:
+                os.killpg(group, 0)
+            except ProcessLookupError:
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+
+
+def configure_without_activating(log):
+    """Park Nav2 in the state where its servers exist and reject everything."""
+    for node in MANAGED_NODES:
+        if not wait_for(
+                lambda node=node: node_is_up(node), 120.0,
+                f"{node} to appear", log):
+            return False
+    for node in MANAGED_NODES:
+        result = run_quiet(["ros2", "lifecycle", "set", node, "configure"], 60.0)
+        if result is None or result.returncode != 0:
+            print(f"  could not configure {node}", flush=True)
+            return False
+        print(f"  {node} configured and deliberately left inactive", flush=True)
+    return True
+
+
+def break_nav2_after_first_goal(log_path, arguments):
+    """Wait for proof the chain worked, then take it away."""
+    deadline = time.monotonic() + arguments.operational_timeout
+    while time.monotonic() < deadline:
+        if OPERATIONAL_PATTERN.search(log_text(log_path)) is not None:
+            break
+        time.sleep(2.0)
+    else:
+        # No goal was ever accepted, so a fault here would be indistinguishable
+        # from the startup scenario and would prove nothing about runtime loss.
+        print("  no navigation goal was ever accepted; scenario is void", flush=True)
+        return False
+    print("  a navigation goal was accepted; the chain was operational", flush=True)
+    for node in MANAGED_NODES:
+        run_quiet(["ros2", "lifecycle", "set", node, "deactivate"], 60.0)
+    print("  Nav2 deactivated", flush=True)
+    # Paused rather than killed, so the campaign's simulator watchdog stays out
+    # of it and /clock stops advancing while wall time keeps running.
+    signal_gazebo(signal.SIGSTOP)
+    paused_at = time.time()
+    print(f"  Gazebo paused at {paused_at:.3f}; /clock is now frozen", flush=True)
+    return paused_at
+
+
+def scenario_command(arguments):
+    command = [
+        "ros2", "launch", "slam_robot_slam_3d",
+        "frontier_exploration_regression.launch.py",
+        "gui:=false", "rviz:=false",
+        f"world:={arguments.world}",
+        f"world_profile:={arguments.world_profile}",
+        f"wall_timeout:={arguments.wall_timeout}",
+    ]
+    if arguments.scenario == STARTUP:
+        command.append("nav2_autostart:=false")
+    return command
+
+
+def judge(scenario, text, wall_seconds, arguments, paused_at=None):
+    """Every criterion is written down before the run, as in the campaign."""
+    fault = FAULT_PATTERN.search(text)
+    verdict = VERDICT_PATTERN.search(text)
+    aborted_at = ABORT_STAMP_PATTERN.search(text)
+    expected_code = (
+        "nav2_startup_timeout" if scenario == STARTUP else "nav2_runtime_lost")
+    checks = {
+        "explorer_declared_a_fault": fault is not None,
+        "fault_is_a_dependency_loss": (
+            fault is not None and fault.group(1) == "dependency_lost"),
+        "fault_code_names_the_right_failure": (
+            fault is not None and fault.group(2) == expected_code),
+        "regression_reported_a_verdict": verdict is not None,
+        # The whole point of the fault path: without it the run sits out its
+        # full budget waiting for a map that is never coming.
+        "regression_classified_it_as_infrastructure": (
+            verdict is not None and verdict.group(1) == "INFRA_UNSTABLE"),
+        "run_ended_well_before_its_budget": (
+            wall_seconds < arguments.wall_timeout * arguments.early_exit_fraction),
+    }
+    if paused_at is not None:
+        # The property no unit test can reach. Simulation time stopped when
+        # Gazebo was paused, so a budget measured on the node clock would still
+        # be waiting; the deadline expiring after this instant is what proves
+        # it is measured on the steady clock instead.
+        checks["fault_fired_while_simulation_time_was_frozen"] = (
+            aborted_at is not None and float(aborted_at.group(1)) > paused_at)
+    return checks
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scenario", choices=(STARTUP, RUNTIME), required=True)
+    parser.add_argument(
+        "--world",
+        default="/opt/ros/jazzy/share/slam_robot_gazebo/worlds/slam_world.sdf")
+    parser.add_argument("--world-profile", default="slam_world")
+    # Short on purpose. A budget this scenario is allowed to reach would make
+    # "ended early" untestable, and the fault is supposed to fire in seconds.
+    parser.add_argument("--wall-timeout", type=float, default=300.0)
+    parser.add_argument("--operational-timeout", type=float, default=240.0)
+    parser.add_argument("--early-exit-fraction", type=float, default=0.8)
+    parser.add_argument("--settle-seconds", type=float, default=20.0)
+    parser.add_argument(
+        "--log", default="nav2_fault_injection.log",
+        help="Relative to the working directory, so the evidence outlives the "
+             "session that produced it.")
+    parser.add_argument("--report")
+    arguments = parser.parse_args()
+
+    leftovers = leftover_processes()
+    if leftovers:
+        print(
+            "REFUSING TO START: a previous run is still alive "
+            f"({', '.join(leftovers)})",
+            flush=True)
+        return VOID
+
+    log_path = Path(arguments.log)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"=== {arguments.scenario} fault injection -> {log_path}", flush=True)
+    started = time.monotonic()
+    with open(log_path, "w", encoding="utf-8") as handle:
+        launch = subprocess.Popen(
+            scenario_command(arguments), stdout=handle,
+            stderr=subprocess.STDOUT, start_new_session=True)
+        group = launch.pid
+        # For the runtime scenario this is the instant Gazebo was paused, which
+        # a later criterion compares the abort against; for startup it is just
+        # a flag. Falsy in both cases means nothing was injected.
+        injected = False
+        try:
+            if arguments.scenario == STARTUP:
+                injected = configure_without_activating(log_path)
+            else:
+                injected = break_nav2_after_first_goal(log_path, arguments)
+            deadline = time.monotonic() + arguments.wall_timeout
+            while launch.poll() is None and time.monotonic() < deadline:
+                time.sleep(1.0)
+        finally:
+            # Resume before ending the group: a stopped process cannot act on
+            # a termination signal, and would be left behind holding its pid.
+            signal_gazebo(signal.SIGCONT)
+            end_process_group(launch, group, arguments.settle_seconds)
+
+    wall_seconds = time.monotonic() - started
+    text = log_text(log_path)
+    checks = judge(
+        arguments.scenario, text, wall_seconds, arguments,
+        injected if arguments.scenario == RUNTIME and injected else None)
+
+    print(f"RESULT nav2 fault injection ({arguments.scenario})", flush=True)
+    if not injected:
+        # Nothing was broken, so nothing can be concluded about what happens
+        # when it breaks. Scoring this as a failure would blame the state
+        # machine for a bringup that never completed.
+        print(
+            "  the fault could not be injected; this run tested nothing",
+            flush=True)
+        print("  VERDICT VOID", flush=True)
+        return VOID
+    print(f"  wall={wall_seconds:.1f} s budget={arguments.wall_timeout:.1f} s", flush=True)
+    fault = FAULT_PATTERN.search(text)
+    if fault is not None:
+        print(f"  fault: class={fault.group(1)} code={fault.group(2)}", flush=True)
+    for name, passed in checks.items():
+        print(f"  {'PASS' if passed else 'FAIL'} {name}", flush=True)
+    passed = all(checks.values())
+    print(f"  VERDICT {'PASS' if passed else 'FAIL'}", flush=True)
+
+    if arguments.report:
+        Path(arguments.report).write_text(
+            json.dumps({
+                "scenario": arguments.scenario,
+                "wall_seconds": round(wall_seconds, 1),
+                "wall_timeout": arguments.wall_timeout,
+                "checks": checks,
+                "fault_class": None if fault is None else fault.group(1),
+                "fault_code": None if fault is None else fault.group(2),
+                "log": str(log_path),
+                "verdict": "PASS" if passed else "FAIL",
+            }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return PASS if passed else FAIL
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -40,3 +40,4 @@ selection_logs/
 band_random_seed_logs/
 band_random_seed.log
 selection_campaign.log
+fault_injection_logs/
