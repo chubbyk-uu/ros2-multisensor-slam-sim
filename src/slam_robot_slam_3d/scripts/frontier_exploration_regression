@@ -181,29 +181,36 @@ def map_bounds(message, predicate, world_from_map=(0.0, 0.0, 0.0)):
     ]
     if not selected:
         return None
-    xs, ys = zip(*selected)
     origin = message.info.origin.position
-    local_corners = (
-        (origin.x + min(xs) * resolution, origin.y + min(ys) * resolution),
-        (origin.x + min(xs) * resolution,
-         origin.y + (max(ys) + 1) * resolution),
-        (origin.x + (max(xs) + 1) * resolution,
-         origin.y + min(ys) * resolution),
-        (origin.x + (max(xs) + 1) * resolution,
-         origin.y + (max(ys) + 1) * resolution),
-    )
+    origin_yaw = yaw_of(message.info.origin.orientation)
     offset_x, offset_y, yaw = world_from_map
-    cosine = math.cos(yaw)
-    sine = math.sin(yaw)
-    world_corners = [
+    world_cosine = math.cos(yaw)
+    world_sine = math.sin(yaw)
+    origin_world_x = offset_x + world_cosine * origin.x - world_sine * origin.y
+    origin_world_y = offset_y + world_sine * origin.x + world_cosine * origin.y
+    total_yaw = yaw + origin_yaw
+    cosine = math.cos(total_yaw)
+    sine = math.sin(total_yaw)
+    world_centres = [
         (
-            offset_x + cosine * x - sine * y,
-            offset_y + sine * x + cosine * y,
+            origin_world_x + cosine * ((x + 0.5) * resolution) -
+            sine * ((y + 0.5) * resolution),
+            origin_world_y + sine * ((x + 0.5) * resolution) +
+            cosine * ((y + 0.5) * resolution),
         )
-        for x, y in local_corners
+        for x, y in selected
     ]
-    world_x, world_y = zip(*world_corners)
-    return (min(world_x), min(world_y), max(world_x), max(world_y))
+    world_x, world_y = zip(*world_centres)
+    # Each selected cell is a rotated square. Expanding centre extrema by its
+    # axis-aligned half extent is exact and avoids the large overestimate from
+    # rotating an already axis-aligned local bounding box.
+    half_extent = 0.5 * resolution * (abs(cosine) + abs(sine))
+    return (
+        min(world_x) - half_extent,
+        min(world_y) - half_extent,
+        max(world_x) + half_extent,
+        max(world_y) + half_extent,
+    )
 
 
 def bounds_area(bounds):

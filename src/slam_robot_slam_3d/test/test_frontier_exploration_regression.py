@@ -17,7 +17,14 @@ def test_known_free_cells_uses_navigation_free_threshold():
 
 
 def test_map_bounds_tracks_only_selected_cells_in_world_coordinates():
-    origin = type("Origin", (), {"position": type("Point", (), {"x": 1.0, "y": -2.0})()})()
+    origin = type(
+        "Origin", (), {
+            "position": type("Point", (), {"x": 1.0, "y": -2.0})(),
+            "orientation": type(
+                "Quaternion", (), {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+            )(),
+        }
+    )()
     message = type(
         "Grid",
         (),
@@ -40,7 +47,12 @@ def test_map_bounds_tracks_only_selected_cells_in_world_coordinates():
 
 def test_map_bounds_applies_random_spawn_translation_and_yaw():
     origin = type(
-        "Origin", (), {"position": type("Point", (), {"x": 0.0, "y": 0.0})()}
+        "Origin", (), {
+            "position": type("Point", (), {"x": 0.0, "y": 0.0})(),
+            "orientation": type(
+                "Quaternion", (), {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
+            )(),
+        }
     )()
     message = type(
         "Grid", (), {
