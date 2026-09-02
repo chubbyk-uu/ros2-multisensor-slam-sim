@@ -1,0 +1,8 @@
+/**:
+  ros__parameters:
+    # The established mapping input. This explicit profile makes the A/B
+    # command line self-describing without changing the default pipeline.
+    ground_filter:
+      enabled: false
+    outlier_filter:
+      enabled: false

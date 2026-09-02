@@ -13,6 +13,14 @@ def generate_launch_description():
             "custom_3d_slam.yaml",
         ]
     )
+    default_overrides = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_slam_3d"),
+            "config",
+            "preprocessing_experiments",
+            "baseline.yaml",
+        ]
+    )
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -21,6 +29,11 @@ def generate_launch_description():
                 description="Custom 3D preprocessing parameter file.",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
+            DeclareLaunchArgument(
+                "preprocessor_overrides_file",
+                default_value=default_overrides,
+                description="Additional PointCloudPreprocessor parameters.",
+            ),
             Node(
                 package="slam_robot_slam_3d",
                 executable="point_cloud_preprocessor_node",
@@ -28,6 +41,7 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     LaunchConfiguration("params_file"),
+                    LaunchConfiguration("preprocessor_overrides_file"),
                     {"use_sim_time": LaunchConfiguration("use_sim_time")},
                 ],
             ),

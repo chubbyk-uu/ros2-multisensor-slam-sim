@@ -21,6 +21,14 @@ struct PointCloudPreprocessorParameters
   double self_max_y{0.23};
   double self_min_z{-0.30};
   double self_max_z{0.05};
+  // Experimental filters are intentionally disabled in the default mapping
+  // pipeline.  They make controlled fixed-bag comparisons possible without
+  // silently changing the established front-end input contract.
+  bool ground_filter_enabled{false};
+  double ground_filter_maximum_z{-0.20};
+  bool outlier_filter_enabled{false};
+  int outlier_filter_mean_k{20};
+  double outlier_filter_standard_deviation_multiplier{1.0};
 };
 
 struct PointCloudPreprocessingStatistics
@@ -29,6 +37,8 @@ struct PointCloudPreprocessingStatistics
   std::size_t finite_points{0U};
   std::size_t range_filtered_points{0U};
   std::size_t self_filter_passed_points{0U};
+  std::size_t ground_filter_passed_points{0U};
+  std::size_t outlier_filter_passed_points{0U};
   std::size_t output_points{0U};
 };
 

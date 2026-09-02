@@ -60,11 +60,14 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "3D preprocessing %s -> %s, range=[%.2f, %.2f] m, voxel=%.3f m",
+      "3D preprocessing %s -> %s, range=[%.2f, %.2f] m, voxel=%.3f m, "
+      "low-return=%s, statistical-outlier=%s",
       input_topic_.c_str(), output_topic_.c_str(),
       preprocessor_.parameters().minimum_range,
       preprocessor_.parameters().maximum_range,
-      preprocessor_.parameters().voxel_leaf_size);
+      preprocessor_.parameters().voxel_leaf_size,
+      preprocessor_.parameters().ground_filter_enabled ? "on" : "off",
+      preprocessor_.parameters().outlier_filter_enabled ? "on" : "off");
   }
 
 private:
@@ -91,6 +94,18 @@ private:
       "self_filter.min_z", parameters.self_min_z);
     parameters.self_max_z = declare_parameter<double>(
       "self_filter.max_z", parameters.self_max_z);
+    parameters.ground_filter_enabled = declare_parameter<bool>(
+      "ground_filter.enabled", parameters.ground_filter_enabled);
+    parameters.ground_filter_maximum_z = declare_parameter<double>(
+      "ground_filter.maximum_z", parameters.ground_filter_maximum_z);
+    parameters.outlier_filter_enabled = declare_parameter<bool>(
+      "outlier_filter.enabled", parameters.outlier_filter_enabled);
+    parameters.outlier_filter_mean_k = declare_parameter<int>(
+      "outlier_filter.mean_k", parameters.outlier_filter_mean_k);
+    parameters.outlier_filter_standard_deviation_multiplier =
+      declare_parameter<double>(
+      "outlier_filter.standard_deviation_multiplier",
+      parameters.outlier_filter_standard_deviation_multiplier);
     return parameters;
   }
 
@@ -140,6 +155,12 @@ private:
     status.values.push_back(makeValue(
       "self_filter_passed_points",
       std::to_string(statistics.self_filter_passed_points)));
+    status.values.push_back(makeValue(
+      "ground_filter_passed_points",
+      std::to_string(statistics.ground_filter_passed_points)));
+    status.values.push_back(makeValue(
+      "outlier_filter_passed_points",
+      std::to_string(statistics.outlier_filter_passed_points)));
     status.values.push_back(makeValue(
       "output_points", std::to_string(statistics.output_points)));
     status.values.push_back(makeValue(

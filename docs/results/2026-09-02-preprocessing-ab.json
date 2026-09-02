@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-02",
+  "dataset": "bags/structured_3d_reference",
+  "dataset_sha256": "e2b6bda6af7bcd8c50982258ccb61b59f78288471952ec46f479bb3f2074a34a",
+  "playback_rate": 1.0,
+  "front_end_window": {
+    "minimum_sim_time_s": 300.0,
+    "minimum_truth_distance_m": 50.0,
+    "minimum_pose_graph_commits": 1,
+    "maximum_degenerate_ratio": 0.0,
+    "maximum_position_error_m": 0.5
+  },
+  "preprocessing_window": {
+    "samples": 1000,
+    "maximum_mean_processing_ms": 10.0
+  },
+  "profiles": [
+    {
+      "name": "baseline",
+      "override": "config/preprocessing_experiments/baseline.yaml",
+      "preprocessing": {
+        "input_mean_points": 11520.0,
+        "output_mean_points": 6634.0,
+        "retained_percent": 57.6,
+        "processing_mean_ms": 1.397,
+        "processing_p95_ms": 2.071,
+        "processing_max_ms": 2.624,
+        "passed": true
+      },
+      "front_end": {
+        "samples": 2996,
+        "accepted_ratio": 1.0,
+        "processing_mean_ms": 17.031,
+        "processing_p95_ms": 26.861,
+        "translation_information_ratio_p05": 0.1128,
+        "planar_information_minimum": 0.0788,
+        "yaw_information_minimum": 4.5133,
+        "degenerate_ratio": 0.0,
+        "position_error_m": 0.011,
+        "position_error_max_m": 0.021,
+        "yaw_error_deg": 0.017,
+        "pose_graph_commits": 7,
+        "passed": true
+      }
+    },
+    {
+      "name": "low_return",
+      "override": "config/preprocessing_experiments/low_return.yaml",
+      "preprocessing": {
+        "input_mean_points": 11520.0,
+        "output_mean_points": 4828.8,
+        "retained_percent": 41.9,
+        "processing_mean_ms": 0.856,
+        "processing_p95_ms": 1.280,
+        "processing_max_ms": 1.752,
+        "passed": true
+      },
+      "front_end": {
+        "samples": 2996,
+        "accepted_ratio": 1.0,
+        "processing_mean_ms": 17.064,
+        "processing_p95_ms": 25.980,
+        "translation_information_ratio_p05": 0.1156,
+        "planar_information_minimum": 0.0809,
+        "yaw_information_minimum": 5.0690,
+        "degenerate_ratio": 0.0,
+        "position_error_m": 0.062,
+        "position_error_max_m": 0.075,
+        "yaw_error_deg": 0.090,
+        "pose_graph_commits": 7,
+        "passed": true
+      }
+    },
+    {
+      "name": "statistical_outlier",
+      "override": "config/preprocessing_experiments/statistical_outlier.yaml",
+      "preprocessing": {
+        "input_mean_points": 11520.0,
+        "output_mean_points": 5657.3,
+        "retained_percent": 49.1,
+        "processing_mean_ms": 15.656,
+        "processing_p95_ms": 17.763,
+        "processing_max_ms": 21.393,
+        "passed": false
+      },
+      "front_end": {
+        "samples": 2999,
+        "accepted_ratio": 1.0,
+        "processing_mean_ms": 12.383,
+        "processing_p95_ms": 24.250,
+        "translation_information_ratio_p05": 0.0007,
+        "planar_information_minimum": 0.0004,
+        "yaw_information_minimum": 1.5561,
+        "degenerate_ratio": 0.1374,
+        "position_error_m": 0.061,
+        "position_error_max_m": 0.067,
+        "yaw_error_deg": 0.005,
+        "pose_graph_commits": 6,
+        "passed": false
+      }
+    },
+    {
+      "name": "low_return_statistical_outlier",
+      "override": "config/preprocessing_experiments/low_return_statistical_outlier.yaml",
+      "preprocessing": {
+        "input_mean_points": 11520.0,
+        "output_mean_points": 4132.7,
+        "retained_percent": 35.9,
+        "processing_mean_ms": 11.383,
+        "processing_p95_ms": 13.354,
+        "processing_max_ms": 16.595,
+        "passed": false
+      },
+      "front_end": {
+        "samples": 2996,
+        "accepted_ratio": 1.0,
+        "processing_mean_ms": 11.652,
+        "processing_p95_ms": 19.043,
+        "translation_information_ratio_p05": 0.0,
+        "planar_information_minimum": 0.0,
+        "yaw_information_minimum": 1.9394,
+        "degenerate_ratio": 0.1015,
+        "position_error_m": 0.542,
+        "position_error_max_m": 0.573,
+        "yaw_error_deg": 0.038,
+        "pose_graph_commits": 6,
+        "passed": false
+      }
+    }
+  ],
+  "decision": "Keep the default preprocessing configuration unchanged."
+}

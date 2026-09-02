@@ -32,7 +32,7 @@
         <!-- 64 MiB against a 3.4 MiB worst case: the segment holds whole
              samples for every reader, not one in flight. -->
         <segment_size>67108864</segment_size>
-        <max_message_size>67108864</max_message_size>
+        <maxMessageSize>67108864</maxMessageSize>
       </transport_descriptor>
       <transport_descriptor>
         <transport_id>large_cloud_udp</transport_id>

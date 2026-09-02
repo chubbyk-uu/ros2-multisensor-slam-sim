@@ -30,7 +30,15 @@ def generate_launch_description():
             "fastdds_large_cloud.xml",
         ]
     )
-    parameters = [
+    default_preprocessor_overrides = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_slam_3d"),
+            "config",
+            "preprocessing_experiments",
+            "baseline.yaml",
+        ]
+    )
+    shared_parameters = [
         LaunchConfiguration("params_file"),
         {
             "use_sim_time": LaunchConfiguration("use_sim_time"),
@@ -41,6 +49,11 @@ def generate_launch_description():
                 "save_on_shutdown"
             ),
         },
+    ]
+    preprocessor_parameters = [
+        LaunchConfiguration("params_file"),
+        LaunchConfiguration("preprocessor_overrides_file"),
+        *shared_parameters[1:],
     ]
     return LaunchDescription(
         [
@@ -58,6 +71,14 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("load_snapshot", default_value="false"),
+            DeclareLaunchArgument(
+                "preprocessor_overrides_file",
+                default_value=default_preprocessor_overrides,
+                description=(
+                    "Additional PointCloudPreprocessor parameters. Defaults "
+                    "to the no-filter fixed-bag experiment profile."
+                ),
+            ),
             DeclareLaunchArgument(
                 "dds_profiles_file",
                 default_value=EnvironmentVariable(
@@ -80,14 +101,14 @@ def generate_launch_description():
                 executable="point_cloud_preprocessor_node",
                 name="point_cloud_preprocessor_3d",
                 output="screen",
-                parameters=parameters,
+                parameters=preprocessor_parameters,
             ),
             Node(
                 package="slam_robot_slam_3d",
                 executable="scan_to_map_odometry_node",
                 name="scan_to_map_odometry_3d",
                 output="screen",
-                parameters=parameters,
+                parameters=shared_parameters,
             ),
         ]
     )

@@ -70,6 +70,14 @@ def generate_launch_description():
                 "custom_3d_slam.yaml",
             ])),
             DeclareLaunchArgument("smoke", default_value="false"),
+            DeclareLaunchArgument(
+                "preprocessor_overrides_file",
+                default_value=PathJoinSubstitution([
+                    FindPackageShare("slam_robot_slam_3d"), "config",
+                    "preprocessing_experiments", "baseline.yaml",
+                ]),
+                description="PointCloudPreprocessor experimental override file.",
+            ),
             GroupAction(
                 scoped=True,
                 actions=[
@@ -78,6 +86,9 @@ def generate_launch_description():
                         launch_arguments={
                             "params_file": LaunchConfiguration("params_file"),
                             "use_sim_time": "true",
+                            "preprocessor_overrides_file": LaunchConfiguration(
+                                "preprocessor_overrides_file"
+                            ),
                         }.items(),
                     )
                 ],

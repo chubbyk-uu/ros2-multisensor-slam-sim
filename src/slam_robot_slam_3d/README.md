@@ -76,8 +76,11 @@ ros2 run slam_robot_slam_3d preprocessing_regression \
   --ros-args -p minimum_samples:=1000
 ```
 
-当前阶段尚未加入地面分类和离群点过滤；这两项将在前端确定需要的地面约束
-表达后实现，避免预处理提前删除配准所需几何。
+默认链路不启用地面或离群点过滤。仓库保留低位回波和 PCL 统计离群点两个默认关闭的
+实验开关，并以同一固定包完成基线、单项和组合 A/B；三种过滤组合均因精度、退化或
+预处理预算被拒绝，因此不能作为默认参数。实验命令与完整数据见
+[3D 工作流](../../docs/3d-workflows.md#预处理固定包对照)和
+[性能记录](../../docs/performance.md#固定包地面与离群点-ab)。
 
 ### 自研 scan-to-local-map 前端
 

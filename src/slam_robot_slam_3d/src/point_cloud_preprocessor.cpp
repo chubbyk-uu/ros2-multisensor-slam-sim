@@ -5,6 +5,7 @@
 #include <utility>
 
 #include <pcl/common/point_tests.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/voxel_grid.h>
 
 namespace slam_robot_slam_3d
@@ -72,9 +73,34 @@ pcl::PointCloud<pcl::PointXYZI> PointCloudPreprocessor::process(
       continue;
     }
     ++result_statistics.self_filter_passed_points;
+
+    // This is deliberately a sensor-frame low-return filter, not a general
+    // ground segmentation algorithm.  It is only enabled by fixed-bag
+    // experiments on the known level-ground robot model.
+    if (
+      parameters_.ground_filter_enabled &&
+      point.z <= parameters_.ground_filter_maximum_z)
+    {
+      continue;
+    }
+    ++result_statistics.ground_filter_passed_points;
     filtered->push_back(point);
   }
   filtered->is_dense = true;
+
+  if (parameters_.outlier_filter_enabled && !filtered->empty()) {
+    pcl::StatisticalOutlierRemoval<pcl::PointXYZI> outlier_filter;
+    outlier_filter.setInputCloud(filtered);
+    outlier_filter.setMeanK(parameters_.outlier_filter_mean_k);
+    outlier_filter.setStddevMulThresh(
+      parameters_.outlier_filter_standard_deviation_multiplier);
+    pcl::PointCloud<pcl::PointXYZI>::Ptr denoised(
+      new pcl::PointCloud<pcl::PointXYZI>());
+    outlier_filter.filter(*denoised);
+    denoised->is_dense = true;
+    filtered = std::move(denoised);
+  }
+  result_statistics.outlier_filter_passed_points = filtered->size();
 
   pcl::PointCloud<pcl::PointXYZI> output =
     voxelDownsamplePointCloud(*filtered, parameters_.voxel_leaf_size);
@@ -134,6 +160,19 @@ void PointCloudPreprocessor::validateParameters() const
     parameters_.self_min_z >= parameters_.self_max_z)
   {
     throw std::invalid_argument("self-filter bounds must be finite and ordered");
+  }
+  if (!std::isfinite(parameters_.ground_filter_maximum_z)) {
+    throw std::invalid_argument("ground_filter.maximum_z must be finite");
+  }
+  if (parameters_.outlier_filter_mean_k < 2) {
+    throw std::invalid_argument("outlier_filter.mean_k must be at least two");
+  }
+  if (
+    !std::isfinite(parameters_.outlier_filter_standard_deviation_multiplier) ||
+    parameters_.outlier_filter_standard_deviation_multiplier <= 0.0)
+  {
+    throw std::invalid_argument(
+      "outlier_filter.standard_deviation_multiplier must be finite and positive");
   }
 }
 

@@ -21,6 +21,17 @@
       min_z: -0.30
       max_z: 0.05
 
+    # Both filters are disabled for the mapping default. They are exposed only
+    # for fixed-bag A/B experiments; a fixed sensor-frame z cut is not a
+    # general ground-segmentation substitute on non-level terrain.
+    ground_filter:
+      enabled: false
+      maximum_z: -0.20
+    outlier_filter:
+      enabled: false
+      mean_k: 20
+      standard_deviation_multiplier: 1.0
+
     # PCL Generalized ICP scan-to-local-map acceptance gates. The first ROS
     # integration keeps these under the same parameter namespace as the
     # preprocessor, but the preprocessing-only launch ignores this section.

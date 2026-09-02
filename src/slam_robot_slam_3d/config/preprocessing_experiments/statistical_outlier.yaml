@@ -1,0 +1,10 @@
+/**:
+  ros__parameters:
+    ground_filter:
+      enabled: false
+    # PCL StatisticalOutlierRemoval rejects points whose mean distance to 20
+    # neighbours exceeds one global standard deviation.
+    outlier_filter:
+      enabled: true
+      mean_k: 20
+      standard_deviation_multiplier: 1.0

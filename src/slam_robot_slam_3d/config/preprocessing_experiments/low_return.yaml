@@ -1,0 +1,11 @@
+/**:
+  ros__parameters:
+    # The level-ground LiDAR centre is 0.315 m above base_footprint. A cut at
+    # -0.20 m removes its down-looking ground returns while retaining low wall
+    # structure. It is an experimental sensor-frame proxy, not generic ground
+    # segmentation.
+    ground_filter:
+      enabled: true
+      maximum_z: -0.20
+    outlier_filter:
+      enabled: false

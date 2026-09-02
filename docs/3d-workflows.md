@@ -45,9 +45,29 @@ ros2 run slam_robot_slam_3d preprocessing_regression \
   --ros-args -p minimum_samples:=1000
 ```
 
-地面分类和离群点过滤尚未接入。首版 scan-to-local-map 前端使用内部 `0.10 m`
-点云和轮速 + IMU 运动初值；二维射线投影使用 `0.05 m` 点云。后续根据配准对
-地面约束的需求确定地面分类输出，而不直接把地面全部删除。
+默认链路不启用地面或离群点过滤。scan-to-local-map 前端使用内部 `0.10 m` 点云和
+轮速 + IMU 运动初值；二维射线投影使用 `0.05 m` 点云。实验性过滤的对照与结论见下一节；
+后续若需要通用地面分类，必须先建立不依赖当前水平地面的输入契约与验收场景。
+
+### 预处理固定包对照
+
+默认配置不启用地面或离群点过滤。为避免在缺少对照时改变建图输入，包内只提供四个
+可重放实验 profile：`baseline.yaml`、`low_return.yaml`、`statistical_outlier.yaml` 和
+`low_return_statistical_outlier.yaml`，位于 `config/preprocessing_experiments/`。前者的
+低位回波项是针对本机器人水平地面、`lidar_3d_link` 坐标系的实验代理，不能称作
+通用地面分割；后者使用 PCL 统计离群点过滤。
+
+固定包前端 A/B 使用同一个组合回归入口，只替换预处理 override：
+
+```bash
+ros2 launch slam_robot_slam_3d custom_3d_loop_regression.launch.py \
+  preprocessor_overrides_file:="$(ros2 pkg prefix slam_robot_slam_3d)/share/slam_robot_slam_3d/config/preprocessing_experiments/baseline.yaml"
+```
+
+将最后的文件名替换为其余三个 profile 可复现实验。每次必须从干净的 ROS 图串行启动，
+并同时运行 `preprocessing_regression` 收集 1000 帧的点数与耗时；不得用 RViz 地图
+观感替代前端误差、退化比例和处理预算。2026-09-02 的四组结果拒绝了三种过滤组合，
+默认输入保持不变；数值与判定见[性能与标定](performance.md#固定包地面与离群点-ab)。
 
 ## 自研 scan-to-local-map 前端
 

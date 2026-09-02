@@ -187,6 +187,19 @@ def test_the_segment_holds_the_largest_measured_payload():
     assert min(sizes) >= 4 * LARGEST_MEASURED_PAYLOAD_BYTES
 
 
+def test_the_profile_uses_the_fastdds_xml_message_size_element():
+    descriptors, namespace, prefix = transports()
+    message_sizes = [
+        descriptor.find(f"{prefix}maxMessageSize", namespace)
+        for descriptor in descriptors
+        if descriptor.find(f"{prefix}type", namespace).text == "SHM"
+    ]
+
+    assert message_sizes
+    assert all(entry is not None for entry in message_sizes)
+    assert all(int(entry.text) >= LARGEST_MEASURED_PAYLOAD_BYTES for entry in message_sizes)
+
+
 def test_the_profile_keeps_a_transport_that_leaves_the_host():
     # Naming a user transport turns the builtin ones off. A profile that then
     # lists only shared memory silently drops every peer that cannot map the
