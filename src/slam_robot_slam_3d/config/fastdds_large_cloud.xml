@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Shared-memory transport sized for this package's large map topics.
+
+  scan_to_map_odometry_node publishes four reliable, transient-local topics
+  whose payloads exceed the 512 KiB Fast DDS gives a shared-memory segment by
+  default:
+
+    /custom_slam_3d/local_map    110,544 points in localization mode -> ~3.4 MiB
+    /custom_slam_3d/map_cloud     ~38,000 points on the fixed bag    -> ~1.2 MiB
+    /map                          520 x 400 cells (large_warehouse)  -> ~208 KiB
+    /custom_slam_3d/occupancy_probability                            -> as above
+
+  A reliable writer that exhausts its segment mid-fragment loses a fragment,
+  and the reader then waits out the default 3 s heartbeat period before the gap
+  is repaired. The symptom is a single map update stalling for seconds while
+  every small topic keeps flowing, which reads like a compute problem rather
+  than a transport one. Transient-local makes it easier to hit, not harder:
+  every late joiner (RViz restarting, the Nav2 static layer reconnecting)
+  replays the full payload.
+
+  The two entries below are both required. Declaring a user transport turns
+  builtin transports off, so UDPv4 has to be named again explicitly or the
+  participant loses every non-shared-memory peer.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <profiles>
+    <transport_descriptors>
+      <transport_descriptor>
+        <transport_id>large_cloud_shm</transport_id>
+        <type>SHM</type>
+        <!-- 64 MiB against a 3.4 MiB worst case: the segment holds whole
+             samples for every reader, not one in flight. -->
+        <segment_size>67108864</segment_size>
+        <max_message_size>67108864</max_message_size>
+      </transport_descriptor>
+      <transport_descriptor>
+        <transport_id>large_cloud_udp</transport_id>
+        <type>UDPv4</type>
+      </transport_descriptor>
+    </transport_descriptors>
+
+    <participant profile_name="large_cloud_participant" is_default_profile="true">
+      <rtps>
+        <userTransports>
+          <transport_id>large_cloud_shm</transport_id>
+          <transport_id>large_cloud_udp</transport_id>
+        </userTransports>
+        <useBuiltinTransports>false</useBuiltinTransports>
+      </rtps>
+    </participant>
+  </profiles>
+</dds>

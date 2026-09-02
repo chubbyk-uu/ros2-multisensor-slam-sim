@@ -8,17 +8,15 @@ MODULE = SourceFileLoader(
 
 
 def arguments(scenario, wall_timeout=300.0):
-    return MODULE.argparse.Namespace(
-        scenario=scenario,
-        world="/tmp/slam_world.sdf",
-        world_profile="slam_world",
-        wall_timeout=wall_timeout,
-        operational_timeout=240.0,
-        early_exit_fraction=0.8,
-        settle_seconds=20.0,
-        log="x.log",
-        report=None,
-    )
+    # Built through the real parser, so every default under test is the one the
+    # run would use. A hand-written Namespace is a second copy that drifts.
+    return MODULE.parse_arguments([
+        "--scenario", scenario,
+        "--world", "/tmp/slam_world.sdf",
+        "--world-profile", "slam_world",
+        "--wall-timeout", str(wall_timeout),
+        "--log", "x.log",
+    ])
 
 
 STARTUP_LOG = """\
@@ -126,11 +124,29 @@ def test_the_frozen_clock_criterion_needs_the_abort_to_come_after_the_pause():
         MODULE.RUNTIME, FROZEN_CLOCK_LOG, 40.0, arguments(MODULE.RUNTIME),
         paused_at=1786511400.0)
 
-    # Fault after the pause: simulation time had stopped, so the deadline that
-    # expired can only have been the steady one.
+    # Fault well after the pause: simulation time had stopped, so the deadline
+    # that expired can only have been the steady one.
     assert early["fault_fired_while_simulation_time_was_frozen"]
     # Fault before the pause proves nothing about which clock was used.
     assert not late["fault_fired_while_simulation_time_was_frozen"]
+
+
+def test_an_abort_too_close_to_the_pause_decides_nothing():
+    # Both instants are system-clock readings, and this host steps its system
+    # clock back by 1.2-1.7 s when WSL recalibrates. An abort landing inside
+    # that window would have its ordering decided by the recalibration rather
+    # than by which clock the deadline used, so it must not count as proof.
+    # nav2_runtime_grace is 5 s, so a healthy run is nowhere near this edge.
+    checks = MODULE.judge(
+        MODULE.RUNTIME, FROZEN_CLOCK_LOG, 40.0, arguments(MODULE.RUNTIME),
+        paused_at=1786511359.0)
+
+    assert not checks["fault_fired_while_simulation_time_was_frozen"]
+
+
+def test_the_clock_jump_allowance_covers_the_step_this_host_makes():
+    assert MODULE.parse_arguments(
+        ["--scenario", MODULE.RUNTIME]).clock_jump_allowance >= 1.7
 
 
 def test_the_startup_scenario_does_not_claim_the_frozen_clock_property():

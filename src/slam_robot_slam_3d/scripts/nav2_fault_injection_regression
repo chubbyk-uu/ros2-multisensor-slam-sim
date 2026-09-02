@@ -229,12 +229,31 @@ def judge(scenario, text, wall_seconds, arguments, paused_at=None):
         # Gazebo was paused, so a budget measured on the node clock would still
         # be waiting; the deadline expiring after this instant is what proves
         # it is measured on the steady clock instead.
+        #
+        # Both instants are system-clock readings -- the log stamp is a Unix
+        # epoch, so a monotonic clock could not be compared against it -- and
+        # this host steps its system clock backwards by 1.2 to 1.7 s when WSL
+        # recalibrates against Windows. "After" therefore has to mean after by
+        # more than any step, or a recalibration landing inside the window
+        # would decide the criterion. nav2_runtime_grace is 5 s, so a healthy
+        # run clears the allowance comfortably; a run that does not clear it
+        # has not shown which clock the deadline used, whatever the sign of
+        # the difference.
+        margin = (
+            float(aborted_at.group(1)) - paused_at
+            if aborted_at is not None else None)
         checks["fault_fired_while_simulation_time_was_frozen"] = (
-            aborted_at is not None and float(aborted_at.group(1)) > paused_at)
+            margin is not None and margin >= arguments.clock_jump_allowance)
     return checks
 
 
-def main():
+def parse_arguments(argv=None):
+    """Build the arguments here so tests read the same defaults the run uses.
+
+    A test that hand-writes a Namespace carries a second copy of every default,
+    and the copies drift silently: a criterion tightened here keeps passing
+    against the value the test made up.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", choices=(STARTUP, RUNTIME), required=True)
     parser.add_argument(
@@ -248,11 +267,20 @@ def main():
     parser.add_argument("--early-exit-fraction", type=float, default=0.8)
     parser.add_argument("--settle-seconds", type=float, default=20.0)
     parser.add_argument(
+        "--clock-jump-allowance", type=float, default=2.0,
+        help="How far after the pause the abort has to land before the frozen"
+             " clock criterion counts. Covers the 1.2-1.7 s backward step WSL"
+             " makes when it recalibrates its system clock.")
+    parser.add_argument(
         "--log", default="nav2_fault_injection.log",
         help="Relative to the working directory, so the evidence outlives the "
              "session that produced it.")
     parser.add_argument("--report")
-    arguments = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def main():
+    arguments = parse_arguments()
 
     leftovers = leftover_processes()
     if leftovers:

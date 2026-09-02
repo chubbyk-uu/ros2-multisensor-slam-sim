@@ -448,6 +448,14 @@ if(BUILD_TESTING)
     test/test_rtabmap_config.py
   )
   ament_add_pytest_test(
+    test_large_cloud_transport
+    test/test_large_cloud_transport.py
+  )
+  ament_add_pytest_test(
+    test_test_isolation
+    test/test_test_isolation.py
+  )
+  ament_add_pytest_test(
     test_height_aware_navigation
     test/test_height_aware_navigation.py
   )

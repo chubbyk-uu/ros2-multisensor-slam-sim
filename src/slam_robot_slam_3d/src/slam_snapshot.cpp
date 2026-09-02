@@ -1,11 +1,17 @@
 #include "slam_robot_slam_3d/slam_snapshot.hpp"
 
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <system_error>
+#include <vector>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <pcl/common/point_tests.h>
 
@@ -20,10 +26,62 @@ constexpr std::uint64_t kMagic = 0x534C414D33445331ULL;
 // keyframe count -- and the older files then failed while reporting an invalid
 // contract, which points at the wrong thing entirely. A version field exists
 // precisely so a layout change announces itself.
-constexpr std::uint32_t kVersion = 4U;
+// Version 5 appends a checksum over every preceding byte and syncs the file
+// before it is renamed into place. Version 4 was atomic but not durable: rename
+// replaces a directory entry, it does not put 44 MB on the storage, and nothing
+// afterwards ever read the bytes back to find out.
+constexpr std::uint32_t kVersion = 5U;
 constexpr std::uint64_t kMaximumKeyframes = 1000000U;
 constexpr std::uint64_t kMaximumPointsPerKeyframe = 10000000U;
 constexpr std::uint64_t kMaximumConstraints = 10000000U;
+
+// FNV-1a over the payload. This is not a tamper-evidence claim; what a 44 MB
+// file written once and reopened weeks later is exposed to is a truncated
+// write, a partial write and storage corruption, and a non-cryptographic
+// checksum answers all three. A length check would only answer the first.
+constexpr std::uint64_t kChecksumBasis = 0xCBF29CE484222325ULL;
+constexpr std::uint64_t kChecksumPrime = 0x100000001B3ULL;
+constexpr std::size_t kChecksumBytes = sizeof(std::uint64_t);
+
+std::uint64_t checksumOf(const char * data, std::size_t size)
+{
+  std::uint64_t checksum = kChecksumBasis;
+  for (std::size_t index = 0; index < size; ++index) {
+    checksum ^= static_cast<unsigned char>(data[index]);
+    checksum *= kChecksumPrime;
+  }
+  return checksum;
+}
+
+// fsync needs a descriptor, and std::ofstream does not expose one. Reopening
+// is enough: fsync acts on the inode, not on the handle that wrote it.
+void syncToStorage(const std::filesystem::path & path, bool is_directory)
+{
+  const int descriptor = ::open(
+    path.c_str(), is_directory ? (O_RDONLY | O_DIRECTORY) : O_RDONLY);
+  if (descriptor < 0) {
+    throw std::runtime_error("cannot open " + path.string() + " to sync it");
+  }
+  const int synced = ::fsync(descriptor);
+  ::close(descriptor);
+  if (synced != 0) {
+    throw std::runtime_error("cannot sync " + path.string() + " to storage");
+  }
+}
+
+std::string readWholeFile(const std::filesystem::path & path)
+{
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    throw std::runtime_error("cannot read SLAM snapshot at " + path.string());
+  }
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  if (!input.eof() && input.fail()) {
+    throw std::runtime_error("cannot read back " + path.string());
+  }
+  return buffer.str();
+}
 
 template<typename T>
 void writeValue(std::ostream & output, const T & value)
@@ -239,20 +297,46 @@ void saveSlamSnapshot(const std::string & path, const SlamSnapshot & snapshot)
     throw std::runtime_error("failed to write SLAM snapshot");
   }
   output.close();
+  syncToStorage(temporary, false);
+
+  // Checksum the bytes read back off the filesystem, not the ones still in
+  // memory. A checksum over the buffer proves the buffer, and the failure this
+  // guards against is the write not arriving intact.
+  const auto payload = readWholeFile(temporary);
+  std::ofstream trailer(temporary, std::ios::binary | std::ios::app);
+  if (!trailer) {
+    throw std::runtime_error("cannot append the SLAM snapshot checksum");
+  }
+  writeValue(trailer, checksumOf(payload.data(), payload.size()));
+  trailer.flush();
+  if (!trailer) {
+    throw std::runtime_error("failed to write the SLAM snapshot checksum");
+  }
+  trailer.close();
+  syncToStorage(temporary, false);
+
   std::filesystem::rename(temporary, destination);
+  // The rename itself is a directory change, and it is no more durable than
+  // the payload was before it was synced.
+  const auto parent = destination.parent_path();
+  syncToStorage(parent.empty() ? std::filesystem::path(".") : parent, true);
 }
 
 SlamSnapshot loadSlamSnapshot(const std::string & path)
 {
-  std::ifstream input(path, std::ios::binary);
-  if (!input) {
-    throw std::runtime_error("cannot open SLAM snapshot");
+  const auto contents = readWholeFile(path);
+  // Magic and version are read before the checksum is verified, and the order
+  // matters. A version 4 file has no checksum trailer, so its last eight bytes
+  // would be read as one and fail -- reporting corruption for a file that is
+  // merely old, which is the same misdirection version 3 caused when a layout
+  // change surfaced as an invalid contract.
+  if (contents.size() < sizeof(kMagic) + sizeof(kVersion)) {
+    throw std::runtime_error("truncated SLAM snapshot");
   }
   std::uint64_t magic{0U};
   std::uint32_t version{0U};
-  std::uint64_t keyframe_count{0U};
-  readValue(input, magic);
-  readValue(input, version);
+  std::memcpy(&magic, contents.data(), sizeof(magic));
+  std::memcpy(&version, contents.data() + sizeof(magic), sizeof(version));
   if (magic != kMagic) {
     throw std::runtime_error("invalid SLAM snapshot magic");
   }
@@ -262,6 +346,19 @@ SlamSnapshot loadSlamSnapshot(const std::string & path)
             "; remap to generate a version " + std::to_string(kVersion) +
             " snapshot");
   }
+  if (contents.size() < sizeof(kMagic) + sizeof(kVersion) + kChecksumBytes) {
+    throw std::runtime_error("truncated SLAM snapshot");
+  }
+  const std::size_t payload_size = contents.size() - kChecksumBytes;
+  std::uint64_t stored_checksum{0U};
+  std::memcpy(&stored_checksum, contents.data() + payload_size, kChecksumBytes);
+  if (checksumOf(contents.data(), payload_size) != stored_checksum) {
+    throw std::runtime_error(
+            "SLAM snapshot failed its checksum; the file is truncated or corrupt");
+  }
+  std::istringstream input(contents.substr(0U, payload_size), std::ios::binary);
+  input.seekg(sizeof(kMagic) + sizeof(kVersion));
+  std::uint64_t keyframe_count{0U};
   SlamSnapshot result;
   result.occupancy_projection = readOccupancyProjectionContract(input);
   readValue(input, keyframe_count);

@@ -1,4 +1,5 @@
 from importlib.machinery import SourceFileLoader
+import os
 from pathlib import Path
 
 import pytest
@@ -186,3 +187,25 @@ def test_a_missing_previous_report_is_omitted_rather_than_passed_empty():
         MODULE.parse_arguments([]), "record", "/tmp/r.json", "", "/tmp/snap")
 
     assert not any(part.startswith("previous_report:=") for part in command)
+
+
+def test_the_fingerprint_sees_a_rewrite_that_kept_the_length(tmp_path):
+    # The whole reason this is a content hash. A rewrite that lands on the same
+    # length inside one filesystem timestamp tick is indistinguishable by size
+    # and mtime, and it is the case that matters: the file would still be a
+    # snapshot, just not the one the robot was localizing against.
+    original = tmp_path / "snapshot"
+    original.write_bytes(b"\x01" * 4096)
+    before = MODULE.snapshot_fingerprint(original)
+
+    stat = original.stat()
+    original.write_bytes(b"\x01" * 4095 + b"\x02")
+    os.utime(original, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert original.stat().st_size == before[0]
+    assert original.stat().st_mtime_ns == stat.st_mtime_ns
+    assert MODULE.snapshot_fingerprint(original) != before
+
+
+def test_a_missing_snapshot_has_no_fingerprint(tmp_path):
+    assert MODULE.snapshot_fingerprint(tmp_path / "absent") is None

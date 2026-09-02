@@ -26,6 +26,7 @@ added and more if anything was.
 """
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -253,7 +254,7 @@ def evaluate(record, localize, snapshot_before, snapshot_after, arguments):
     checks.append(check(
         "the_snapshot_file_was_not_rewritten",
         snapshot_before is not None and snapshot_before == snapshot_after,
-        f"snapshot (size, mtime_ns) before={snapshot_before} after={snapshot_after}",
+        f"snapshot (size, sha256) before={snapshot_before} after={snapshot_after}",
     ))
     recorded_cells = record.get("final_known_cells") or 0
     restored_cells = localize.get("restored_known_cells")
@@ -293,11 +294,23 @@ def load_report(path, phase):
 
 
 def snapshot_fingerprint(path):
+    """Return the snapshot's size and content hash, or None if it is missing.
+
+    Size and mtime alone would answer "was this file touched", and the claim
+    being made is "the prior map the robot localized against is still the map
+    that was saved". A rewrite that lands on the same length within the same
+    filesystem timestamp tick satisfies the first and not the second, and the
+    cost of reading the file twice is negligible beside a phase that takes
+    minutes.
+    """
     try:
-        stat = path.stat()
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+        return [path.stat().st_size, digest.hexdigest()]
     except OSError:
         return None
-    return [stat.st_size, stat.st_mtime_ns]
 
 
 def main(argv=None):
