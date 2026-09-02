@@ -13,6 +13,19 @@
 
 各包内部参数与实现细节见对应的 `src/<package>/README.md`。
 
+## 包内布局
+
+正式 C++ 实现放在 `src/`，公开头文件放在 `include/`，单元或集成测试放在
+`test/`；launch、参数、世界和脚本各自留在包的 `launch/`、`config/`、
+`worlds/` 或 `scripts/` 中。当前实现量最大的三个包布局如下，完整文件清单
+应以仓库目录为准而非另维护一份静态树：
+
+| 包 | 实现与验证目录 |
+| --- | --- |
+| `slam_robot_gazebo` | `include/`、`src/`、`scripts/`、`test/`、`config/`、`launch/`、`rviz/`、`worlds/` |
+| `slam_robot_slam_3d` | `include/`、`src/`、`scripts/`、`test/`、`config/`、`launch/`、`rviz/` |
+| `slam_robot_navigation` | `include/`、`src/`、`scripts/`、`test/`、`config/`、`launch/` |
+
 ## 传感器与里程计
 
 ```text

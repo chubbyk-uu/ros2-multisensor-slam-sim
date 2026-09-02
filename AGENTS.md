@@ -19,13 +19,9 @@
 - 使用 Gazebo Sim 和 `ros_gz`，不使用 Gazebo Classic 接口。
 - 仿真节点统一启用 `use_sim_time`。
 - 默认使用标准话题名：`/cmd_vel`、`/odom`、`/scan`、`/map`、`/tf` 和 `/tf_static`。
-- 默认 TF 树为：
-
-  ```text
-  map -> odom -> base_footprint -> base_link -> lidar_mount_link -> lidar_link
-  ```
-
-- `map -> odom` 由 SLAM 或定位节点发布。
+- 完整 TF 拓扑（含 IMU 与 2D/3D LiDAR 互斥分支）以
+  [系统架构](docs/architecture.md#tf-树) 为唯一权威来源。
+- `map -> odom` 由 SLAM 或定位节点唯一发布。
 - `odom -> base_footprint` 由里程计发布。
 - 机器人固定结构和关节变换由 `robot_state_publisher` 发布。
 - 同一段 TF 只能有一个发布者。
