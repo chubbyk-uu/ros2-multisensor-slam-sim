@@ -202,7 +202,7 @@ ros2 run slam_robot_slam large_scale_regression
 固定数据集录制、SHA-256 和 2× 离线回放见
 [固定 SLAM 数据集](datasets.md)。性能、精度和标定结果见
 [性能与标定](performance.md)，工程审查整改见
-[审查整改记录](review_remediation.md)。
+[审查整改记录](archive/2026-07-30-review-remediation.md)。
 
 ## 普通 rosbag 录制与回放
 

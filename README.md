@@ -225,7 +225,7 @@ map -> odom -> base_footprint -> base_link
 | [开发计划](plan.md) | 阶段目标、完成状态和后续路线 |
 | [性能与标定](docs/performance.md) | CPU、实时性、精度、回归和轮距标定记录 |
 | [固定数据集](docs/datasets.md) | rosbag 约束、指纹和离线复现 |
-| [审查整改](docs/review_remediation.md) | 自研 2D SLAM 工程审查处理记录 |
+| [审查整改档案](docs/archive/2026-07-30-review-remediation.md) | 自研 2D SLAM 工程审查处理记录 |
 
 包级接口文档：
 
