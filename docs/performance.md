@@ -70,6 +70,25 @@ colcon build --packages-select slam_robot_slam slam_robot_slam_3d \
 `5.2 ms`，回环候选评分由 `12.2` 降到 `8.1 ms`。完整的 2D 各场景表格见
 [性能历史档案](archive/performance-chronicle.md#性能优化)。
 
+## Nav2 代价地图更新与话题发布节拍
+
+官方 Nav2 参数中，全局 / 局部代价地图的更新频率分别为 `1 / 5 Hz`，发布频率
+分别为 `1 / 2 Hz`。无界面仿真实测 `/global_costmap/costmap` 及其
+`costmap_raw` 均为 `0.500 Hz`（`2.000 s` 间隔），局部两话题均为
+`1.667 Hz`（`0.600 s` 间隔）。
+
+这不是 DDS 丢包、仿真时间错误或控制器计算不足。Nav2 的代价地图仅在更新循环的
+tick 上检查是否到达下一个发布周期，并使用严格小于比较；因此 `1 Hz` 更新配
+`1 Hz` 发布会隔一个 tick 发布一次，而 `5 Hz` 更新配 `2 Hz` 发布会在 `0.6 s`
+的 tick 发布。内部全局 / 局部代价地图仍分别以 `1 / 5 Hz` 更新，控制器直接使用
+进程内局部代价地图，不受观测话题节拍限制。实现依据见
+[Nav2 Jazzy Costmap2DROS 源码](https://api.nav2.org/nav2-jazzy/html/costmap__2d__ros_8cpp_source.html)。
+
+动态障碍端到端回归以代价地图消息时间戳计量从生成箱体到首次致命格发布的仿真时延；
+最近一次为全局 `0.216 s`、局部 `0.200 s`，同时完成绕行且无碰撞。回归上限设为
+全局 `2.2 s`、局部 `0.8 s`，用以发现真正的障碍更新或发布退化，而不把上述正常的
+节拍量化误判为故障。
+
 ## IMU 融合与轮距标定
 
 二维 EKF 使用 `robot_localization`，融合带有限非零协方差的轮速平面速度和 IMU

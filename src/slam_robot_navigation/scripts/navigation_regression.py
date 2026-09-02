@@ -61,6 +61,9 @@ class NavigationRegression:
         self.obstacle_spawned = False
         self.global_costmap_observed = False
         self.local_costmap_observed = False
+        self.obstacle_spawn_simulation_time = None
+        self.global_costmap_latency = math.nan
+        self.local_costmap_latency = math.nan
         self.minimum_obstacle_distance = math.inf
         self.maximum_path_deviation = 0.0
         self.spawn_client = self.navigator.create_client(
@@ -124,6 +127,11 @@ class NavigationRegression:
 
         return bool(values and max(values) >= 99)
 
+    @staticmethod
+    def _message_time_seconds(message):
+        stamp = message.header.stamp
+        return stamp.sec + stamp.nanosec * 1.0e-9
+
     def _global_costmap_callback(self, message):
         if (
             self.obstacle_spawned
@@ -131,8 +139,13 @@ class NavigationRegression:
             and self._costmap_contains_obstacle(message)
         ):
             self.global_costmap_observed = True
+            self.global_costmap_latency = (
+                self._message_time_seconds(message)
+                - self.obstacle_spawn_simulation_time
+            )
             print(
-                "  global costmap marked the spawned obstacle as lethal",
+                "  global costmap marked the spawned obstacle as lethal "
+                f"after {self.global_costmap_latency:.3f} sim s",
                 flush=True,
             )
 
@@ -143,8 +156,13 @@ class NavigationRegression:
             and self._costmap_contains_obstacle(message)
         ):
             self.local_costmap_observed = True
+            self.local_costmap_latency = (
+                self._message_time_seconds(message)
+                - self.obstacle_spawn_simulation_time
+            )
             print(
-                "  local costmap marked the spawned obstacle as lethal",
+                "  local costmap marked the spawned obstacle as lethal "
+                f"after {self.local_costmap_latency:.3f} sim s",
                 flush=True,
             )
 
@@ -329,6 +347,8 @@ class NavigationRegression:
         if not future.done() or future.result() is None:
             return False
         self.obstacle_spawned = future.result().success
+        if self.obstacle_spawned:
+            self.obstacle_spawn_simulation_time = self.simulation_time()
         return self.obstacle_spawned
 
     def delete_obstacle(self):
@@ -348,6 +368,7 @@ class NavigationRegression:
         deleted = future.result().success
         if deleted:
             self.obstacle_spawned = False
+            self.obstacle_spawn_simulation_time = None
         return deleted
 
     def run_dynamic_obstacle(self, timeout):
@@ -492,6 +513,8 @@ class NavigationRegression:
             "remaining": last_distance,
             "recoveries": max_recoveries,
             "goal_error": goal_error,
+            "global_costmap_latency": self.global_costmap_latency,
+            "local_costmap_latency": self.local_costmap_latency,
         }
 
 
@@ -516,6 +539,24 @@ def parse_arguments():
         type=float,
         default=120.0,
         help="Wall-clock timeout while waiting for Nav2 (default: 120).",
+    )
+    parser.add_argument(
+        "--maximum-global-costmap-latency",
+        type=float,
+        default=2.2,
+        help=(
+            "Maximum simulated seconds from obstacle spawn to global costmap "
+            "publication (default: 2.2)."
+        ),
+    )
+    parser.add_argument(
+        "--maximum-local-costmap-latency",
+        type=float,
+        default=0.8,
+        help=(
+            "Maximum simulated seconds from obstacle spawn to local costmap "
+            "publication (default: 0.8)."
+        ),
     )
     return parser.parse_args()
 
@@ -552,6 +593,13 @@ def main():
         else:
             print("starting dynamic-obstacle scenario", flush=True)
             result = regression.run_dynamic_obstacle(args.timeout)
+            if (
+                result.get("global_costmap_latency", math.inf)
+                > args.maximum_global_costmap_latency
+                or result.get("local_costmap_latency", math.inf)
+                > args.maximum_local_costmap_latency
+            ):
+                result["result"] = "COSTMAP_LATENCY_EXCEEDED"
             print(
                 "summary: "
                 f"result={result['result']} "
@@ -563,6 +611,10 @@ def main():
                 f"{regression.global_costmap_observed} "
                 f"local_costmap_observed="
                 f"{regression.local_costmap_observed} "
+                f"global_costmap_latency="
+                f"{result.get('global_costmap_latency', math.nan):.3f} s "
+                f"local_costmap_latency="
+                f"{result.get('local_costmap_latency', math.nan):.3f} s "
                 f"minimum_obstacle_distance="
                 f"{regression.minimum_obstacle_distance:.3f} m "
                 f"maximum_path_deviation="
