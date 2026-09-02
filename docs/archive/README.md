@@ -9,4 +9,4 @@
 | [project-plan-history.md](project-plan-history.md) | 已完成阶段的详细任务清单与历史计划 |
 | [2026-07-30-review-remediation.md](2026-07-30-review-remediation.md) | 2D 工程审查整改主表，以及随后补充的审查历史 |
 
-当前入口请从[仓库 README](../../README.md)开始。
+当前入口请从[文档索引](../README.md)开始。
