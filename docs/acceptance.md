@@ -52,10 +52,19 @@ GICP 复核、后台 SE(2) 图优化和地图重建均完成，而不阻塞 10 H
 - `localization`：恢复整张全局点云作为匹配目标，禁止关键帧、局部地图、位姿图
   和快照文件写入。
 
+`mapping` 恢复以固定包 240 s 处切分录制与恢复两段，结果 JSON 为
+[`2026-08-11-snapshot-resume.json`](results/2026-08-11-snapshot-resume.json)。
+
 `localization` 固定包两圈验收 v5 为 `11/11`：匹配接受率 `1213/1213`，接缝
 峰值 `0.013128980774705309 m / 0.07628954263957714°`，恢复地图的已知格与保存时
 一致，快照 `(大小, SHA-256)` 不变。结果 JSON 为
-[`2026-09-02-snapshot-localization-v5.json`](results/2026-09-02-snapshot-localization-v5.json)。
+[`2026-09-02-snapshot-localization-v5.json`](results/2026-09-02-snapshot-localization-v5.json)；
+校验和尾部引入前的 v4 基准为
+[`2026-08-12-snapshot-localization.json`](results/2026-08-12-snapshot-localization.json)。
+两次的位置误差、峰值误差和栅格计数逐位一致（`peak_position_error_m` 同为
+`0.013128980774705309`，`restored_known_cells` 与 `final_known_cells` 同为
+`79367`）；只有接缝偏航峰值因接缝采样点数不同（`678` / `715`）在第七位小数上有
+差异。据此可以认为 v5 只增加了持久化，没有改变估计本身。
 
 ## Frontier Exploration
 
@@ -70,6 +79,10 @@ GICP 复核、后台 SE(2) 图优化和地图重建均完成，而不阻塞 10 H
 | 2026-08-12 标定 | 用于设定 profile 门限 | 15/15 自洽；不是独立证明 |
 | 2026-08-12 独立验证 | 新 seed、完成几何整改后验证 | 三世界各 5/5 `ACCEPTED`，共 15/15 |
 
+标定批次结果分别见
+[structured](results/2026-08-12-random-spawn-structured-campaign.json)、
+[slam_world](results/2026-08-12-random-spawn-slam-world-campaign.json) 与
+[large_warehouse](results/2026-08-12-random-spawn-large-warehouse-campaign.json)；
 独立验证结果分别见
 [structured](results/2026-08-12-verification-structured_loop_3d-campaign.json)、
 [slam_world](results/2026-08-12-verification-slam_world-campaign.json) 与
@@ -82,6 +95,12 @@ GICP 复核、后台 SE(2) 图优化和地图重建均完成，而不阻塞 10 H
 异常栈和子进程死亡。Nav2 启动期 configured 未 activate、以及运行期先接受目标
 再失活的两种故障注入，均要求提前退出并归类为 `INFRA_UNSTABLE`；未知故障代码
 不得被当作基础设施噪声放过。
+
+两条注入的结果 JSON 为
+[启动期](results/2026-08-12-nav2-fault-injection-startup.json)（`nav2_startup_timeout`，
+墙钟 `46.3 s` / 预算 `300 s`）与
+[运行期](results/2026-08-12-nav2-fault-injection-runtime.json)（`nav2_runtime_lost`，
+墙钟 `68.8 s` / 预算 `300 s`），两者的 `fault_class` 均为 `dependency_lost`。
 
 这两条注入验证了“探索器诊断 → 回归 verdict → campaign 汇总”整条归因链，而非
 只验证各层单元测试。完整步骤和结果见[工程事件](incidents.md#nav2-依赖失活不能被解释为地图完成)。

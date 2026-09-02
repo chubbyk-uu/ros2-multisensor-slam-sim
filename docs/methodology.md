@@ -46,6 +46,11 @@ Frontier 候选日志记录每次决策的完整候选和评分分量，因此�
 和 softmax 的触发率与额外路径代价。它只回答单次决策：一旦实际目标不同，后续世界
 状态也不同，整趟覆盖和完成时间仍需活动运行验证。
 
+回放输入保留在 `docs/results/`：
+[决策日志](results/2026-08-11-frontier-selection-decisions.log)、
+[新 seed 决策日志](results/2026-08-11-fresh-seed-decisions.log) 与
+[目标序列](results/2026-08-11-exploration-goal-sequences.txt)。
+
 ## 重复运行、随机性与活动 campaign
 
 重复运行前先定义结果类别：核心 FAIL、PASS、`INFRA_UNSTABLE` 与 `VOID`。后两者
@@ -56,6 +61,10 @@ Frontier 候选日志记录每次决策的完整候选和评分分量，因此�
 多数决策候选池只有一个元素，路线仍高度相似；随后改为从 SDF collision 几何中采样
 安全随机出生点。随机出生记录必须包含 seed、世界 SHA-256、采样参数、栅格边界和
 源码线索；仅记录 seed 不能保证复现。
+
+随机化近优选择本身的十次活动批次见
+[`2026-08-11-randomised-selection-campaign.json`](results/2026-08-11-randomised-selection-campaign.json)：
+`10/10` 可评估运行通过，但这只证明改动未引入回退，不证明随机化带来收益。
 
 2026-08-12 的三世界首批 15 次是**标定批次**，门限来自该批自身；随后的新 seed
 15 次才是独立验证。两批都保留，以防把“历史可运行”误说成“独立证明”。
