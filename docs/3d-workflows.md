@@ -415,6 +415,22 @@ ros2 launch slam_robot_slam_3d rtabmap_navigation_simulation.launch.py
 投影地图；Nav2 使用该地图做全局规划，并直接把 3D 点云送入局部体素障碍层。
 RViz 同时显示累计 3D 地图、实时点云、二维栅格、代价地图和路径。
 
+RGB-D 视觉建图与 Nav2 也有一条组合入口：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_rgbd_navigation_simulation.launch.py
+```
+
+它默认打开带方向性纹理的 `structured_loop_3d.sdf`，一次启动 Gazebo、轮速 + IMU
+EKF、RGB-D 同步、RTAB-Map、Nav2 和导航 RViz。全局规划消费由深度图生成的
+`/rtabmap/map`，局部体素层与碰撞监视器继续消费 `/lidar_3d/points`；这两种传感器
+承担不同职责，不等于已经实现紧耦合融合。地图形成后使用 RViz 顶部 `Nav2 Goal`
+在已知自由区设置目标，不需要 `2D Pose Estimate`。
+
+专用 RViz 同时显示 RGB、固定 `0.2–4.0 m` 灰度范围的深度图、RGB-D 累计彩色点云、
+实时 3D LiDAR、二维地图、代价地图和路径。继续已有数据库时传
+`reset_database:=false`；默认 `true` 会开始一张新图。
+
 障碍物安全扫掠高度为 `0.05–0.45 m`：机器人含雷达总高 `0.35 m`，另留
 `0.10 m` 余量。这个二维导航模型会绕开安全高度内的最大障碍外轮廓，同时
 允许通过净空高于 `0.45 m` 的门洞。
@@ -635,6 +651,11 @@ ros2 run slam_robot_slam_3d exploration_campaign \
 
 ## 后续路线
 
-相机随后用于增强地点识别和全局重定位，IMU 用于支持具备逐点时间数据的
-LIO；不计划融合 2D 与 3D LiDAR。详细分阶段任务和验收标准见项目根目录
-`plan.md` 的 8.3、8.4 节。
+最终工程主链仍由 3D LiDAR SLAM 承担定位、几何建图和导航坐标，轮速 + IMU
+承担高频运动预测。RGB-D 按“地点识别与全局重定位 → 经几何复核的视觉约束 →
+语义和补充障碍证据”渐进接入；视觉失效时必须能退回纯 LiDAR 主链。当前
+RTAB-Map RGB-D + Nav2 入口是独立视觉基线与组合对照，不代表已完成这种融合。
+
+若将 RGB-D 深度送入 Nav2，它只能作为 3D LiDAR 障碍层的补充，并须单独验收前向
+视场、`0.20 m` 近距盲区、侧后盲区和陈旧观测清除。IMU 后续还可支持具备逐点时间
+数据的 LIO；不计划融合 2D 与 3D LiDAR。详细排序见项目根目录 `plan.md`。

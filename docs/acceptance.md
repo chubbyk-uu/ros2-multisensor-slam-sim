@@ -200,6 +200,11 @@ Depth 与 LiDAR 均为 `3607` 帧。RTAB-Map 的 `721` 帧诊断中，`626` 帧�
 已知 teardown 现象，发生在结果落盘和算法节点退出之后，不计作运行期通过。记录见
 [`2026-09-03-rtabmap-rgbd-online.json`](results/2026-09-03-rtabmap-rgbd-online.json)。
 
+交互式组合入口另做了启动与动作冒烟：`bt_navigator` 到达 `active`，RTAB-Map 地图
+保持唯一发布者，3D LiDAR 同时被局部/全局障碍层与碰撞监视器消费；向 `map` 中
+`(2.0, 0.0)` 发送 `NavigateToPose` 后目标被接受并以 `SUCCEEDED / error_code=0`
+结束。该检查证明单一 launch 的点击导航链路可用，但不替代上面的两圈精度与资源验收。
+
 ## 启动与故障注入验收
 
 五个复合 3D launch 入口均有无界面冒烟检查，验证作用域、关键节点持续在线、

@@ -374,6 +374,10 @@ ros2 launch slam_robot_slam_3d structured_navigation_regression.launch.py
 
 ### 在线 RTAB-Map RGB-D
 
+本节是独立视觉 SLAM 基线，用于验证 RGB-D 里程计、回环、深度地图和后续融合的
+对照输入。项目最终路线仍以 3D LiDAR SLAM 负责主定位、主几何地图和导航坐标，
+RGB-D 负责地点识别、语义与障碍补充；不要把本节入口理解成最终主从架构。
+
 启动 Gazebo、轮速 + IMU EKF、官方 RGB-D 同步器、RTAB-Map 和专用 RViz：
 
 ```bash
@@ -449,6 +453,19 @@ ros2 launch slam_robot_slam_3d rtabmap_rgbd_online_regression.launch.py
 该入口无界面运行纹理世界两圈，自动记录 CameraInfo 长程频率、RTAB-Map 轨迹、视觉
 回环、地图、CPU、RSS 和数据库，并在结束后判定退出。默认要求相机至少 `9000` 帧且
 实测不低于 `27 Hz`；当前正式结果为 `11079` 帧、`30.304 Hz`，八项检查全部通过。
+
+交互式在线建图并用 Nav2 点击导航：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_rgbd_navigation_simulation.launch.py
+```
+
+该组合入口只负责编排：内部仍复用独立 RGB-D SLAM 与通用在线 Nav2 launch，不复制
+算法参数。它刻意构成“RGB-D 视觉建图 + 3D LiDAR 避障”的对照：RTAB-Map 的深度
+二维投影用于全局规划，独立 3D LiDAR 用于局部体素避障和碰撞监视。LiDAR 没有进入
+视觉 SLAM，RGB-D 也没有约束 LiDAR 位姿图，因此不能称为 LiDAR—视觉融合。导航
+RViz 提供 `Nav2 Goal`，并同时显示 RGB、深度、彩色累计点云、实时 LiDAR、代价地图
+和路径。目标必须落在当前地图已经观测到的自由区域。
 
 ### 输入同步与 QoS
 

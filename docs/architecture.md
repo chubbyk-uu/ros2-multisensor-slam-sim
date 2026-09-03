@@ -76,7 +76,7 @@ RGB-D RTAB-Map 成熟链路
   RGB + Depth + CameraInfo -> rtabmap_sync/rgbd_sync
     -> RGBDImage + /odom -> RTAB-Map 视觉关键帧 + 词袋回环 + 位姿图
     -> RGB-D MapData + 深度二维投影 /rtabmap/map + map -> odom
-  /lidar_3d/points -> 独立显示（本阶段不进入 RGB-D 算法输入）
+  /lidar_3d/points -> 可选 Nav2 障碍层（不进入 RGB-D SLAM 算法输入）
 
 3D 自研链路
   /lidar_3d/points + /odom -> 预处理 + GICP 局部子图前端
@@ -130,6 +130,8 @@ map
   几何 ICP SLAM，MOLA 对照关闭 deskew；三者都不应称为完整 LIO。
 - 真值 `/ground_truth/odom` 只能用于自动驾驶测试和误差评分，禁止进入
   SLAM、EKF 或导航估计链路。
-- 后续多传感器路线是 3D LiDAR + 相机 + IMU，不机械融合 2D 与 3D LiDAR。
+- 后续多传感器主链由 3D LiDAR SLAM 提供主定位、主几何地图和导航坐标；轮速 +
+  IMU 提供高频运动预测；RGB-D 补充地点识别、全局重定位、语义和视场内障碍。
+  RTAB-Map RGB-D 是独立视觉基线，不是最终主从架构，也不机械融合 2D 与 3D LiDAR。
 - RGB-D 与 LiDAR 型号选择正交；默认不生成相机，视觉入口才显式启用。图像和
   深度以 `camera_optical_frame` 发布，稠密 RGB-D 点云默认不桥接。
