@@ -471,6 +471,10 @@ if(BUILD_TESTING)
     test/test_launch_smoke_check.py
   )
   ament_add_pytest_test(
+    test_navigation_safety_launch
+    test/test_navigation_safety_launch.py
+  )
+  ament_add_pytest_test(
     test_frontier_exploration_regression
     test/test_frontier_exploration_regression.py
   )

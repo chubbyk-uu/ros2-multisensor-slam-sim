@@ -24,6 +24,12 @@ from slam_robot_navigation.blocked_road import (
     evaluate as evaluate_blocked_road,
     failed_checks,
 )
+from slam_robot_navigation.dynamic_obstacle import (
+    DynamicObstacleCriteria,
+    DynamicObstacleObservation,
+    evaluate as evaluate_dynamic_obstacle,
+    failed_checks as failed_dynamic_checks,
+)
 
 
 DEFAULT_ROUTE = (
@@ -122,6 +128,7 @@ def distance_to_seal(x, y, seal):
 DYNAMIC_OBSTACLE_NAME = "navigation_test_obstacle"
 DYNAMIC_OBSTACLE_X = -1.35
 DYNAMIC_OBSTACLE_Y = -0.34
+DYNAMIC_OBSTACLE_RADIUS = math.hypot(0.30, 0.30)
 DYNAMIC_OBSTACLE_SDF = """
 <sdf version="1.10">
   <model name="navigation_test_obstacle">
@@ -144,16 +151,27 @@ DYNAMIC_OBSTACLE_SDF = """
 
 
 class NavigationRegression:
-    def __init__(self, navigator, world_name, seal_offset_x=0.0):
+    def __init__(
+        self,
+        navigator,
+        world_name,
+        localization_mode="amcl",
+        seal_offset_x=0.0,
+        obstacle_offset_y=0.0,
+    ):
         self.navigator = navigator
         # The Gazebo entity services are namespaced by world, and the
         # blocked-road scenario runs in a different world from the others.
         self.world_name = world_name
+        self.localization_mode = localization_mode
         self.blocked_road_seals = tuple(
             (name, x + seal_offset_x, y, size_x, size_y)
             for name, x, y, size_x, size_y in BLOCKED_ROAD_SEALS
         )
         self.latest_amcl_pose = None
+        self.latest_navigation_pose = None
+        self.dynamic_obstacle_x = DYNAMIC_OBSTACLE_X
+        self.dynamic_obstacle_y = DYNAMIC_OBSTACLE_Y + obstacle_offset_y
         self.collision_actions = 0
         self.last_collision_action = CollisionMonitorState.DO_NOTHING
         self.obstacle_spawned = False
@@ -184,12 +202,13 @@ class NavigationRegression:
             DeleteEntity,
             f"/world/{world_name}/remove",
         )
-        self.navigator.create_subscription(
-            PoseWithCovarianceStamped,
-            "/amcl_pose",
-            self._amcl_pose_callback,
-            10,
-        )
+        if localization_mode == "amcl":
+            self.navigator.create_subscription(
+                PoseWithCovarianceStamped,
+                "/amcl_pose",
+                self._amcl_pose_callback,
+                10,
+            )
         self.navigator.create_subscription(
             CollisionMonitorState,
             "/collision_monitor_state",
@@ -229,8 +248,8 @@ class NavigationRegression:
     def _costmap_contains_obstacle(self, message):
         resolution = message.info.resolution
         origin = message.info.origin.position
-        cell_x = round((DYNAMIC_OBSTACLE_X - origin.x) / resolution)
-        cell_y = round((DYNAMIC_OBSTACLE_Y - origin.y) / resolution)
+        cell_x = round((self.dynamic_obstacle_x - origin.x) / resolution)
+        cell_y = round((self.dynamic_obstacle_y - origin.y) / resolution)
         radius_cells = max(1, round(0.20 / resolution))
         values = []
         for y in range(cell_y - radius_cells, cell_y + radius_cells + 1):
@@ -443,7 +462,10 @@ class NavigationRegression:
 
     def wait_until_nav2_active(self, timeout):
         deadline = time.monotonic() + timeout
-        for node_name in ("amcl", "bt_navigator"):
+        lifecycle_nodes = ["bt_navigator"]
+        if self.localization_mode == "amcl":
+            lifecycle_nodes.insert(0, "amcl")
+        for node_name in lifecycle_nodes:
             client = self.navigator.create_client(
                 GetState,
                 f"/{node_name}/get_state",
@@ -509,6 +531,7 @@ class NavigationRegression:
                 )
                 feedback = self.navigator.getFeedback()
                 if feedback is not None:
+                    self.latest_navigation_pose = feedback.current_pose.pose
                     max_recoveries = max(
                         max_recoveries,
                         feedback.number_of_recoveries,
@@ -571,9 +594,10 @@ class NavigationRegression:
         elapsed = self.simulation_time() - start_simulation_time
         rclpy.spin_once(self.navigator, timeout_sec=0.2)
         goal_error = math.nan
-        if self.latest_amcl_pose is not None:
-            dx = self.latest_amcl_pose.position.x - goal.position.x
-            dy = self.latest_amcl_pose.position.y - goal.position.y
+        final_pose = self.latest_amcl_pose or self.latest_navigation_pose
+        if final_pose is not None:
+            dx = final_pose.position.x - goal.position.x
+            dy = final_pose.position.y - goal.position.y
             goal_error = math.hypot(dx, dy)
 
         return {
@@ -595,8 +619,8 @@ class NavigationRegression:
         request.entity_factory.name = DYNAMIC_OBSTACLE_NAME
         request.entity_factory.allow_renaming = False
         request.entity_factory.sdf = DYNAMIC_OBSTACLE_SDF
-        request.entity_factory.pose.position.x = DYNAMIC_OBSTACLE_X
-        request.entity_factory.pose.position.y = DYNAMIC_OBSTACLE_Y
+        request.entity_factory.pose.position.x = self.dynamic_obstacle_x
+        request.entity_factory.pose.position.y = self.dynamic_obstacle_y
         request.entity_factory.pose.position.z = 0.40
         request.entity_factory.pose.orientation.w = 1.0
         request.entity_factory.relative_to = "world"
@@ -735,6 +759,7 @@ class NavigationRegression:
                 return None, "NAV2_RUNTIME_LOST"
             feedback = self.navigator.getFeedback()
             if feedback is not None:
+                self.latest_navigation_pose = feedback.current_pose.pose
                 position = feedback.current_pose.pose.position
                 recoveries = max(recoveries, feedback.number_of_recoveries)
 
@@ -860,6 +885,7 @@ class NavigationRegression:
             )
             feedback = self.navigator.getFeedback()
             if feedback is not None:
+                self.latest_navigation_pose = feedback.current_pose.pose
                 position = feedback.current_pose.pose.position
                 max_recoveries = max(
                     max_recoveries,
@@ -879,15 +905,15 @@ class NavigationRegression:
                         }
                     print(
                         "  spawned 0.60 m obstacle at "
-                        f"({DYNAMIC_OBSTACLE_X:.2f}, "
-                        f"{DYNAMIC_OBSTACLE_Y:.2f})",
+                        f"({self.dynamic_obstacle_x:.2f}, "
+                        f"{self.dynamic_obstacle_y:.2f})",
                         flush=True,
                     )
 
                 if self.obstacle_spawned:
                     obstacle_distance = math.hypot(
-                        position.x - DYNAMIC_OBSTACLE_X,
-                        position.y - DYNAMIC_OBSTACLE_Y,
+                        position.x - self.dynamic_obstacle_x,
+                        position.y - self.dynamic_obstacle_y,
                     )
                     self.minimum_obstacle_distance = min(
                         self.minimum_obstacle_distance,
@@ -941,9 +967,10 @@ class NavigationRegression:
         }.get(task_result, "UNKNOWN")
         rclpy.spin_once(self.navigator, timeout_sec=0.2)
         goal_error = math.nan
-        if self.latest_amcl_pose is not None:
-            dx = self.latest_amcl_pose.position.x - goal_pose.pose.position.x
-            dy = self.latest_amcl_pose.position.y - goal_pose.pose.position.y
+        final_pose = self.latest_amcl_pose or self.latest_navigation_pose
+        if final_pose is not None:
+            dx = final_pose.position.x - goal_pose.pose.position.x
+            dy = final_pose.position.y - goal_pose.pose.position.y
             goal_error = math.hypot(dx, dy)
 
         if (
@@ -957,6 +984,7 @@ class NavigationRegression:
 
         return {
             "result": result_name,
+            "goal_reached": task_result == TaskResult.SUCCEEDED,
             "elapsed": elapsed,
             "remaining": last_distance,
             "recoveries": max_recoveries,
@@ -975,6 +1003,48 @@ def parse_arguments(argv=None):
         choices=("multi-goal", "dynamic-obstacle", "blocked-road"),
         default="multi-goal",
         help="Regression scenario to execute (default: multi-goal).",
+    )
+    parser.add_argument(
+        "--localization-mode",
+        choices=("amcl", "online-slam"),
+        default="amcl",
+        help=(
+            "Wait for AMCL and its initial pose, or only for Nav2 when an "
+            "online SLAM node owns map -> odom (default: amcl)."
+        ),
+    )
+    parser.add_argument(
+        "--obstacle-offset-y",
+        type=float,
+        default=0.0,
+        help=(
+            "Move the dynamic test obstacle perpendicular to the nominal "
+            "route. Intended for the executable negative control."
+        ),
+    )
+    parser.add_argument(
+        "--minimum-dynamic-clearance",
+        type=float,
+        default=0.15,
+        help="Minimum body-to-obstacle clearance in metres (default: 0.15).",
+    )
+    parser.add_argument(
+        "--minimum-path-deviation",
+        type=float,
+        default=0.35,
+        help="Minimum observed detour from the original route (default: 0.35).",
+    )
+    parser.add_argument(
+        "--maximum-goal-error",
+        type=float,
+        default=0.35,
+        help="Maximum final map-frame goal error in metres (default: 0.35).",
+    )
+    parser.add_argument(
+        "--maximum-dynamic-recoveries",
+        type=int,
+        default=3,
+        help="Maximum recoveries during a traversable obstruction (default: 3).",
     )
     parser.add_argument(
         "--timeout",
@@ -1121,6 +1191,12 @@ def main():
     ):
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError(f"{name} must be finite and positive")
+    for name, value in (
+        ("seal_offset_x", args.seal_offset_x),
+        ("obstacle_offset_y", args.obstacle_offset_y),
+    ):
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite")
     rclpy.init()
     navigator = BasicNavigator("navigation_regression")
     navigator.set_parameters(
@@ -1134,11 +1210,20 @@ def main():
             else "slam_world"
         )
     regression = NavigationRegression(
-        navigator, world_name, seal_offset_x=args.seal_offset_x
+        navigator,
+        world_name,
+        localization_mode=args.localization_mode,
+        seal_offset_x=args.seal_offset_x,
+        obstacle_offset_y=args.obstacle_offset_y,
     )
 
     try:
-        print("waiting for Nav2 and the AMCL initial pose...", flush=True)
+        dependency = (
+            "Nav2 and the AMCL initial pose"
+            if args.localization_mode == "amcl"
+            else "Nav2 with online SLAM localization"
+        )
+        print(f"waiting for {dependency}...", flush=True)
         if not regression.wait_until_nav2_active(args.activation_timeout):
             print(
                 "summary: result=NAV2_ACTIVATION_TIMEOUT "
@@ -1232,16 +1317,41 @@ def main():
         else:
             print("starting dynamic-obstacle scenario", flush=True)
             result = regression.run_dynamic_obstacle(args.timeout)
-            if (
-                result.get("global_costmap_latency", math.inf)
-                > args.maximum_global_costmap_latency
-                or result.get("local_costmap_latency", math.inf)
-                > args.maximum_local_costmap_latency
-            ):
-                result["result"] = "COSTMAP_LATENCY_EXCEEDED"
+            minimum_clearance = (
+                regression.minimum_obstacle_distance
+                - args.robot_circumscribed_radius
+                - DYNAMIC_OBSTACLE_RADIUS
+            )
+            observation = DynamicObstacleObservation(
+                goal_reached=result.get("goal_reached", False),
+                global_costmap_observed=regression.global_costmap_observed,
+                local_costmap_observed=regression.local_costmap_observed,
+                global_costmap_latency=result.get(
+                    "global_costmap_latency", math.inf
+                ),
+                local_costmap_latency=result.get(
+                    "local_costmap_latency", math.inf
+                ),
+                minimum_obstacle_clearance=minimum_clearance,
+                maximum_path_deviation=regression.maximum_path_deviation,
+                goal_error=result["goal_error"],
+                recoveries=result["recoveries"],
+                collision_actions=regression.collision_actions,
+            )
+            criteria = DynamicObstacleCriteria(
+                maximum_global_costmap_latency=(
+                    args.maximum_global_costmap_latency
+                ),
+                maximum_local_costmap_latency=args.maximum_local_costmap_latency,
+                minimum_clearance=args.minimum_dynamic_clearance,
+                minimum_path_deviation=args.minimum_path_deviation,
+                maximum_goal_error=args.maximum_goal_error,
+                maximum_recoveries=args.maximum_dynamic_recoveries,
+            )
+            verdict, checks = evaluate_dynamic_obstacle(observation, criteria)
             print(
                 "summary: "
-                f"result={result['result']} "
+                f"verdict={verdict} result={result['result']} "
                 f"elapsed={result['elapsed']:.1f} s "
                 f"remaining={result['remaining']:.2f} m "
                 f"recoveries={result['recoveries']} "
@@ -1256,11 +1366,18 @@ def main():
                 f"{result.get('local_costmap_latency', math.nan):.3f} s "
                 f"minimum_obstacle_distance="
                 f"{regression.minimum_obstacle_distance:.3f} m "
+                f"clearance={minimum_clearance:.3f} m "
                 f"maximum_path_deviation="
                 f"{regression.maximum_path_deviation:.3f} m "
                 f"goal_error={result['goal_error']:.3f} m",
                 flush=True,
             )
+            failed = failed_dynamic_checks(checks)
+            if failed:
+                print(f"  failed checks: {', '.join(failed)}", flush=True)
+            print(f"VERDICT {verdict}", flush=True)
+            if verdict != "PASS":
+                raise SystemExit(1)
         if result["result"] != "SUCCEEDED":
             raise SystemExit(1)
     finally:

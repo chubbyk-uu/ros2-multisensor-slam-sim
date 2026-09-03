@@ -1,0 +1,101 @@
+{
+  "date": "2026-09-03",
+  "schema_version": 1,
+  "stack": "custom 3D online SLAM + Nav2 + /lidar_3d/points",
+  "command": "ros2 launch slam_robot_slam_3d custom_3d_navigation_safety_regression.launch.py scenario:=<scenario> gui:=false rviz:=false",
+  "dynamic_obstacle": {
+    "verdict": "PASS",
+    "world": "slam_world",
+    "measurements": {
+      "elapsed_sim_seconds": 14.9,
+      "global_costmap_latency_seconds": 1.544,
+      "local_costmap_latency_seconds": 0.280,
+      "minimum_base_centre_distance_m": 1.069,
+      "minimum_body_clearance_m": 0.309,
+      "maximum_path_deviation_m": 1.146,
+      "goal_error_m": 0.174,
+      "recoveries": 0,
+      "collision_actions": 0
+    },
+    "checks": {
+      "goal_reached": true,
+      "global_costmap_observed": true,
+      "local_costmap_observed": true,
+      "global_costmap_latency": true,
+      "local_costmap_latency": true,
+      "kept_clearance": true,
+      "detour_observed": true,
+      "goal_error": true,
+      "recovery_budget": true,
+      "collision_free": true
+    },
+    "negative_control": {
+      "argument": "obstacle_offset_y:=3.0",
+      "verdict": "FAIL",
+      "failed_checks": [
+        "local_costmap_observed",
+        "local_costmap_latency"
+      ],
+      "note": "The goal still succeeded, but the obstacle moved off the route and outside the local costmap. The regression exited non-zero instead of crediting an untested detour."
+    }
+  },
+  "blocked_road": {
+    "verdict": "PASS",
+    "world": "blocked_road_world",
+    "measurements": {
+      "elapsed_sim_seconds": 30.9,
+      "planner_error_code": 208,
+      "planner_error_name": "NO_VALID_PATH",
+      "widest_doorway_gap_m": 0.0,
+      "final_speed_mps": 0.0,
+      "recoveries": 16,
+      "minimum_base_centre_distance_m": 1.965,
+      "minimum_body_clearance_m": 1.629,
+      "collision_actions": 0
+    },
+    "checks": {
+      "goal_not_reached": true,
+      "blockage_perceived": true,
+      "planner_reported_no_path": true,
+      "robot_at_rest": true,
+      "kept_clearance": true,
+      "collision_free": true,
+      "recovery_floor": true,
+      "recovery_ceiling": true,
+      "ended_within_budget": true
+    },
+    "negative_control": {
+      "argument": "seal_offset_x:=1.5",
+      "verdict": "FAIL",
+      "failed_checks": [
+        "goal_not_reached",
+        "blockage_perceived",
+        "planner_reported_no_path",
+        "robot_at_rest",
+        "recovery_floor"
+      ]
+    }
+  },
+  "thresholds": {
+    "robot_circumscribed_radius_m": 0.336,
+    "dynamic_obstacle_circumscribed_radius_m": 0.424264,
+    "minimum_dynamic_clearance_m": 0.15,
+    "minimum_path_deviation_m": 0.35,
+    "maximum_goal_error_m": 0.35,
+    "maximum_global_costmap_latency_seconds": 2.2,
+    "maximum_local_costmap_latency_seconds": 0.8,
+    "minimum_blocked_clearance_m": 0.20,
+    "minimum_blocked_recoveries": 1,
+    "maximum_blocked_recoveries": 18,
+    "blocked_give_up_budget_sim_seconds": 180.0
+  },
+  "limits": [
+    "One positive and one negative-control run per scenario; this closes functional coverage but is not a statistical campaign.",
+    "The blocked-road conclusion applies to a single blockage retained within one sensor view, not a multi-part blockage larger than the costmap observation footprint.",
+    "Gazebo exited with SIGSEGV during teardown after each verdict and entity cleanup; no scoped process remained. This known external teardown fault did not change the run verdict."
+  ],
+  "source_revision": {
+    "base_commit": "3a2cdd5",
+    "dirty": true
+  }
+}

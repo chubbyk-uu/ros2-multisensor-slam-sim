@@ -56,6 +56,7 @@ def generate_launch_description():
         ),
         launch_arguments={
             "world": LaunchConfiguration("world"),
+            "world_name": LaunchConfiguration("world_name"),
             "gui": LaunchConfiguration("gui"),
             "rviz": "false",
             "sensor_variant": "3d",
@@ -111,6 +112,14 @@ def generate_launch_description():
             # held still long enough to assert on.
             DeclareLaunchArgument("nav2_autostart", default_value="true"),
             DeclareLaunchArgument("world", default_value=default_world),
+            DeclareLaunchArgument(
+                "world_name",
+                default_value="slam_world",
+                description=(
+                    "The <world name> used by Gazebo entity services. It must "
+                    "match the selected SDF."
+                ),
+            ),
             DeclareLaunchArgument("gui", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("rviz_config", default_value=default_rviz),

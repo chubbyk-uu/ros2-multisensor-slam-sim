@@ -117,6 +117,10 @@ if(BUILD_TESTING)
   )
 
   ament_add_pytest_test(test_blocked_road test/test_blocked_road.py)
+  ament_add_pytest_test(
+    test_dynamic_obstacle
+    test/test_dynamic_obstacle.py
+  )
 endif()
 
 ament_package()

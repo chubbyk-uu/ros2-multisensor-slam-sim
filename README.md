@@ -73,7 +73,7 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 JSON：
 
 ```bash
-colcon test && colcon test-result --all   # 共 777 项，含 gtest、pytest 与静态检查
+colcon test && colcon test-result --all   # gtest、pytest 与静态检查
 ```
 
 - **固定包回归**：`bags/structured_3d_reference` 等固定 MCAP 排除传感器随机性，

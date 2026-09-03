@@ -62,6 +62,15 @@ PROFILES = (
         ("/bt_navigator", "/ekf_filter_node", "/rtabmap/rtabmap"),
     ),
     LaunchProfile(
+        "custom_navigation_safety",
+        "custom_3d_navigation_safety_regression.launch.py",
+        (
+            "/bt_navigator",
+            "/ekf_filter_node",
+            "/scan_to_map_odometry_3d",
+        ),
+    ),
+    LaunchProfile(
         "structured_dataset",
         "structured_dataset_recording.launch.py",
         ("/ekf_filter_node", "/rtabmap/rtabmap"),

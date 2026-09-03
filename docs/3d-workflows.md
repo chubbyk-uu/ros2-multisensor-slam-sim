@@ -466,6 +466,23 @@ ros2 launch slam_robot_slam_3d structured_navigation_regression.launch.py
 自动回归默认无 Gazebo 和 RViz 窗口，这是为了减少资源占用；人工观察时使用
 上面的手动启动命令。测量结果见 [性能与标定](performance.md)。
 
+自研 3D online-SLAM 的动态障碍与完全封路安全回归共用一个入口：
+
+```bash
+# 可绕行的新障碍：必须感知、绕行并安全到达
+ros2 launch slam_robot_slam_3d custom_3d_navigation_safety_regression.launch.py \
+  scenario:=dynamic-obstacle
+
+# 单门洞完全封死：必须明确无路、有限恢复并停稳
+ros2 launch slam_robot_slam_3d custom_3d_navigation_safety_regression.launch.py \
+  scenario:=blocked-road
+```
+
+人工观察可追加 `gui:=true rviz:=true`。两条可执行负向对照分别为
+`obstacle_offset_y:=3.0` 与 `seal_offset_x:=1.5`，其预期是 launch 非零退出；它们用于
+证明判据确实区分“路线上出现障碍”和“门洞真正封死”。封路沿用专用单门洞世界，不在
+开阔场景拼接多段视野外路障，避免代价地图清除不可见封口的已知边界。
+
 ## MOLA 纯激光里程计对照
 
 ```bash

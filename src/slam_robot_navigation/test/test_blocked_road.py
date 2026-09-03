@@ -208,3 +208,28 @@ def test_navigation_regression_accepts_ros_node_arguments():
     )
 
     assert arguments.scenario == "blocked-road"
+
+
+def test_navigation_regression_can_skip_amcl_for_online_slam():
+    script = (
+        Path(__file__).parents[1] / "scripts" / "navigation_regression.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "navigation_regression_online_slam_test", script
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    arguments = module.parse_arguments(
+        [
+            "--scenario",
+            "dynamic-obstacle",
+            "--localization-mode",
+            "online-slam",
+            "--obstacle-offset-y",
+            "3.0",
+        ]
+    )
+
+    assert arguments.localization_mode == "online-slam"
+    assert arguments.obstacle_offset_y == 3.0
