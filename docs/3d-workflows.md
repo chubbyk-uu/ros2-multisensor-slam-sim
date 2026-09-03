@@ -163,8 +163,27 @@ ros2 run slam_robot_slam_3d stack_comparison_report \
   旁边；只比两个 RSS 会把 RTAB-Map 挪到磁盘上的内存算成它的优势。
 
 回环事件不给比值列：自研报告的是已提交的位姿图约束，RTAB-Map 报告的是
-proximity 检测，二者计的不是同一种东西。要单独衡量前端漂移，必须两侧都先关掉
-回环再跑一趟，否则末端误差比的是回环质量而不是前端。
+proximity 检测，二者计的不是同一种东西。
+
+要单独衡量前端漂移，两侧都要先关掉回环，否则误差比的是回环质量而不是前端。两个
+开关都是单行配置改动，不需要改代码：自研把
+`loop_closure.scan_context.minimum_travel_distance` 抬到长于整条轨迹，检索候选恒
+为空；RTAB-Map 把 `RGBD/ProximityBySpace` 置 `false`——本项目不订阅图像，proximity
+是它唯一的回环来源，而 `RGBD/NeighborLinkRefining` 保持开启以保留它的前端 ICP。
+
+单趟结果不能作为结论。固定输入不固定异步回环校验与位姿图提交的顺序，因此一次运行
+的回环计数和误差都只是一次抽样。重复若干趟后用分布汇总：
+
+```bash
+ros2 run slam_robot_slam_3d stack_comparison_distribution \
+  --profile custom=/tmp/traj_custom_1.json,/tmp/traj_custom_2.json,/tmp/traj_custom_3.json \
+  --profile rtabmap=/tmp/traj_rtabmap_1.json,/tmp/traj_rtabmap_2.json,/tmp/traj_rtabmap_3.json
+```
+
+汇总取中位数并在旁边给出实测范围：三到五趟里一次主机抖动就足以把均值推到能凭空
+造出或抹掉一个差异，而重复运行的目的正是不让这种事悄悄发生。没有采到轨迹样本的
+运行会被排除并显式标注，不会被静默平均掉。两条链路的 RMSE 比值按实测运行的最好与
+最坏配对给出区间，而不是一个数字。
 
 该入口需要先按本文开头录制固定包。
 

@@ -280,6 +280,7 @@ install(
     scripts/snapshot_localization_regression
     scripts/snapshot_resume_probe
     scripts/snapshot_resume_regression
+    scripts/stack_comparison_distribution
     scripts/stack_comparison_report
     scripts/stack_trajectory_census
     scripts/structured_loop_regression

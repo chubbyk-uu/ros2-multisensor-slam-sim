@@ -1,0 +1,477 @@
+{
+  "control": {
+    "label": "recorded_odometry_only",
+    "note": "Wheel+IMU EKF output scored against truth with the same anchoring, computed directly from the bag. Both stacks consume this as their initial guess.",
+    "peak_position_error_m": 0.3385,
+    "rmse_position_error_m": 0.1596,
+    "rmse_yaw_error_deg": 0.841,
+    "samples": 18081
+  },
+  "dataset": "bags/structured_3d_reference (two laps of structured_loop_3d)",
+  "dataset_sha256": "e2b6bda6af7bcd8c50982258ccb61b59f78288471952ec46f479bb3f2074a34a",
+  "date": "2026-09-03",
+  "findings": [
+    "With loop closure enabled, RTAB-Map's position RMSE is 2.25x to 2.87x the custom stack's over the observed runs. The 2.88x reported from a single run each was at the optimistic end of that range.",
+    "The custom stack's accuracy does not come from its loop closure. Disabling it leaves position RMSE unchanged at 0.0113 m; only yaw RMSE degrades, 0.0201 to 0.0285 deg. On this trajectory the ten committed constraints buy heading, not position.",
+    "RTAB-Map's accuracy comes almost entirely from proximity detection. Without it its position RMSE is 0.1808 m, which is worse than the 0.1596 m odometry it consumes: its 1 Hz neighbour-link ICP does not improve on the EKF input on this data.",
+    "Isolating the front ends therefore widens the gap rather than narrowing it: 13.42x to 17.47x with loop closure off, against 2.25x to 2.87x with it on.",
+    "The custom stack is close to deterministic on fixed input: position RMSE 0.0113 m in all three runs and exactly 10 pose-graph commits each time."
+  ],
+  "limits": [
+    "Three runs per profile. The ranges are what three replays showed, not a confidence interval.",
+    "One dataset and one trajectory. structured_loop_3d is a closed two-lap loop; a route without revisits would not exercise loop closure at all.",
+    "RTAB-Map was not retuned beyond the detection-rate probe recorded in the superseded result; its front end may do better under a configuration not tried here.",
+    "Turning proximity off removes RTAB-Map's only loop source but its neighbour-link refinement remains, so rtabmap_noloop is its front end as configured, not a bare scan matcher."
+  ],
+  "method": "Three replays per profile through map_projection_comparison.launch.py, all at the same revision. Every run consumes byte-identical sensor data and the same recorded odometry. Each trajectory is anchored to its own first sample and the estimate is read at the ground-truth stamp. The centre reported is the median with the observed range, because fixed input does not fix asynchronous loop verification and commit ordering.",
+  "playback_rate": 1.0,
+  "profiles": {
+    "custom": {
+      "cost": {
+        "average_cpu_percent": {
+          "maximum": 21.23478943148387,
+          "median": 20.406515716410553,
+          "minimum": 20.340896616755987,
+          "values": [
+            20.340896616755987,
+            20.406515716410553,
+            21.23478943148387
+          ]
+        },
+        "final_rss_mb": {
+          "maximum": 343.125,
+          "median": 342.3984375,
+          "minimum": 342.32421875,
+          "values": [
+            342.32421875,
+            343.125,
+            342.3984375
+          ]
+        }
+      },
+      "loop_events": {
+        "pose_graph_commits": {
+          "maximum": 10,
+          "median": 10,
+          "minimum": 10,
+          "values": [
+            10,
+            10,
+            10
+          ]
+        },
+        "rtabmap_proximity_events": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0,
+          "values": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "note": "Loop closure enabled (shipped config/custom_3d_slam.yaml).",
+      "runs": 3,
+      "trajectory": {
+        "final_position_error_m": {
+          "maximum": 0.0012624777288501323,
+          "median": 0.0012624777288501323,
+          "minimum": 0.0009411198846660281,
+          "values": [
+            0.0012624777288501323,
+            0.0012624777288501323,
+            0.0009411198846660281
+          ]
+        },
+        "peak_position_error_m": {
+          "maximum": 0.019689201195412884,
+          "median": 0.019689201195412884,
+          "minimum": 0.01934566643622713,
+          "values": [
+            0.019689201195412884,
+            0.019689201195412884,
+            0.01934566643622713
+          ]
+        },
+        "peak_yaw_error_deg": {
+          "maximum": 0.11113666318537653,
+          "median": 0.1108041308661531,
+          "minimum": 0.1108041308661531,
+          "values": [
+            0.1108041308661531,
+            0.1108041308661531,
+            0.11113666318537653
+          ]
+        },
+        "rmse_position_error_m": {
+          "maximum": 0.011325964199093593,
+          "median": 0.01132320973774813,
+          "minimum": 0.011300319794745021,
+          "values": [
+            0.01132320973774813,
+            0.011325964199093593,
+            0.011300319794745021
+          ]
+        },
+        "rmse_yaw_error_deg": {
+          "maximum": 0.020107273107082355,
+          "median": 0.020100704082376526,
+          "minimum": 0.020093969169403245,
+          "values": [
+            0.020100704082376526,
+            0.020107273107082355,
+            0.020093969169403245
+          ]
+        },
+        "trajectory_samples": {
+          "maximum": 18037,
+          "median": 18027,
+          "minimum": 17982,
+          "values": [
+            18037,
+            18027,
+            17982
+          ]
+        }
+      }
+    },
+    "custom_noloop": {
+      "cost": {
+        "average_cpu_percent": {
+          "maximum": 19.947429460032318,
+          "median": 19.38085146798191,
+          "minimum": 19.20021674512159,
+          "values": [
+            19.20021674512159,
+            19.38085146798191,
+            19.947429460032318
+          ]
+        },
+        "final_rss_mb": {
+          "maximum": 333.8046875,
+          "median": 332.2109375,
+          "minimum": 331.1484375,
+          "values": [
+            332.2109375,
+            331.1484375,
+            333.8046875
+          ]
+        }
+      },
+      "loop_events": {
+        "pose_graph_commits": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0,
+          "values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "rtabmap_proximity_events": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0,
+          "values": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "note": "loop_closure.scan_context.minimum_travel_distance raised to 1e6 m, longer than the 143.1 m trajectory, so Scan Context never proposes a candidate. Verified by pose_graph_commits falling from 10 to 0.",
+      "runs": 3,
+      "trajectory": {
+        "final_position_error_m": {
+          "maximum": 0.0018445919098777038,
+          "median": 0.0018445919098777038,
+          "minimum": 0.001346839808197714,
+          "values": [
+            0.0018445919098777038,
+            0.0018445919098777038,
+            0.001346839808197714
+          ]
+        },
+        "peak_position_error_m": {
+          "maximum": 0.020865250224644645,
+          "median": 0.020079099054140428,
+          "minimum": 0.020079099054140428,
+          "values": [
+            0.020079099054140428,
+            0.020079099054140428,
+            0.020865250224644645
+          ]
+        },
+        "peak_yaw_error_deg": {
+          "maximum": 0.11080576762987039,
+          "median": 0.11074377796236957,
+          "minimum": 0.11074377796236957,
+          "values": [
+            0.11074377796236957,
+            0.11074377796236957,
+            0.11080576762987039
+          ]
+        },
+        "rmse_position_error_m": {
+          "maximum": 0.011497554192534669,
+          "median": 0.011272572660719012,
+          "minimum": 0.011272245811741249,
+          "values": [
+            0.011272572660719012,
+            0.011272245811741249,
+            0.011497554192534669
+          ]
+        },
+        "rmse_yaw_error_deg": {
+          "maximum": 0.029029783350681578,
+          "median": 0.02848650868782676,
+          "minimum": 0.028476537970958518,
+          "values": [
+            0.02848650868782676,
+            0.028476537970958518,
+            0.029029783350681578
+          ]
+        },
+        "trajectory_samples": {
+          "maximum": 18011,
+          "median": 18004,
+          "minimum": 18002,
+          "values": [
+            18004,
+            18011,
+            18002
+          ]
+        }
+      }
+    },
+    "rtabmap": {
+      "cost": {
+        "average_cpu_percent": {
+          "maximum": 19.536606952123563,
+          "median": 19.10753979714595,
+          "minimum": 18.320736046256773,
+          "values": [
+            18.320736046256773,
+            19.10753979714595,
+            19.536606952123563
+          ]
+        },
+        "final_rss_mb": {
+          "maximum": 839.05859375,
+          "median": 838.953125,
+          "minimum": 836.04296875,
+          "values": [
+            836.04296875,
+            838.953125,
+            839.05859375
+          ]
+        }
+      },
+      "loop_events": {
+        "pose_graph_commits": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0,
+          "values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "rtabmap_proximity_events": {
+          "maximum": 181,
+          "median": 181,
+          "minimum": 180,
+          "values": [
+            181,
+            181,
+            180
+          ]
+        }
+      },
+      "note": "Loop closure enabled (shipped config/rtabmap_3d.yaml).",
+      "runs": 3,
+      "trajectory": {
+        "final_position_error_m": {
+          "maximum": 0.0016836213165406244,
+          "median": 0.0012122476035579394,
+          "minimum": 0.0012122360853148377,
+          "values": [
+            0.0012122476035579394,
+            0.0012122360853148377,
+            0.0016836213165406244
+          ]
+        },
+        "peak_position_error_m": {
+          "maximum": 0.12428675557081358,
+          "median": 0.12244847087903987,
+          "minimum": 0.09659492006081305,
+          "values": [
+            0.12244847087903987,
+            0.12428675557081358,
+            0.09659492006081305
+          ]
+        },
+        "peak_yaw_error_deg": {
+          "maximum": 0.7143096752934329,
+          "median": 0.7143096752934329,
+          "minimum": 0.7035513395084394,
+          "values": [
+            0.7143096752934329,
+            0.7143096752934329,
+            0.7035513395084394
+          ]
+        },
+        "rmse_position_error_m": {
+          "maximum": 0.0324714090356574,
+          "median": 0.03230865476275002,
+          "minimum": 0.025431609706927736,
+          "values": [
+            0.03230865476275002,
+            0.0324714090356574,
+            0.025431609706927736
+          ]
+        },
+        "rmse_yaw_error_deg": {
+          "maximum": 0.186752314541892,
+          "median": 0.1857214608281072,
+          "minimum": 0.17970485799421076,
+          "values": [
+            0.1857214608281072,
+            0.186752314541892,
+            0.17970485799421076
+          ]
+        },
+        "trajectory_samples": {
+          "maximum": 17777,
+          "median": 17752,
+          "minimum": 17704,
+          "values": [
+            17704,
+            17777,
+            17752
+          ]
+        }
+      }
+    },
+    "rtabmap_noloop": {
+      "cost": {
+        "average_cpu_percent": {
+          "maximum": 11.235798763635051,
+          "median": 10.609901916650148,
+          "minimum": 9.977577753182027,
+          "values": [
+            9.977577753182027,
+            10.609901916650148,
+            11.235798763635051
+          ]
+        },
+        "final_rss_mb": {
+          "maximum": 569.58984375,
+          "median": 568.578125,
+          "minimum": 568.41015625,
+          "values": [
+            569.58984375,
+            568.578125,
+            568.41015625
+          ]
+        }
+      },
+      "loop_events": {
+        "pose_graph_commits": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0,
+          "values": [
+            0,
+            0,
+            0
+          ]
+        },
+        "rtabmap_proximity_events": {
+          "maximum": 0,
+          "median": 0,
+          "minimum": 0,
+          "values": [
+            0,
+            0,
+            0
+          ]
+        }
+      },
+      "note": "RGBD/ProximityBySpace false. No images are subscribed and rtabmap_loop_closure_events was 0 in every run, so proximity is its only loop source. RGBD/NeighborLinkRefining stays true, keeping its front-end ICP.",
+      "runs": 3,
+      "trajectory": {
+        "final_position_error_m": {
+          "maximum": 0.5151114878028104,
+          "median": 0.281990822421756,
+          "minimum": 0.2411259800387905,
+          "values": [
+            0.2411259800387905,
+            0.281990822421756,
+            0.5151114878028104
+          ]
+        },
+        "peak_position_error_m": {
+          "maximum": 0.5151302286524055,
+          "median": 0.37704203699086475,
+          "minimum": 0.3164854853976894,
+          "values": [
+            0.3164854853976894,
+            0.37704203699086475,
+            0.5151302286524055
+          ]
+        },
+        "peak_yaw_error_deg": {
+          "maximum": 2.0870742164048055,
+          "median": 1.7770931958219784,
+          "minimum": 1.6011930814680628,
+          "values": [
+            1.6011930814680628,
+            1.7770931958219784,
+            2.0870742164048055
+          ]
+        },
+        "rmse_position_error_m": {
+          "maximum": 0.19696742696649272,
+          "median": 0.180764230130518,
+          "minimum": 0.15427063687181614,
+          "values": [
+            0.15427063687181614,
+            0.180764230130518,
+            0.19696742696649272
+          ]
+        },
+        "rmse_yaw_error_deg": {
+          "maximum": 0.9892780059743672,
+          "median": 0.927356257436036,
+          "minimum": 0.8023100242870637,
+          "values": [
+            0.8023100242870637,
+            0.927356257436036,
+            0.9892780059743672
+          ]
+        },
+        "trajectory_samples": {
+          "maximum": 17800,
+          "median": 17758,
+          "minimum": 17708,
+          "values": [
+            17800,
+            17708,
+            17758
+          ]
+        }
+      }
+    }
+  },
+  "repetitions": 3,
+  "schema_version": 1,
+  "source_revision": {
+    "commit": "b2453e4a39bc75db54999a02e3b5614ff27fa0db",
+    "dirty": true
+  },
+  "supersedes": "docs/results/2026-09-03-stack-comparison.json"
+}

@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+
+"""Summarise repeated fixed-bag runs of one mapping profile as a distribution.
+
+`stack_comparison_report` renders one run per stack, which is enough to see the
+four dimensions but not enough to claim any of them. Fixed input does not fix
+the ordering of asynchronous loop verification and pose-graph commits, so a
+single run's loop count and error are one draw, not the value. This aggregates
+several runs of the same profile so the spread is visible next to the centre.
+
+The centre reported is the median rather than the mean. With three to five runs
+one unlucky replay -- a host hiccup, a rebuild landing late -- moves a mean
+enough to invent or erase a difference, and the point of repeating runs is to
+stop exactly that from happening quietly.
+
+A profile is summarised only when every one of its runs produced trajectory
+samples. Silently averaging over a run that measured nothing would report a
+smaller spread than was actually observed.
+"""
+
+import argparse
+import json
+import statistics
+import sys
+
+METRICS = (
+    ("RMSE position (m)", "rmse_position_error_m", "{:.4f}"),
+    ("peak position (m)", "peak_position_error_m", "{:.4f}"),
+    ("final position (m)", "final_position_error_m", "{:.4f}"),
+    ("RMSE yaw (deg)", "rmse_yaw_error_deg", "{:.4f}"),
+    ("peak yaw (deg)", "peak_yaw_error_deg", "{:.4f}"),
+    ("trajectory samples", "trajectory_samples", "{:,.0f}"),
+)
+
+LOOP_METRICS = (
+    ("pose graph commits", "pose_graph_commits", "{:,.0f}"),
+    ("RTAB-Map proximity", "rtabmap_proximity_events", "{:,.0f}"),
+)
+
+COST_METRICS = (
+    ("mean CPU (%)", "average_cpu_percent", "{:.1f}"),
+    ("final RSS (MiB)", "final_rss_mb", "{:.0f}"),
+)
+
+LABEL = 22
+COLUMN = 26
+
+
+def load(path):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def spread(values, fmt):
+    """Median with the observed range, so a single draw cannot pass as a value."""
+    if not values:
+        return "n/a"
+    if len(values) == 1:
+        return fmt.format(values[0])
+    centre = statistics.median(values)
+    return f"{fmt.format(centre)} [{fmt.format(min(values))}, {fmt.format(max(values))}]"
+
+
+def collect(runs, key, source):
+    values = []
+    for run in runs:
+        container = run if source == "top" else run.get(source) or {}
+        value = container.get(key)
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def usable(runs):
+    return [run for run in runs if run.get("trajectory_samples")]
+
+
+def render(profiles):
+    lines = []
+    for label, runs in profiles.items():
+        good = usable(runs)
+        lines.append("")
+        lines.append(f"{label}  ({len(good)} of {len(runs)} runs usable)")
+        if len(good) != len(runs):
+            lines.append(
+                "  WARNING: a run produced no trajectory samples and is excluded; "
+                "the spread below is narrower than what was observed."
+            )
+        if not good:
+            continue
+        header = "median [min, max]" if len(good) > 1 else "single run"
+        lines.append(f"{'metric':<{LABEL}}{header:>{COLUMN}}")
+        for group, source in (
+            (METRICS, "top"),
+            (LOOP_METRICS, "top"),
+            (COST_METRICS, "process"),
+        ):
+            for name, key, fmt in group:
+                values = collect(good, key, source)
+                lines.append(f"{name:<{LABEL}}{spread(values, fmt):>{COLUMN}}")
+    return "\n".join(lines)
+
+
+def ratio_note(profiles):
+    """State the headline ratio as a range over runs, never as one number."""
+    labels = list(profiles)
+    if len(labels) < 2:
+        return []
+    reference = usable(profiles[labels[0]])
+    candidate = usable(profiles[labels[1]])
+    if not reference or not candidate:
+        return []
+    key = "rmse_position_error_m"
+    lows = [value for value in collect(reference, key, "top") if value]
+    highs = collect(candidate, key, "top")
+    if not lows or not highs:
+        return []
+    # Worst and best case over the observed runs rather than median over median,
+    # which would hide how much of the gap survives an unlucky pairing.
+    best = min(highs) / max(lows)
+    worst = max(highs) / min(lows)
+    return [
+        "",
+        f"{labels[1]} / {labels[0]} position RMSE over the observed runs: "
+        f"{best:.2f}x to {worst:.2f}x",
+    ]
+
+
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Summarise repeated runs of one or more mapping profiles."
+    )
+    parser.add_argument(
+        "--profile",
+        action="append",
+        required=True,
+        metavar="LABEL=PATH[,PATH...]",
+        help="A profile label and the trajectory JSON files of its runs.",
+    )
+    parser.add_argument("--output", help="Write the aggregated summary as JSON here.")
+    return parser.parse_args(argv)
+
+
+def parse_profiles(specifications):
+    profiles = {}
+    for specification in specifications:
+        if "=" not in specification:
+            raise ValueError(f"expected LABEL=PATH, got {specification!r}")
+        label, paths = specification.split("=", 1)
+        files = [path for path in paths.split(",") if path]
+        if not files:
+            raise ValueError(f"profile {label!r} lists no files")
+        profiles[label] = [load(path) for path in files]
+    return profiles
+
+
+def summarise(profiles):
+    summary = {}
+    for label, runs in profiles.items():
+        good = usable(runs)
+        entry = {"runs": len(runs), "usable_runs": len(good), "metrics": {}}
+        for group, source in (
+            (METRICS, "top"),
+            (LOOP_METRICS, "top"),
+            (COST_METRICS, "process"),
+        ):
+            for _, key, _ in group:
+                values = collect(good, key, source)
+                if not values:
+                    continue
+                entry["metrics"][key] = {
+                    "median": statistics.median(values),
+                    "minimum": min(values),
+                    "maximum": max(values),
+                    "values": values,
+                }
+        summary[label] = entry
+    return summary
+
+
+def main():
+    arguments = parse_arguments(sys.argv[1:])
+    profiles = parse_profiles(arguments.profile)
+    print("\n".join(["REPEATED RUN DISTRIBUTION"] + render(profiles).splitlines()
+                    + ratio_note(profiles)), flush=True)
+    if arguments.output:
+        with open(arguments.output, "w", encoding="utf-8") as handle:
+            json.dump(summarise(profiles), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

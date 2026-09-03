@@ -66,6 +66,19 @@ GICP 复核、后台 SE(2) 图优化和地图重建均完成，而不阻塞 10 H
 `79367`）；只有接缝偏航峰值因接缝采样点数不同（`678` / `715`）在第七位小数上有
 差异。据此可以认为 v5 只增加了持久化，没有改变估计本身。
 
+## 自研与成熟基线的可比对照
+
+对照不是验收判据，但它决定“自研是否够好”能否被回答。固定包上每个配置三趟，以录制
+里程计为对照、各自关闭回环隔离前端，结论是：开回环时 RTAB-Map 的位置 RMSE 为自研的
+`2.25x`–`2.87x`，隔离前端后为 `13.42x`–`17.47x`；自研的精度不来自回环，RTAB-Map 的
+几乎全部来自 proximity 检测。结果 JSON 为
+[`2026-09-03-stack-comparison-distribution.json`](results/2026-09-03-stack-comparison-distribution.json)，
+被它取代的单次运行版本为
+[`2026-09-03-stack-comparison.json`](results/2026-09-03-stack-comparison.json)。
+
+结论限于 `structured_loop_3d` 这一条闭合两圈轨迹：没有重访的路线不会触发回环，因此
+不能据此断言任意场景下的排序。
+
 ## Frontier Exploration
 
 探索器只通过 ComputePathToPose 与 NavigateToPose 调度 Nav2，不直接发布速度。

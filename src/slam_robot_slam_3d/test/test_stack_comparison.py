@@ -13,6 +13,9 @@ TRAJECTORY = SourceFileLoader(
 REPORT = SourceFileLoader(
     "stack_comparison_report", str(SCRIPTS / "stack_comparison_report")
 ).load_module()
+DISTRIBUTION = SourceFileLoader(
+    "stack_comparison_distribution", str(SCRIPTS / "stack_comparison_distribution")
+).load_module()
 
 
 def trajectory_report(label, **overrides):
@@ -218,3 +221,87 @@ def test_the_report_is_written_during_the_run_not_only_at_teardown(tmp_path):
     written = json.loads(output.read_text(encoding="utf-8"))
     assert written["trajectory_samples"] == 2
     assert written["peak_position_error_m"] == pytest.approx(0.03)
+
+
+def test_a_single_run_is_not_dressed_up_as_a_distribution():
+    assert DISTRIBUTION.spread([0.0113], "{:.4f}") == "0.0113"
+    assert "[" not in DISTRIBUTION.spread([0.0113], "{:.4f}")
+
+
+def test_repeated_runs_report_the_range_beside_the_centre():
+    rendered = DISTRIBUTION.spread([0.0325, 0.0476, 0.0769], "{:.4f}")
+
+    assert rendered == "0.0476 [0.0325, 0.0769]"
+
+
+def test_the_centre_is_the_median_so_one_bad_replay_cannot_move_it():
+    # A host hiccup on one of three runs must not invent a difference. The mean
+    # here is 0.36; the median is the value the other two runs agree on.
+    values = [0.03, 0.03, 1.02]
+
+    assert DISTRIBUTION.spread(values, "{:.2f}") == "0.03 [0.03, 1.02]"
+
+
+def test_a_run_that_measured_nothing_is_excluded_and_said_so():
+    runs = [
+        trajectory_report("custom"),
+        trajectory_report("custom", trajectory_samples=0),
+    ]
+
+    rendered = DISTRIBUTION.render({"custom": runs})
+
+    assert "1 of 2 runs usable" in rendered
+    assert "narrower than what was observed" in rendered
+
+
+def test_all_runs_usable_raises_no_exclusion_warning():
+    runs = [trajectory_report("custom"), trajectory_report("custom")]
+
+    rendered = DISTRIBUTION.render({"custom": runs})
+
+    assert "2 of 2 runs usable" in rendered
+    assert "WARNING" not in rendered
+
+
+def test_the_headline_ratio_is_a_range_over_runs_not_one_number():
+    # Reported best- and worst-case pairing, so a reader cannot quote a single
+    # ratio that only one pairing of runs supports.
+    profiles = {
+        "custom": [
+            trajectory_report("custom", rmse_position_error_m=0.010),
+            trajectory_report("custom", rmse_position_error_m=0.012),
+        ],
+        "rtabmap": [
+            trajectory_report("rtabmap", rmse_position_error_m=0.030),
+            trajectory_report("rtabmap", rmse_position_error_m=0.048),
+        ],
+    }
+
+    note = "\n".join(DISTRIBUTION.ratio_note(profiles))
+
+    assert "2.50x to 4.80x" in note
+
+
+def test_a_profile_specification_must_name_its_files():
+    with pytest.raises(ValueError, match="expected LABEL=PATH"):
+        DISTRIBUTION.parse_profiles(["custom"])
+    with pytest.raises(ValueError, match="lists no files"):
+        DISTRIBUTION.parse_profiles(["custom="])
+
+
+def test_the_summary_json_keeps_every_run_not_just_the_centre(tmp_path):
+    profiles = {
+        "custom": [
+            trajectory_report("custom", rmse_position_error_m=0.010),
+            trajectory_report("custom", rmse_position_error_m=0.014),
+            trajectory_report("custom", rmse_position_error_m=0.012),
+        ]
+    }
+
+    summary = DISTRIBUTION.summarise(profiles)
+
+    entry = summary["custom"]["metrics"]["rmse_position_error_m"]
+    assert entry["median"] == pytest.approx(0.012)
+    assert entry["minimum"] == pytest.approx(0.010)
+    assert entry["maximum"] == pytest.approx(0.014)
+    assert sorted(entry["values"]) == pytest.approx([0.010, 0.012, 0.014])
