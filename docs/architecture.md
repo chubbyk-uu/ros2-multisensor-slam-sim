@@ -40,12 +40,19 @@ Gazebo diff drive
 
 Gazebo 2D LiDAR -> /scan
 Gazebo 3D LiDAR -> /lidar_3d/points
+Gazebo RGB-D -> /camera/color/image_raw + /camera/depth/image_raw
+  -> 两路 CameraInfo + 可选 /camera/depth/points
 Gazebo world pose -> /ground_truth/odom（仅测试与评分）
 ```
 
 Gazebo 裸里程计和 IMU 消息不包含可用协方差。轻量适配节点补充有限、非零且
 符合差速非完整约束的协方差，再交给 EKF。二维 EKF 只融合轮速平面速度和
 IMU 偏航角速度，不融合 IMU 绝对姿态或线加速度。
+
+RGB/Depth 与可选组织化点云分别由独立 bridge 承载；它们不与 `/clock`、里程计、
+IMU 或控制消息共用执行器。Fast DDS 下仅两个大消息 writer 使用 `64 MiB` SHM
+profile 并保留 UDPv4，reader 不重复承担大段分配；操作者显式提供的 DDS profile
+始终优先。
 
 ## SLAM 与导航数据流
 
@@ -95,9 +102,11 @@ map
             ├── right_wheel_link
             ├── caster_link
             ├── imu_link
-            └── LiDAR 二选一
-                ├── lidar_mount_link -> lidar_link（2D）
-                └── lidar_3d_mount_link -> lidar_3d_link（3D）
+            ├── LiDAR 二选一
+            │   ├── lidar_mount_link -> lidar_link（2D）
+            │   └── lidar_3d_mount_link -> lidar_3d_link（3D）
+            └── 可选 RGB-D
+                └── camera_mount_link -> camera_link -> camera_optical_frame
 ```
 
 - SLAM 或定位节点唯一发布 `map -> odom`。
@@ -116,3 +125,5 @@ map
 - 真值 `/ground_truth/odom` 只能用于自动驾驶测试和误差评分，禁止进入
   SLAM、EKF 或导航估计链路。
 - 后续多传感器路线是 3D LiDAR + 相机 + IMU，不机械融合 2D 与 3D LiDAR。
+- RGB-D 与 LiDAR 型号选择正交；默认不生成相机，视觉入口才显式启用。图像和
+  深度以 `camera_optical_frame` 发布，稠密 RGB-D 点云默认不桥接。

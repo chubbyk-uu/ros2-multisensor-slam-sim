@@ -59,7 +59,8 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 | RTAB-Map 3D 基线 | 已完成 | ICP、proximity 回环、位姿图与二维导航投影；Nav2 直接使用其地图和 3D 障碍层 |
 | 自研 3D SLAM | 已完成首版闭环 | GICP 前端、Scan Context 回环、后台 SE(2) 位姿图、全局地图与版本化快照恢复 |
 | Frontier Exploration | 已完成双链路验收 | 自研与 RTAB-Map 共用候选评分、Nav2 调度、自动快照与安全随机出生 |
-| 视觉融合 | 计划中 | 后续接入相机，研究 3D LiDAR + 相机 + IMU |
+| RGB-D 基础设施 | 已完成 | 前向模型、图像/深度/内参桥接、独立大消息 DDS 保护、RViz 与数据契约回归 |
+| 视觉融合 | 计划中 | 先接 RTAB-Map RGB-D 基线，再研究 3D LiDAR + 相机 + IMU |
 
 最近独立验证结果和下一项工作见[项目状态](docs/status.md)。完整系统数据流、包边界
 和 TF 拓扑以[系统架构](docs/architecture.md)为准。

@@ -54,6 +54,7 @@ install(
 install(
   PROGRAMS
     scripts/imu_fusion_regression
+    scripts/rgbd_sensor_regression
     scripts/world_to_occupancy_map
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -86,6 +87,14 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_footprint_contract
     test/test_footprint_contract.py
+  )
+  ament_add_pytest_test(
+    test_rgbd_model
+    test/test_rgbd_model.py
+  )
+  ament_add_pytest_test(
+    test_rgbd_launch
+    test/test_rgbd_launch.py
   )
 
   ament_add_pytest_test(

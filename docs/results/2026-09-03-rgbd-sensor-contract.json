@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-03",
+  "base_commit": "3dac1e3",
+  "dirty": true,
+  "host": {
+    "cpu": "Intel Core i7-13700F",
+    "logical_cpus": 24,
+    "memory_gib": 31,
+    "gpu": "NVIDIA GeForce RTX 5080",
+    "gpu_memory_mib": 16303,
+    "environment": "WSL2 Ubuntu 24.04, Mesa D3D12"
+  },
+  "sensor": {
+    "image_width": 640,
+    "image_height": 480,
+    "configured_rate_hz": 30.0,
+    "horizontal_fov_deg": 70.0,
+    "minimum_depth_m": 0.2,
+    "maximum_depth_m": 6.0,
+    "optical_frame": "camera_optical_frame"
+  },
+  "transport": {
+    "fastdds_profile": "slam_robot_gazebo/config/fastdds_rgbd.xml",
+    "shared_memory_segment_bytes": 67108864,
+    "protected_writers": [
+      "rgbd_image_bridge",
+      "rgbd_pointcloud_bridge"
+    ],
+    "small_message_bridge_isolated": true,
+    "operator_profile_takes_precedence": true
+  },
+  "default_images": {
+    "command": "ros2 launch slam_robot_gazebo rgbd_sensor_regression.launch.py",
+    "samples_per_stream": 180,
+    "runs": [
+      {
+        "rgbd_writer_profile": "not_explicitly_injected",
+        "color_average_rate_hz": 28.109,
+        "depth_average_rate_hz": 29.636,
+        "color_median_rate_hz": 31.25,
+        "depth_median_rate_hz": 31.25,
+        "color_p95_gap_s": 0.068,
+        "depth_p95_gap_s": 0.036,
+        "paired_fraction": 0.972
+      },
+      {
+        "rgbd_writer_profile": "not_explicitly_injected",
+        "color_average_rate_hz": 27.253,
+        "depth_average_rate_hz": 29.460,
+        "color_median_rate_hz": 31.25,
+        "depth_median_rate_hz": 31.25,
+        "color_p95_gap_s": 0.068,
+        "depth_p95_gap_s": 0.036,
+        "paired_fraction": 0.972
+      },
+      {
+        "rgbd_writer_profile": "slam_robot_gazebo/config/fastdds_rgbd.xml",
+        "color_average_rate_hz": 30.298,
+        "depth_average_rate_hz": 30.298,
+        "color_median_rate_hz": 31.25,
+        "depth_median_rate_hz": 31.25,
+        "color_p95_gap_s": 0.036,
+        "depth_p95_gap_s": 0.036,
+        "paired_fraction": 1.0
+      }
+    ],
+    "observed_depth_m": [0.429, 5.745],
+    "thresholds": {
+      "minimum_average_rate_hz": 24.0,
+      "minimum_median_rate_hz": 27.0,
+      "maximum_p95_gap_s": 0.07,
+      "minimum_paired_fraction": 0.95
+    },
+    "checks_passed_per_run": 13,
+    "checks_failed": 0,
+    "verdict": "PASS"
+  },
+  "dense_pointcloud_debug": {
+    "command": "ros2 launch slam_robot_gazebo rgbd_sensor_regression.launch.py require_pointcloud:=true minimum_rate:=18.0 minimum_paired_fraction:=0.75 maximum_p95_gap:=0.20",
+    "samples_per_stream": 180,
+    "measurements": {
+      "color_average_rate_hz": 22.984,
+      "depth_average_rate_hz": 19.862,
+      "color_median_rate_hz": 31.25,
+      "depth_median_rate_hz": 27.778,
+      "color_p95_gap_s": 0.096,
+      "depth_p95_gap_s": 0.1,
+      "paired_fraction": 0.756
+    },
+    "pointcloud_contract": "PASS",
+    "verdict": "PASS_WITH_DEBUG_THRESHOLDS"
+  },
+  "decision": "Keep 640x480 at 30 Hz as the RGB/depth default. Do not bridge the dense RGB-D point cloud by default because it reduces delivered image throughput on this host. The post-profile run verifies the transport contract but is not, by itself, a causal A/B performance claim."
+}

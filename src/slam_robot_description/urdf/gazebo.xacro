@@ -94,6 +94,29 @@
     </gazebo>
   </xacro:if>
 
+  <xacro:if value="${'$(arg camera_variant)' == 'rgbd'}">
+    <gazebo reference="camera_link">
+      <sensor name="rgbd_camera" type="rgbd_camera">
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <update_rate>$(arg rgbd_update_rate)</update_rate>
+        <topic>/camera</topic>
+        <camera>
+          <horizontal_fov>$(arg rgbd_horizontal_fov)</horizontal_fov>
+          <image>
+            <width>$(arg rgbd_width)</width>
+            <height>$(arg rgbd_height)</height>
+          </image>
+          <clip>
+            <near>$(arg rgbd_minimum_depth)</near>
+            <far>$(arg rgbd_maximum_depth)</far>
+          </clip>
+          <optical_frame_id>camera_optical_frame</optical_frame_id>
+        </camera>
+      </sensor>
+    </gazebo>
+  </xacro:if>
+
   <gazebo reference="imu_link">
     <sensor name="imu" type="imu">
       <always_on>true</always_on>

@@ -30,6 +30,57 @@ ros2 launch slam_robot_gazebo lidar_3d_simulation.launch.py
 配置没有 `/scan`，默认 2D 配置也不承担 3D 点云开销。两种配置均发布
 100 Hz `/imu/data_raw`，噪声、启动偏置及频率可通过 launch 参数调整。
 
+RGB-D 模型与数据接口可通过独立入口检查：
+
+```bash
+ros2 launch slam_robot_gazebo rgbd_simulation.launch.py
+```
+
+该入口默认组合 3D LiDAR、轮速 + IMU 和前向 RGB-D 相机，发布：
+
+- `/camera/color/image_raw` 与 `/camera/color/camera_info`；
+- `/camera/depth/image_raw` 与 `/camera/depth/camera_info`；
+- 可选 `/camera/depth/points`。
+
+RGB 与深度默认均为 `640 × 480 @ 30 Hz`，水平视场 `70°`，有效深度范围
+`0.20–6.00 m`，消息统一使用 `camera_optical_frame`。稠密点云会明显增加
+Gazebo–ROS 数据复制和 RViz 负载，因此默认不桥接；需要检查空间对齐时使用：
+
+```bash
+ros2 launch slam_robot_gazebo rgbd_simulation.launch.py \
+  rgbd_pointcloud:=true
+```
+
+随后在 RViz 中启用 `RGB-D Point Cloud` 显示。相机分辨率、频率、视场和深度
+裁剪均为 launch 参数；正式默认仍是 `640 × 480 @ 30 Hz`，高分辨率只用于
+受控对照，不作为当前性能契约。
+
+无界面的数据契约回归为：
+
+```bash
+ros2 launch slam_robot_gazebo rgbd_sensor_regression.launch.py
+```
+
+它检查图像尺寸和编码、CameraInfo、仿真时间频率、RGB/Depth 同步、有限深度
+范围以及 `base_link -> camera_optical_frame`。若显式检查点云，当前机器应使用
+调试门限运行：
+
+```bash
+ros2 launch slam_robot_gazebo rgbd_sensor_regression.launch.py \
+  require_pointcloud:=true minimum_rate:=18.0 \
+  minimum_paired_fraction:=0.75 maximum_p95_gap:=0.20
+```
+
+点云档只证明接口与空间对齐，不代表图像仍满足默认 30 Hz 性能契约。
+
+RGB8、32FC1 Depth 和组织化彩色点云的单帧大小都超过 Fast DDS 默认约
+`512 KiB` 的共享内存段。沿用 climbot 大图传输的已验证经验，本包只给
+`rgbd_image_bridge` 和可选的 `rgbd_pointcloud_bridge` 注入
+`config/fastdds_rgbd.xml`：共享内存段为 `64 MiB`，同时保留 UDPv4。图像和点云
+没有并回承载 `/clock`、里程计、IMU 与控制消息的通用 bridge，避免大消息转换或
+流控拖住小消息。若操作者已经设置 `FASTRTPS_DEFAULT_PROFILES_FILE`，该配置优先；
+也可通过 `rgbd_dds_profiles_file:=...` 显式指定。
+
 默认 `odometry_mode:=wheel_imu` 将 Gazebo 的裸轮速消息桥接为
 `/wheel/odom_raw`，再由轻量适配节点补充有限、非零且可调
 的协方差，发布 `/wheel/odom` 和 `/imu/data`。`robot_localization` 只融合

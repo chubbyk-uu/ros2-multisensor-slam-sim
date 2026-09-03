@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Validate the simulated RGB-D topic, timing, calibration, and TF contract."""
+
+import argparse
+import math
+import statistics
+import sys
+import time
+from array import array
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.utilities import remove_ros_args
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2
+from tf2_ros import Buffer, TransformException, TransformListener
+
+
+def stamp_ns(message):
+    """Return a message header stamp as an integer nanosecond value."""
+    return message.header.stamp.sec * 1_000_000_000 + message.header.stamp.nanosec
+
+
+def stream_rate(stamps):
+    """Measure a stream rate from unique simulation-time stamps."""
+    unique = sorted(set(stamps))
+    if len(unique) < 2 or unique[-1] <= unique[0]:
+        return 0.0
+    return (len(unique) - 1) * 1.0e9 / (unique[-1] - unique[0])
+
+
+def stream_timing(stamps):
+    """Return average rate, median rate, and P95 inter-frame gap."""
+    unique = sorted(set(stamps))
+    intervals = [
+        (right - left) * 1.0e-9 for left, right in zip(unique, unique[1:])
+    ]
+    if not intervals:
+        return 0.0, 0.0, math.inf
+    ordered = sorted(intervals)
+    p95_index = min(len(ordered) - 1, math.ceil(0.95 * len(ordered)) - 1)
+    median_interval = statistics.median(intervals)
+    return (
+        stream_rate(unique),
+        1.0 / median_interval if median_interval > 0.0 else 0.0,
+        ordered[p95_index],
+    )
+
+
+def rotate_vector(quaternion, vector):
+    """Rotate one vector by a geometry_msgs quaternion."""
+    qx, qy, qz, qw = quaternion.x, quaternion.y, quaternion.z, quaternion.w
+    vx, vy, vz = vector
+    tx = 2.0 * (qy * vz - qz * vy)
+    ty = 2.0 * (qz * vx - qx * vz)
+    tz = 2.0 * (qx * vy - qy * vx)
+    return (
+        vx + qw * tx + qy * tz - qz * ty,
+        vy + qw * ty + qz * tx - qx * tz,
+        vz + qw * tz + qx * ty - qy * tx,
+    )
+
+
+def vector_close(actual, expected, tolerance=1.0e-6):
+    """Return whether two three-vectors agree component-wise."""
+    return all(abs(left - right) <= tolerance for left, right in zip(actual, expected))
+
+
+class RgbdSensorRegression(Node):
+    """Collect enough RGB-D samples to evaluate the public sensor contract."""
+
+    def __init__(self, arguments):
+        super().__init__("rgbd_sensor_regression")
+        self.arguments = arguments
+        self.color_stamps = []
+        self.depth_stamps = []
+        self.color_valid = True
+        self.depth_valid = True
+        self.color_info = None
+        self.depth_info = None
+        self.pointcloud = None
+        self.minimum_observed_depth = math.inf
+        self.maximum_observed_depth = -math.inf
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        self.create_subscription(
+            Image,
+            "/camera/color/image_raw",
+            self.color_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            Image,
+            "/camera/depth/image_raw",
+            self.depth_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            CameraInfo,
+            "/camera/color/camera_info",
+            self.color_info_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            CameraInfo,
+            "/camera/depth/camera_info",
+            self.depth_info_callback,
+            qos_profile_sensor_data,
+        )
+        if arguments.require_pointcloud:
+            self.create_subscription(
+                PointCloud2,
+                "/camera/depth/points",
+                self.pointcloud_callback,
+                qos_profile_sensor_data,
+            )
+
+    def color_callback(self, message):
+        self.color_stamps.append(stamp_ns(message))
+        self.color_valid = self.color_valid and (
+            message.width == self.arguments.width
+            and message.height == self.arguments.height
+            and message.encoding in {"rgb8", "bgr8"}
+            and message.header.frame_id == "camera_optical_frame"
+        )
+
+    def depth_callback(self, message):
+        self.depth_stamps.append(stamp_ns(message))
+        self.depth_valid = self.depth_valid and (
+            message.width == self.arguments.width
+            and message.height == self.arguments.height
+            and message.encoding == "32FC1"
+            and message.header.frame_id == "camera_optical_frame"
+        )
+        if message.encoding != "32FC1" or not message.data:
+            return
+        values = array("f")
+        values.frombytes(message.data)
+        if bool(message.is_bigendian) != (sys.byteorder == "big"):
+            values.byteswap()
+        step = max(1, len(values) // 4096)
+        finite = [value for value in values[::step] if math.isfinite(value)]
+        if finite:
+            self.minimum_observed_depth = min(self.minimum_observed_depth, min(finite))
+            self.maximum_observed_depth = max(self.maximum_observed_depth, max(finite))
+
+    def color_info_callback(self, message):
+        self.color_info = message
+
+    def depth_info_callback(self, message):
+        self.depth_info = message
+
+    def pointcloud_callback(self, message):
+        self.pointcloud = message
+
+    def inputs_ready(self):
+        return (
+            len(self.color_stamps) >= self.arguments.samples
+            and len(self.depth_stamps) >= self.arguments.samples
+            and self.color_info is not None
+            and self.depth_info is not None
+            and (not self.arguments.require_pointcloud or self.pointcloud is not None)
+        )
+
+    def wait_for_inputs(self):
+        deadline = time.monotonic() + self.arguments.wall_timeout
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.05)
+            if self.inputs_ready():
+                return
+        raise RuntimeError("timed out waiting for the complete RGB-D stream set")
+
+    def camera_info_valid(self, message):
+        return (
+            message.width == self.arguments.width
+            and message.height == self.arguments.height
+            and message.header.frame_id == "camera_optical_frame"
+            and math.isfinite(message.k[0])
+            and math.isfinite(message.k[4])
+            and message.k[0] > 0.0
+            and message.k[4] > 0.0
+        )
+
+    def intrinsics_aligned(self):
+        return (
+            self.color_info.width == self.depth_info.width
+            and self.color_info.height == self.depth_info.height
+            and all(
+                abs(color - depth) < 1.0e-9
+                for color, depth in zip(self.color_info.k, self.depth_info.k)
+            )
+        )
+
+    def transform_valid(self):
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "base_link",
+                "camera_optical_frame",
+                rclpy.time.Time(),
+            )
+        except TransformException:
+            return False
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        return (
+            abs(translation.x - 0.155) < 1.0e-6
+            and abs(translation.y) < 1.0e-6
+            and abs(translation.z - 0.09) < 1.0e-6
+            and vector_close(rotate_vector(rotation, (0.0, 0.0, 1.0)), (1.0, 0.0, 0.0))
+            and vector_close(rotate_vector(rotation, (1.0, 0.0, 0.0)), (0.0, -1.0, 0.0))
+            and vector_close(rotate_vector(rotation, (0.0, 1.0, 0.0)), (0.0, 0.0, -1.0))
+        )
+
+    def report(self):
+        color_rate, color_median_rate, color_p95_gap = stream_timing(
+            self.color_stamps[-self.arguments.samples:]
+        )
+        depth_rate, depth_median_rate, depth_p95_gap = stream_timing(
+            self.depth_stamps[-self.arguments.samples:]
+        )
+        paired_stamps = set(self.color_stamps) & set(self.depth_stamps)
+        paired_fraction = len(paired_stamps) / max(
+            1, min(len(set(self.color_stamps)), len(set(self.depth_stamps)))
+        )
+        finite_depths = (
+            math.isfinite(self.minimum_observed_depth)
+            and math.isfinite(self.maximum_observed_depth)
+        )
+        depth_range_valid = finite_depths and (
+            self.minimum_observed_depth >= self.arguments.minimum_depth - 1.0e-3
+            and self.maximum_observed_depth <= self.arguments.maximum_depth + 1.0e-3
+        )
+        pointcloud_valid = not self.arguments.require_pointcloud or (
+            self.pointcloud is not None
+            and self.pointcloud.width == self.arguments.width
+            and self.pointcloud.height == self.arguments.height
+            and self.pointcloud.header.frame_id == "camera_optical_frame"
+            and {"x", "y", "z", "rgb"}
+            <= {field.name for field in self.pointcloud.fields}
+            and stamp_ns(self.pointcloud) in set(self.depth_stamps)
+        )
+
+        checks = {
+            "color_contract": self.color_valid,
+            "depth_contract": self.depth_valid,
+            "color_camera_info": self.camera_info_valid(self.color_info),
+            "depth_camera_info": self.camera_info_valid(self.depth_info),
+            "aligned_intrinsics": self.intrinsics_aligned(),
+            "color_rate": color_rate >= self.arguments.minimum_rate,
+            "depth_rate": depth_rate >= self.arguments.minimum_rate,
+            "color_nominal_timing": (
+                color_median_rate >= self.arguments.minimum_median_rate
+                and color_p95_gap <= self.arguments.maximum_p95_gap
+            ),
+            "depth_nominal_timing": (
+                depth_median_rate >= self.arguments.minimum_median_rate
+                and depth_p95_gap <= self.arguments.maximum_p95_gap
+            ),
+            "rgb_depth_synchronization": (
+                paired_fraction >= self.arguments.minimum_paired_fraction
+            ),
+            "finite_depth_range": depth_range_valid,
+            "camera_tf": self.transform_valid(),
+            "pointcloud_contract": pointcloud_valid,
+        }
+        print(
+            "RGBD_METRICS"
+            f" color_rate_hz={color_rate:.3f}"
+            f" depth_rate_hz={depth_rate:.3f}"
+            f" color_median_rate_hz={color_median_rate:.3f}"
+            f" depth_median_rate_hz={depth_median_rate:.3f}"
+            f" color_p95_gap_s={color_p95_gap:.3f}"
+            f" depth_p95_gap_s={depth_p95_gap:.3f}"
+            f" paired_fraction={paired_fraction:.3f}"
+            f" observed_depth_m=[{self.minimum_observed_depth:.3f},"
+            f"{self.maximum_observed_depth:.3f}]",
+            flush=True,
+        )
+        for name, passed in checks.items():
+            print(f"CHECK {name}: {'PASS' if passed else 'FAIL'}", flush=True)
+        return all(checks.values())
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--width", type=int, default=640)
+    parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--samples", type=int, default=180)
+    parser.add_argument("--minimum-rate", type=float, default=24.0)
+    parser.add_argument("--minimum-median-rate", type=float, default=27.0)
+    parser.add_argument("--maximum-p95-gap", type=float, default=0.07)
+    parser.add_argument("--minimum-paired-fraction", type=float, default=0.95)
+    parser.add_argument("--minimum-depth", type=float, default=0.20)
+    parser.add_argument("--maximum-depth", type=float, default=6.0)
+    parser.add_argument("--wall-timeout", type=float, default=30.0)
+    parser.add_argument("--require-pointcloud", action="store_true")
+    return parser.parse_args(remove_ros_args()[1:])
+
+
+def main():
+    arguments = parse_arguments()
+    rclpy.init()
+    node = RgbdSensorRegression(arguments)
+    try:
+        node.wait_for_inputs()
+        return 0 if node.report() else 1
+    except Exception as exception:  # noqa: BLE001 - clean regression failure
+        print(f"RGB-D regression failed: {exception}", flush=True)
+        return 1
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

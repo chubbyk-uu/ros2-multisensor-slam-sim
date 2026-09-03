@@ -17,3 +17,12 @@
 
 两种配置都包含 `base_link -> imu_link`。这样不需要在同一机器人上堆叠
 两套雷达，也不会改变已经冻结的 2D 雷达安装位姿和回归几何。
+
+`camera_variant:=none|rgbd` 与 LiDAR 选择相互独立，默认 `none` 保持已有回归
+模型不变。`rgbd` 增加
+`base_link -> camera_mount_link -> camera_link -> camera_optical_frame`：光心位于
+`base_link` 的 `(0.155, 0, 0.09) m`，离地 `0.225 m`。相机外壳从底盘前沿向后
+收进车体，不扩大 Nav2 footprint；顶部离地 `0.245 m`，低于 3D LiDAR 的
+`-15°` 最低光束约 `10 mm`，也低于雷达本体下沿。`camera_link` 遵循 REP-103
+机器人坐标，`camera_optical_frame` 为 `z` 向前、`x` 向右、`y` 向下的标准
+光学坐标系。

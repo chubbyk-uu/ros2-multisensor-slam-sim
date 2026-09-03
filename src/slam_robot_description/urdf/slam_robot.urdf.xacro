@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <robot name="slam_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="sensor_variant" default="2d"/>
+  <xacro:arg name="camera_variant" default="none"/>
   <xacro:arg name="odometry_mode" default="wheel"/>
   <xacro:arg name="left_wheel_friction" default="1.2"/>
   <xacro:arg name="right_wheel_friction" default="1.2"/>
@@ -20,6 +21,12 @@
   <xacro:arg name="lidar_3d_minimum_range" default="0.20"/>
   <xacro:arg name="lidar_3d_maximum_range" default="20.0"/>
   <xacro:arg name="lidar_3d_noise_stddev" default="0.01"/>
+  <xacro:arg name="rgbd_width" default="640"/>
+  <xacro:arg name="rgbd_height" default="480"/>
+  <xacro:arg name="rgbd_update_rate" default="30.0"/>
+  <xacro:arg name="rgbd_horizontal_fov" default="1.2217304763960306"/>
+  <xacro:arg name="rgbd_minimum_depth" default="0.20"/>
+  <xacro:arg name="rgbd_maximum_depth" default="6.0"/>
   <xacro:arg name="imu_update_rate" default="100.0"/>
   <xacro:arg name="imu_angular_velocity_noise_stddev" default="0.002"/>
   <xacro:arg name="imu_angular_velocity_bias_stddev" default="0.0002"/>
@@ -72,6 +79,22 @@
   <xacro:property name="imu_width" value="0.03"/>
   <xacro:property name="imu_height" value="0.015"/>
   <xacro:property name="imu_mass" value="0.02"/>
+
+  <!--
+    The RGB-D optical centre is flush with the chassis front face. The housing
+    extends rearward, so enabling the camera does not enlarge the existing
+    Nav2 footprint. Its top remains below the lowest -15 degree 3D LiDAR ray.
+  -->
+  <xacro:property name="camera_x" value="0.155"/>
+  <xacro:property name="camera_z" value="0.09"/>
+  <xacro:property name="camera_body_length" value="0.03"/>
+  <xacro:property name="camera_body_width" value="0.14"/>
+  <xacro:property name="camera_body_height" value="0.04"/>
+  <xacro:property name="camera_body_mass" value="0.09"/>
+  <xacro:property name="camera_mount_length" value="0.03"/>
+  <xacro:property name="camera_mount_width" value="0.04"/>
+  <xacro:property name="camera_mount_height" value="0.015"/>
+  <xacro:property name="camera_mount_mass" value="0.03"/>
 
   <link name="base_footprint"/>
 
@@ -197,6 +220,79 @@
     <child link="imu_link"/>
     <origin xyz="0 0 0" rpy="0 0 0"/>
   </joint>
+
+  <xacro:if value="${'$(arg camera_variant)' == 'rgbd'}">
+    <link name="camera_mount_link">
+      <visual>
+        <geometry>
+          <box size="${camera_mount_length} ${camera_mount_width} ${camera_mount_height}"/>
+        </geometry>
+        <material name="accent_orange"/>
+      </visual>
+      <collision>
+        <geometry>
+          <box size="${camera_mount_length} ${camera_mount_width} ${camera_mount_height}"/>
+        </geometry>
+      </collision>
+      <xacro:box_inertial
+        mass="${camera_mount_mass}"
+        length="${camera_mount_length}"
+        width="${camera_mount_width}"
+        height="${camera_mount_height}"/>
+    </link>
+
+    <joint name="camera_mount_joint" type="fixed">
+      <parent link="base_link"/>
+      <child link="camera_mount_link"/>
+      <origin
+        xyz="${camera_x - camera_body_length} 0 ${base_height / 2.0 + camera_mount_height / 2.0}"
+        rpy="0 0 0"/>
+    </joint>
+
+    <link name="camera_link">
+      <visual>
+        <origin xyz="${-camera_body_length / 2.0} 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${camera_body_length} ${camera_body_width} ${camera_body_height}"/>
+        </geometry>
+        <material name="sensor_gray"/>
+      </visual>
+      <collision>
+        <origin xyz="${-camera_body_length / 2.0} 0 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="${camera_body_length} ${camera_body_width} ${camera_body_height}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="${camera_body_mass}"/>
+        <origin xyz="${-camera_body_length / 2.0} 0 0" rpy="0 0 0"/>
+        <inertia
+          ixx="${camera_body_mass * (camera_body_width * camera_body_width + camera_body_height * camera_body_height) / 12.0}"
+          ixy="0.0"
+          ixz="0.0"
+          iyy="${camera_body_mass * (camera_body_length * camera_body_length + camera_body_height * camera_body_height) / 12.0}"
+          iyz="0.0"
+          izz="${camera_body_mass * (camera_body_length * camera_body_length + camera_body_width * camera_body_width) / 12.0}"/>
+      </inertial>
+    </link>
+
+    <joint name="camera_joint" type="fixed">
+      <parent link="camera_mount_link"/>
+      <child link="camera_link"/>
+      <origin
+        xyz="${camera_body_length} 0 ${camera_z - (base_height / 2.0 + camera_mount_height / 2.0)}"
+        rpy="0 0 0"/>
+    </joint>
+
+    <link name="camera_optical_frame"/>
+
+    <joint name="camera_optical_joint" type="fixed">
+      <parent link="camera_link"/>
+      <child link="camera_optical_frame"/>
+      <!-- REP-103 camera frame (x forward) to optical frame (z forward). -->
+      <origin xyz="0 0 0" rpy="${-pi / 2.0} 0 ${-pi / 2.0}"/>
+    </joint>
+  </xacro:if>
 
   <xacro:unless value="${'$(arg sensor_variant)' == '3d'}">
     <link name="lidar_mount_link">

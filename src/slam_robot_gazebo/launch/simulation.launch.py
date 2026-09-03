@@ -12,6 +12,7 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.substitutions import (
+    EnvironmentVariable,
     TextSubstitution,
     Command,
     FindExecutable,
@@ -72,6 +73,13 @@ def generate_launch_description():
             "sensor_covariance.yaml",
         ]
     )
+    default_rgbd_dds_profiles_file = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_gazebo"),
+            "config",
+            "fastdds_rgbd.xml",
+        ]
+    )
     rviz_config_path = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "rviz", "simulation.rviz"]
     )
@@ -82,6 +90,7 @@ def generate_launch_description():
     use_wsl_gpu = LaunchConfiguration("use_wsl_gpu")
     wsl_gpu_adapter = LaunchConfiguration("wsl_gpu_adapter")
     sensor_variant = LaunchConfiguration("sensor_variant")
+    camera_variant = LaunchConfiguration("camera_variant")
     odometry_mode = LaunchConfiguration("odometry_mode")
     left_wheel_friction = LaunchConfiguration("left_wheel_friction")
     right_wheel_friction = LaunchConfiguration("right_wheel_friction")
@@ -111,6 +120,14 @@ def generate_launch_description():
     lidar_3d_minimum_range = LaunchConfiguration("lidar_3d_minimum_range")
     lidar_3d_maximum_range = LaunchConfiguration("lidar_3d_maximum_range")
     lidar_3d_noise_stddev = LaunchConfiguration("lidar_3d_noise_stddev")
+    rgbd_width = LaunchConfiguration("rgbd_width")
+    rgbd_height = LaunchConfiguration("rgbd_height")
+    rgbd_update_rate = LaunchConfiguration("rgbd_update_rate")
+    rgbd_horizontal_fov = LaunchConfiguration("rgbd_horizontal_fov")
+    rgbd_minimum_depth = LaunchConfiguration("rgbd_minimum_depth")
+    rgbd_maximum_depth = LaunchConfiguration("rgbd_maximum_depth")
+    rgbd_pointcloud = LaunchConfiguration("rgbd_pointcloud")
+    rgbd_dds_profiles_file = LaunchConfiguration("rgbd_dds_profiles_file")
     imu_update_rate = LaunchConfiguration("imu_update_rate")
     imu_angular_velocity_noise_stddev = LaunchConfiguration(
         "imu_angular_velocity_noise_stddev"
@@ -131,6 +148,8 @@ def generate_launch_description():
                 model_path,
                 " sensor_variant:=",
                 sensor_variant,
+                " camera_variant:=",
+                camera_variant,
                 " odometry_mode:=",
                 odometry_mode,
                 " left_wheel_friction:=",
@@ -169,6 +188,18 @@ def generate_launch_description():
                 lidar_3d_maximum_range,
                 " lidar_3d_noise_stddev:=",
                 lidar_3d_noise_stddev,
+                " rgbd_width:=",
+                rgbd_width,
+                " rgbd_height:=",
+                rgbd_height,
+                " rgbd_update_rate:=",
+                rgbd_update_rate,
+                " rgbd_horizontal_fov:=",
+                rgbd_horizontal_fov,
+                " rgbd_minimum_depth:=",
+                rgbd_minimum_depth,
+                " rgbd_maximum_depth:=",
+                rgbd_maximum_depth,
                 " imu_update_rate:=",
                 imu_update_rate,
                 " imu_angular_velocity_noise_stddev:=",
@@ -303,6 +334,11 @@ def generate_launch_description():
                 description="LiDAR model variant: 2d or 3d.",
             ),
             DeclareLaunchArgument(
+                "camera_variant",
+                default_value="none",
+                description="Camera model variant: none or rgbd.",
+            ),
+            DeclareLaunchArgument(
                 "odometry_mode",
                 default_value="wheel_imu",
                 description="Odometry source: wheel or wheel_imu.",
@@ -396,6 +432,55 @@ def generate_launch_description():
                 "lidar_3d_noise_stddev",
                 default_value="0.01",
                 description="Gaussian range noise standard deviation in metres.",
+            ),
+            DeclareLaunchArgument(
+                "rgbd_width",
+                default_value="640",
+                description="RGB and depth image width in pixels.",
+            ),
+            DeclareLaunchArgument(
+                "rgbd_height",
+                default_value="480",
+                description="RGB and depth image height in pixels.",
+            ),
+            DeclareLaunchArgument(
+                "rgbd_update_rate",
+                default_value="30.0",
+                description="RGB-D frame rate in Hz.",
+            ),
+            DeclareLaunchArgument(
+                "rgbd_horizontal_fov",
+                default_value="1.2217304763960306",
+                description="RGB-D horizontal field of view in radians.",
+            ),
+            DeclareLaunchArgument(
+                "rgbd_minimum_depth",
+                default_value="0.20",
+                description="Minimum valid RGB-D depth in metres.",
+            ),
+            DeclareLaunchArgument(
+                "rgbd_maximum_depth",
+                default_value="6.0",
+                description="Maximum valid RGB-D depth in metres.",
+            ),
+            DeclareLaunchArgument(
+                "rgbd_pointcloud",
+                default_value="false",
+                description=(
+                    "Bridge the dense RGB-D point cloud. Keep disabled unless "
+                    "a visualizer or algorithm consumes it."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "rgbd_dds_profiles_file",
+                default_value=EnvironmentVariable(
+                    "FASTRTPS_DEFAULT_PROFILES_FILE",
+                    default_value=default_rgbd_dds_profiles_file,
+                ),
+                description=(
+                    "Fast DDS XML profile for RGB-D large-message writers; "
+                    "an existing operator profile remains authoritative."
+                ),
             ),
             DeclareLaunchArgument(
                 "imu_update_rate",
@@ -515,6 +600,42 @@ def generate_launch_description():
                     entity_service("remove", "DeleteEntity"),
                 ],
                 parameters=[{"config_file": wheel_imu_bridge_config_path}],
+            ),
+            Node(
+                package="ros_gz_image",
+                executable="image_bridge",
+                name="rgbd_image_bridge",
+                output="screen",
+                condition=IfCondition(
+                    PythonExpression(["'", camera_variant, "' == 'rgbd'"])
+                ),
+                arguments=["/camera/image", "/camera/depth_image"],
+                remappings=[
+                    ("/camera/image", "/camera/color/image_raw"),
+                    ("/camera/depth_image", "/camera/depth/image_raw"),
+                ],
+                parameters=[{"use_sim_time": True}],
+                additional_env={
+                    "FASTRTPS_DEFAULT_PROFILES_FILE": rgbd_dds_profiles_file,
+                },
+            ),
+            Node(
+                package="ros_gz_bridge",
+                executable="parameter_bridge",
+                name="rgbd_pointcloud_bridge",
+                output="screen",
+                condition=IfCondition(rgbd_pointcloud),
+                arguments=[
+                    "/camera/points@sensor_msgs/msg/PointCloud2"
+                    "@gz.msgs.PointCloudPacked"
+                ],
+                remappings=[
+                    ("/camera/points", "/camera/depth/points"),
+                ],
+                parameters=[{"use_sim_time": True}],
+                additional_env={
+                    "FASTRTPS_DEFAULT_PROFILES_FILE": rgbd_dds_profiles_file,
+                },
             ),
             Node(
                 package="slam_robot_gazebo",
