@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+
+"""Render one custom-vs-RTAB-Map comparison from a shared fixed-bag replay.
+
+Four dimensions decide whether a custom front end is close to a mature
+baseline: how far the estimate drifts, how many loop events the back end
+commits, what the 2D projection contains, and what the stack costs. This
+renders all four from the per-stack JSON that one `map_projection_comparison`
+pass per stack produces.
+
+The grid section is not reimplemented here. `map_projection_compare` already
+defines what a grid census comparison shows and is tested on its own, so its
+renderer is loaded and called; a second copy of those rows would be free to
+drift away from it.
+
+Two rows deliberately have no ratio column. Loop events are counts of
+different things -- the custom stack reports committed pose-graph constraints
+while RTAB-Map reports proximity detections -- so their ratio would invite a
+comparison neither number supports. On-disk map size is reported only for the
+stack that keeps one, because dividing by zero bytes is not a finding.
+"""
+
+import argparse
+from importlib.machinery import SourceFileLoader
+import importlib.util
+import json
+from pathlib import Path
+import sys
+
+TRAJECTORY_ROWS = (
+    ("trajectory samples", "trajectory_samples", "{:,.0f}", True),
+    ("RMSE position (m)", "rmse_position_error_m", "{:.4f}", True),
+    ("peak position (m)", "peak_position_error_m", "{:.4f}", True),
+    ("final position (m)", "final_position_error_m", "{:.4f}", True),
+    ("RMSE yaw (deg)", "rmse_yaw_error_deg", "{:.4f}", True),
+    ("peak yaw (deg)", "peak_yaw_error_deg", "{:.4f}", True),
+    ("final yaw (deg)", "final_yaw_error_deg", "{:.4f}", True),
+)
+
+LOOP_ROWS = (
+    ("pose graph commits", "pose_graph_commits", "{:,.0f}"),
+    ("pose graph discards", "pose_graph_discards", "{:,.0f}"),
+    ("pose graph failures", "pose_graph_failures", "{:,.0f}"),
+    ("RTAB-Map loop closures", "rtabmap_loop_closure_events", "{:,.0f}"),
+    ("RTAB-Map proximity", "rtabmap_proximity_events", "{:,.0f}"),
+)
+
+COST_ROWS = (
+    ("mean CPU (%)", "average_cpu_percent", "{:.1f}", True),
+    ("peak CPU (%)", "maximum_cpu_percent", "{:.1f}", True),
+    ("initial RSS (MiB)", "initial_rss_mb", "{:.1f}", True),
+    ("final RSS (MiB)", "final_rss_mb", "{:.1f}", True),
+    ("peak RSS (MiB)", "peak_rss_mb", "{:.1f}", True),
+    ("CPU seconds", "cpu_seconds", "{:.1f}", True),
+)
+
+COLUMN = 16
+LABEL = 26
+
+
+def load(path):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def grid_renderer():
+    """Borrow the grid comparison from map_projection_compare."""
+    script = Path(__file__).resolve().parent / "map_projection_compare"
+    loader = SourceFileLoader("map_projection_compare", str(script))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def ratio(reference_value, candidate_value):
+    if reference_value in (None, 0) or candidate_value is None:
+        return "n/a"
+    return f"{candidate_value / reference_value:.2f}x"
+
+
+def cell(value, fmt):
+    return "n/a" if value is None else fmt.format(value)
+
+
+def section(title, rows, reference, candidate, with_ratio):
+    lines = [
+        "",
+        title,
+        f"{'metric':<{LABEL}}{reference['label']:>{COLUMN}}"
+        f"{candidate['label']:>{COLUMN}}"
+        + (f"{'candidate/ref':>{COLUMN}}" if with_ratio else ""),
+    ]
+    for row in rows:
+        name, key, fmt = row[0], row[1], row[2]
+        reference_value = reference.get(key)
+        candidate_value = candidate.get(key)
+        line = (
+            f"{name:<{LABEL}}{cell(reference_value, fmt):>{COLUMN}}"
+            f"{cell(candidate_value, fmt):>{COLUMN}}"
+        )
+        if with_ratio:
+            line += f"{ratio(reference_value, candidate_value):>{COLUMN}}"
+        lines.append(line)
+    return lines
+
+
+def database_line(reference, candidate):
+    lines = []
+    for report in (reference, candidate):
+        size = report.get("database_bytes")
+        if size:
+            lines.append(
+                f"  {report['label']} keeps {size / (1024.0 * 1024.0):.1f} MiB of map "
+                f"on disk, which its RSS above does not include."
+            )
+    return lines
+
+
+def warnings(reference, candidate):
+    lines = []
+    reference_samples = reference.get("trajectory_samples") or 0
+    candidate_samples = candidate.get("trajectory_samples") or 0
+    if not reference_samples or not candidate_samples:
+        lines.append(
+            "  WARNING: a stack produced no trajectory samples; its errors are absent, "
+            "not zero."
+        )
+    elif max(reference_samples, candidate_samples) > 1.1 * min(
+        reference_samples, candidate_samples
+    ):
+        lines.append(
+            f"  WARNING: sample counts differ by more than 10% "
+            f"({reference_samples} vs {candidate_samples}); one stack was scored over "
+            f"less of the replay."
+        )
+    for report in (reference, candidate):
+        if not (report.get("process") or {}).get("pid_found"):
+            lines.append(
+                f"  WARNING: {report['label']} was never located in /proc; its cost "
+                f"row is absent, not zero."
+            )
+    return lines
+
+
+def render(reference, candidate, reference_grid=None, candidate_grid=None):
+    lines = [
+        f"STACK COMPARISON  reference={reference['label']} "
+        f"candidate={candidate['label']}"
+    ]
+    lines += section(
+        "trajectory against ground truth (each anchored to its own first sample)",
+        TRAJECTORY_ROWS,
+        reference,
+        candidate,
+        True,
+    )
+    lines += section(
+        "loop events (counts of different things; no ratio)",
+        LOOP_ROWS,
+        reference,
+        candidate,
+        False,
+    )
+    lines += section(
+        "cost (CPU over all threads, so above 100% is expected)",
+        COST_ROWS,
+        reference.get("process") | {"label": reference["label"]},
+        candidate.get("process") | {"label": candidate["label"]},
+        True,
+    )
+    lines += database_line(reference, candidate)
+    if reference_grid and candidate_grid:
+        lines.append("")
+        lines.append(grid_renderer().render(reference_grid, candidate_grid))
+    problems = warnings(reference, candidate)
+    if problems:
+        lines.append("")
+        lines += problems
+    return "\n".join(lines)
+
+
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Compare two mapping stacks measured on the same fixed bag."
+    )
+    parser.add_argument("reference", help="Baseline stack_trajectory_census JSON.")
+    parser.add_argument("candidate", help="Trajectory JSON to compare against it.")
+    parser.add_argument("--reference-grid", help="Baseline map_projection_census JSON.")
+    parser.add_argument("--candidate-grid", help="Candidate map_projection_census JSON.")
+    parser.add_argument("--output", help="Write the merged comparison as JSON here.")
+    return parser.parse_args(argv)
+
+
+def main():
+    arguments = parse_arguments(sys.argv[1:])
+    reference = load(arguments.reference)
+    candidate = load(arguments.candidate)
+    reference_grid = (
+        load(arguments.reference_grid) if arguments.reference_grid else None
+    )
+    candidate_grid = (
+        load(arguments.candidate_grid) if arguments.candidate_grid else None
+    )
+    print(
+        render(reference, candidate, reference_grid, candidate_grid),
+        flush=True,
+    )
+    if arguments.output:
+        merged = {
+            "reference": {"trajectory": reference, "grid": reference_grid},
+            "candidate": {"trajectory": candidate, "grid": candidate_grid},
+        }
+        with open(arguments.output, "w", encoding="utf-8") as handle:
+            json.dump(merged, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

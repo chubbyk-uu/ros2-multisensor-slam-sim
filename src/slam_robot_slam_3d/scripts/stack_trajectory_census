@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+
+"""Score one mapping stack's trajectory, loop events and cost on a fixed bag.
+
+`map_projection_census` already answers what a stack's 2D projection contains.
+That is one of the four dimensions a custom-vs-RTAB-Map comparison needs; this
+node supplies the other three from the same replay, so a single pass per stack
+produces the whole row.
+
+Three measurement choices are what make the two stacks comparable rather than
+merely both measured:
+
+Each trajectory is anchored to its own first sample. The map frame and ground
+truth start from unrelated origins, so an unanchored difference reports that
+offset instead of drift. Both stacks are anchored the same way, which is what
+lets the resulting errors be read against each other.
+
+The estimate is looked up at the ground-truth stamp, not taken as the latest
+transform. `map -> odom` updates only when the back end commits, so the newest
+transform can be older than the truth sample it would be paired with.
+
+Resident memory is not the whole cost of a stack. RTAB-Map keeps its map in a
+sqlite database that never appears in RSS, while the custom stack holds the
+equivalent in process memory. The database size is therefore reported beside
+RSS; comparing the two RSS figures alone would credit RTAB-Map for memory it
+merely moved to disk.
+"""
+
+import argparse
+import json
+import math
+import os
+from pathlib import Path
+import sys
+import time
+
+from diagnostic_msgs.msg import DiagnosticArray
+from nav_msgs.msg import Odometry
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.utilities import remove_ros_args
+import tf2_ros
+
+CUSTOM_STATUS_NAME = "custom_slam_3d/scan_to_map_front_end"
+
+
+def normalize_angle(angle):
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def yaw_of(orientation):
+    return math.atan2(
+        2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+        1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
+    )
+
+
+def odometry_pose2d(message):
+    position = message.pose.pose.position
+    return (position.x, position.y, yaw_of(message.pose.pose.orientation))
+
+
+def transform_pose2d(transform):
+    translation = transform.transform.translation
+    return (translation.x, translation.y, yaw_of(transform.transform.rotation))
+
+
+def relative_pose(origin, pose):
+    delta_x = pose[0] - origin[0]
+    delta_y = pose[1] - origin[1]
+    cosine = math.cos(-origin[2])
+    sine = math.sin(-origin[2])
+    return (
+        delta_x * cosine - delta_y * sine,
+        delta_x * sine + delta_y * cosine,
+        normalize_angle(pose[2] - origin[2]),
+    )
+
+
+def pose_error(estimate, truth, estimate_origin, truth_origin):
+    """Compare two trajectories that were each anchored to their own origin."""
+    estimate_relative = relative_pose(estimate_origin, estimate)
+    truth_relative = relative_pose(truth_origin, truth)
+    return (
+        math.hypot(
+            estimate_relative[0] - truth_relative[0],
+            estimate_relative[1] - truth_relative[1],
+        ),
+        abs(normalize_angle(estimate_relative[2] - truth_relative[2])),
+    )
+
+
+def root_mean_square(values):
+    if not values:
+        return None
+    return math.sqrt(sum(value * value for value in values) / len(values))
+
+
+class ProcessSampler:
+    """Sample one process's CPU and RSS out of /proc.
+
+    `utime + stime` covers every thread, so a multi-threaded stack can and
+    should report more than 100%. That is the quantity being compared: total
+    CPU the stack consumes, not how well it fits on one core.
+    """
+
+    def __init__(self, match_token):
+        self.match_token = match_token
+        self.clock_ticks = os.sysconf("SC_CLK_TCK")
+        self.pid = None
+        self.samples = 0
+        self.first_cpu_seconds = None
+        self.first_wall = None
+        self.latest_cpu_seconds = None
+        self.latest_wall = None
+        self.previous_cpu_seconds = None
+        self.previous_wall = None
+        self.initial_rss_mb = None
+        self.latest_rss_mb = None
+        self.peak_rss_mb = 0.0
+        self.maximum_cpu_percent = 0.0
+        self.next_sample_wall = 0.0
+
+    def find(self):
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                command = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
+            except OSError:
+                continue
+            if self.match_token.encode() in command:
+                self.pid = int(entry.name)
+                return True
+        return False
+
+    def read(self):
+        if self.pid is None:
+            return None
+        directory = Path("/proc") / str(self.pid)
+        try:
+            stat_text = (directory / "stat").read_text()
+            status_text = (directory / "status").read_text()
+        except OSError:
+            return None
+        # The comm field is parenthesised and may itself contain spaces, so the
+        # numeric fields start after the last closing parenthesis.
+        closing = stat_text.rfind(")")
+        if closing < 0:
+            return None
+        fields = stat_text[closing + 2:].split()
+        if len(fields) <= 12:
+            return None
+        cpu_seconds = (float(fields[11]) + float(fields[12])) / self.clock_ticks
+        status = {}
+        for line in status_text.splitlines():
+            if ":" not in line:
+                continue
+            name, value = line.split(":", 1)
+            status[name] = value.strip().split()[0]
+        try:
+            rss_mb = float(status["VmRSS"]) / 1024.0
+            peak_mb = float(status.get("VmHWM", status["VmRSS"])) / 1024.0
+        except (KeyError, ValueError):
+            return None
+        return cpu_seconds, rss_mb, peak_mb
+
+    def sample(self, force=False):
+        now = time.monotonic()
+        if not force and now < self.next_sample_wall:
+            return
+        self.next_sample_wall = now + 1.0
+        if self.pid is None and not self.find():
+            return
+        reading = self.read()
+        if reading is None:
+            # The process exited; keep what was measured rather than resetting.
+            self.pid = None
+            return
+        cpu_seconds, rss_mb, peak_mb = reading
+        if self.first_cpu_seconds is None:
+            self.first_cpu_seconds = cpu_seconds
+            self.first_wall = now
+            self.initial_rss_mb = rss_mb
+        if self.previous_cpu_seconds is not None and now > self.previous_wall:
+            percent = 100.0 * (cpu_seconds - self.previous_cpu_seconds) / (
+                now - self.previous_wall
+            )
+            self.maximum_cpu_percent = max(self.maximum_cpu_percent, percent)
+        self.previous_cpu_seconds = cpu_seconds
+        self.previous_wall = now
+        self.latest_cpu_seconds = cpu_seconds
+        self.latest_wall = now
+        self.latest_rss_mb = rss_mb
+        self.peak_rss_mb = max(self.peak_rss_mb, peak_mb)
+        self.samples += 1
+
+    def average_cpu_percent(self):
+        if (
+            self.first_cpu_seconds is None
+            or self.latest_cpu_seconds is None
+            or self.latest_wall <= self.first_wall
+        ):
+            return None
+        return 100.0 * (self.latest_cpu_seconds - self.first_cpu_seconds) / (
+            self.latest_wall - self.first_wall
+        )
+
+    def report(self):
+        return {
+            "pid_found": self.pid is not None or self.samples > 0,
+            "samples": self.samples,
+            "average_cpu_percent": self.average_cpu_percent(),
+            "maximum_cpu_percent": self.maximum_cpu_percent or None,
+            "initial_rss_mb": self.initial_rss_mb,
+            "final_rss_mb": self.latest_rss_mb,
+            "peak_rss_mb": self.peak_rss_mb or None,
+            "cpu_seconds": (
+                None
+                if self.first_cpu_seconds is None or self.latest_cpu_seconds is None
+                else self.latest_cpu_seconds - self.first_cpu_seconds
+            ),
+        }
+
+
+class StackTrajectoryCensus(Node):
+    def __init__(self, arguments):
+        super().__init__(
+            "stack_trajectory_census",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
+        self.arguments = arguments
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.sampler = ProcessSampler(arguments.process_match)
+
+        self.truth_samples = []
+        self.truth_messages = 0
+        self.truth_distance = 0.0
+        self.previous_truth = None
+        self.truth_origin = None
+        self.estimate_origin = None
+        self.last_estimate_stamp = None
+        self.last_truth_wall = None
+        self.errors = []
+        self.lookup_failures = 0
+        self.next_write_wall = 0.0
+
+        # Loop events. The custom stack reports a running commit count on its
+        # diagnostics; RTAB-Map reports one Info message per update, so its
+        # events are counted rather than read.
+        self.pose_graph_commits = 0
+        self.pose_graph_discards = 0
+        self.pose_graph_failures = 0
+        self.loop_closure_events = 0
+        self.proximity_events = 0
+        self.info_messages = 0
+
+        reliable = QoSProfile(
+            depth=50,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        self.create_subscription(
+            Odometry, "/ground_truth/odom", self.truth_callback, reliable
+        )
+        self.create_subscription(
+            DiagnosticArray,
+            "/custom_slam_3d/front_end_diagnostics",
+            self.diagnostics_callback,
+            10,
+        )
+        self.subscribe_to_rtabmap_info()
+
+    def subscribe_to_rtabmap_info(self):
+        """Subscribe to RTAB-Map's Info topic when its messages are available.
+
+        Imported here rather than at module scope so the census still runs for
+        the custom stack on an installation without rtabmap_ros.
+        """
+        try:
+            from rtabmap_msgs.msg import Info
+        except ImportError:
+            self.get_logger().info(
+                "rtabmap_msgs is unavailable; RTAB-Map loop events will not be counted"
+            )
+            return
+        self.create_subscription(Info, self.arguments.info_topic, self.info_callback, 10)
+
+    def truth_callback(self, message):
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        pose = odometry_pose2d(message)
+        if self.previous_truth is not None:
+            step = math.hypot(
+                pose[0] - self.previous_truth[0], pose[1] - self.previous_truth[1]
+            )
+            if math.isfinite(step):
+                self.truth_distance += step
+        self.previous_truth = pose
+        self.truth_messages += 1
+        self.truth_samples.append((stamp, pose))
+        if len(self.truth_samples) > 200:
+            del self.truth_samples[:100]
+        self.last_truth_wall = time.monotonic()
+
+    def diagnostics_callback(self, message):
+        for status in message.status:
+            if status.name != CUSTOM_STATUS_NAME:
+                continue
+            values = {entry.key: entry.value for entry in status.values}
+            for key, attribute in (
+                ("pose_graph_commits", "pose_graph_commits"),
+                ("pose_graph_discards", "pose_graph_discards"),
+                ("pose_graph_failures", "pose_graph_failures"),
+            ):
+                if key not in values:
+                    continue
+                try:
+                    count = int(values[key])
+                except ValueError:
+                    continue
+                # The counters are monotonic in the node; take the maximum so a
+                # dropped diagnostic cannot lower the reported total.
+                setattr(self, attribute, max(getattr(self, attribute), count))
+
+    def info_callback(self, message):
+        self.info_messages += 1
+        if message.loop_closure_id > 0:
+            self.loop_closure_events += 1
+        if message.proximity_detection_id > 0:
+            self.proximity_events += 1
+
+    def sample_estimate(self):
+        """Pair the newest ground-truth sample with the estimate at its stamp."""
+        if not self.truth_samples:
+            return
+        stamp, truth = self.truth_samples[-1]
+        if stamp == self.last_estimate_stamp:
+            return
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "map", "base_footprint", rclpy.time.Time(seconds=stamp, nanoseconds=0)
+            )
+        except tf2_ros.TransformException:
+            self.lookup_failures += 1
+            return
+        self.last_estimate_stamp = stamp
+        estimate = transform_pose2d(transform)
+        if self.estimate_origin is None:
+            self.estimate_origin = estimate
+            self.truth_origin = truth
+        position_error, yaw_error = pose_error(
+            estimate, truth, self.estimate_origin, self.truth_origin
+        )
+        self.errors.append((stamp, position_error, yaw_error))
+        # Throttled rather than per sample: the report is rewritten whole, and
+        # ground truth arrives at 50 Hz.
+        now = time.monotonic()
+        if now >= self.next_write_wall:
+            self.next_write_wall = now + 1.0
+            self.write()
+
+    def playback_finished(self):
+        if self.last_truth_wall is None:
+            return False
+        return time.monotonic() - self.last_truth_wall > self.arguments.quiet_seconds
+
+    def database_bytes(self):
+        if not self.arguments.database_path:
+            return None
+        try:
+            return Path(self.arguments.database_path).stat().st_size
+        except OSError:
+            return None
+
+    def report(self):
+        if not self.errors:
+            return None
+        positions = [sample[1] for sample in self.errors]
+        yaws = [sample[2] for sample in self.errors]
+        peak_index = max(range(len(positions)), key=positions.__getitem__)
+        return {
+            "label": self.arguments.label,
+            "trajectory_samples": len(self.errors),
+            "truth_messages": self.truth_messages,
+            "truth_distance_m": self.truth_distance,
+            "transform_lookup_failures": self.lookup_failures,
+            "final_position_error_m": positions[-1],
+            "final_yaw_error_deg": math.degrees(yaws[-1]),
+            "peak_position_error_m": positions[peak_index],
+            "peak_position_error_stamp_sec": self.errors[peak_index][0],
+            "peak_yaw_error_deg": math.degrees(max(yaws)),
+            "rmse_position_error_m": root_mean_square(positions),
+            "rmse_yaw_error_deg": math.degrees(root_mean_square(yaws)),
+            "pose_graph_commits": self.pose_graph_commits,
+            "pose_graph_discards": self.pose_graph_discards,
+            "pose_graph_failures": self.pose_graph_failures,
+            "rtabmap_info_messages": self.info_messages,
+            "rtabmap_loop_closure_events": self.loop_closure_events,
+            "rtabmap_proximity_events": self.proximity_events,
+            "process": self.sampler.report(),
+            "database_bytes": self.database_bytes(),
+        }
+
+    def write(self):
+        report = self.report()
+        if report is None:
+            return
+        # Written on every update so the file is complete however the launch is
+        # torn down; the last write is the final trajectory.
+        with open(self.arguments.output, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+
+
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Score a mapping stack's trajectory, loop events and cost."
+    )
+    parser.add_argument("--label", default="custom")
+    parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--process-match",
+        default="scan_to_map_odometry_node",
+        help="Substring matched against /proc/<pid>/cmdline to find the stack.",
+    )
+    parser.add_argument("--info-topic", default="/rtabmap/info")
+    parser.add_argument(
+        "--database-path",
+        default="",
+        help="RTAB-Map database, reported beside RSS so on-disk map size is visible.",
+    )
+    parser.add_argument("--wall-timeout", type=float, default=1800.0)
+    parser.add_argument(
+        "--quiet-seconds",
+        type=float,
+        default=15.0,
+        help="Wall seconds without ground truth that end the replay.",
+    )
+    return parser.parse_args(argv)
+
+
+def main():
+    arguments = parse_arguments(remove_ros_args(sys.argv)[1:])
+    rclpy.init()
+    node = StackTrajectoryCensus(arguments)
+    deadline = time.monotonic() + arguments.wall_timeout
+    report = None
+    try:
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(node, timeout_sec=0.05)
+            node.sample_estimate()
+            node.sampler.sample()
+            if node.playback_finished():
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.sampler.sample(force=True)
+        report = node.report()
+        if report is not None:
+            node.write()
+            process = report["process"]
+            print(
+                f"TRAJECTORY {report['label']} "
+                f"samples={report['trajectory_samples']} "
+                f"rmse={report['rmse_position_error_m']:.3f} m "
+                f"peak={report['peak_position_error_m']:.3f} m "
+                f"final={report['final_position_error_m']:.3f} m "
+                f"commits={report['pose_graph_commits']} "
+                f"proximity={report['rtabmap_proximity_events']} "
+                f"loops={report['rtabmap_loop_closure_events']} "
+                f"cpu={process['average_cpu_percent']} "
+                f"rss={process['final_rss_mb']}",
+                flush=True,
+            )
+        else:
+            print(
+                f"TRAJECTORY {arguments.label} produced no map -> base_footprint "
+                f"samples ({node.truth_messages} truth messages, "
+                f"{node.lookup_failures} transform lookup failures)",
+                flush=True,
+            )
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+    return 0 if report is not None else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -280,6 +280,8 @@ install(
     scripts/snapshot_localization_regression
     scripts/snapshot_resume_probe
     scripts/snapshot_resume_regression
+    scripts/stack_comparison_report
+    scripts/stack_trajectory_census
     scripts/structured_loop_regression
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -410,6 +412,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_map_projection_census
     test/test_map_projection_census.py
+  )
+  ament_add_pytest_test(
+    test_stack_comparison
+    test/test_stack_comparison.py
   )
   ament_add_pytest_test(
     test_exploration_campaign

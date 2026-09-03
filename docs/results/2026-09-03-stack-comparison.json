@@ -1,0 +1,213 @@
+{
+  "control": {
+    "final_position_error_m": 0.3385,
+    "final_yaw_error_deg": 1.4572,
+    "label": "recorded_odometry_only",
+    "note": "The wheel+IMU EKF output scored against truth with the same anchoring, computed directly from the bag. Without it neither stack's error can be read as an improvement.",
+    "peak_position_error_m": 0.3385,
+    "peak_yaw_error_deg": 1.459,
+    "rmse_position_error_m": 0.1596,
+    "rmse_yaw_error_deg": 0.841,
+    "samples": 18081
+  },
+  "dataset": "bags/structured_3d_reference (two laps of structured_loop_3d)",
+  "dataset_sha256": "e2b6bda6af7bcd8c50982258ccb61b59f78288471952ec46f479bb3f2074a34a",
+  "date": "2026-09-03",
+  "findings": [
+    "Both stacks improve on the recorded odometry: the custom stack cuts position RMSE 14.1x and RTAB-Map 4.9x.",
+    "Raising Rtabmap/DetectionRate from 1.0 to 10.0 alone makes RTAB-Map worse, not better: position RMSE 0.0325 -> 0.0769 m, RSS 818 -> 1658 MiB, mean CPU 19.9 -> 65.5%. The shipped 1 Hz configuration is therefore not a handicap, and the accuracy difference against it is not an artefact of processing rate.",
+    "Resident memory alone understates RTAB-Map's map cost: it holds 60 MiB more on disk that never appears in RSS.",
+    "The two projections agree on navigable space to within 3%, so the accuracy difference does not show up as a coverage difference."
+  ],
+  "limits": [
+    "One run per profile. Loop-event counts and the error ratios are single measurements, not distributions, and docs/methodology.md requires a distribution before either is treated as stable.",
+    "Fixed input does not guarantee identical asynchronous commit ordering, so loop counts may vary between runs of the same profile.",
+    "RTAB-Map was not otherwise retuned for accuracy; only the detection rate and movement gating were varied.",
+    "Front-end drift is not isolated: both stacks ran with loop closure enabled, so these errors are whole-system, not front-end only."
+  ],
+  "method": "One replay per profile through map_projection_comparison.launch.py. Every profile consumes byte-identical sensor data and the same recorded odometry, so trajectory, exploration policy and real-time factor are not variables. Each trajectory is anchored to its own first sample and the estimate is read at the ground-truth stamp.",
+  "playback_rate": 1.0,
+  "profiles": [
+    {
+      "cost": {
+        "average_cpu_percent": 21.095491100545598,
+        "cpu_seconds": 80.72000000000001,
+        "database_bytes": null,
+        "final_rss_mb": 341.3359375,
+        "initial_rss_mb": 116.88671875,
+        "maximum_cpu_percent": 41.91846226121545,
+        "peak_rss_mb": 341.8125,
+        "pid_found": true,
+        "samples": 382
+      },
+      "grid": {
+        "free_area_m2": 188.00250560291116,
+        "free_cells": 75201,
+        "free_ratio": 0.9469250528860683,
+        "known_bounding_box_m2": 402.15501198515307,
+        "mean_publish_interval_sec": 0.6215555866263156,
+        "occupied_area_m2": 10.537500314041974,
+        "occupied_cells": 4215,
+        "resolution": 0.05000000074505806,
+        "updates": 571
+      },
+      "label": "custom",
+      "loop_events": {
+        "pose_graph_commits": 10,
+        "pose_graph_discards": 0,
+        "pose_graph_failures": 0,
+        "rtabmap_loop_closure_events": 0,
+        "rtabmap_proximity_events": 0
+      },
+      "note": "Self-developed GICP front end, Scan Context loop closure, SE(2) pose graph.",
+      "trajectory": {
+        "final_position_error_m": 0.0009411198846660281,
+        "final_yaw_error_deg": 0.005986493780000079,
+        "peak_position_error_m": 0.01934566643622713,
+        "peak_yaw_error_deg": 0.11113666318537653,
+        "rmse_position_error_m": 0.011302690025979932,
+        "rmse_yaw_error_deg": 0.020097399762390108,
+        "trajectory_samples": 17976,
+        "truth_distance_m": 143.13544992181087,
+        "truth_messages": 18066
+      }
+    },
+    {
+      "cost": {
+        "average_cpu_percent": 19.864813755631143,
+        "cpu_seconds": 76.00999999999999,
+        "database_bytes": 63397888,
+        "final_rss_mb": 817.515625,
+        "initial_rss_mb": 110.609375,
+        "maximum_cpu_percent": 94.76392551048475,
+        "peak_rss_mb": 817.9921875,
+        "pid_found": true,
+        "samples": 383
+      },
+      "grid": {
+        "free_area_m2": 192.94500575020913,
+        "free_cells": 77178,
+        "free_ratio": 0.9493222465497306,
+        "known_bounding_box_m2": 409.8075122132153,
+        "mean_publish_interval_sec": 1.023421192498551,
+        "occupied_area_m2": 10.300000306963923,
+        "occupied_cells": 4120,
+        "resolution": 0.05000000074505806,
+        "updates": 346
+      },
+      "label": "rtabmap_as_configured",
+      "loop_events": {
+        "pose_graph_commits": 0,
+        "pose_graph_discards": 0,
+        "pose_graph_failures": 0,
+        "rtabmap_loop_closure_events": 0,
+        "rtabmap_proximity_events": 181
+      },
+      "note": "config/rtabmap_3d.yaml unchanged: Rtabmap/DetectionRate 1.0.",
+      "trajectory": {
+        "final_position_error_m": 0.001212237035451471,
+        "final_yaw_error_deg": 0.07938658749026481,
+        "peak_position_error_m": 0.12436146191704424,
+        "peak_yaw_error_deg": 0.7143096752934329,
+        "rmse_position_error_m": 0.032545832034606384,
+        "rmse_yaw_error_deg": 0.18688632398985336,
+        "trajectory_samples": 17556,
+        "truth_distance_m": 143.13544992181087,
+        "truth_messages": 18066
+      }
+    },
+    {
+      "cost": {
+        "average_cpu_percent": 65.52981019297654,
+        "cpu_seconds": 250.73000000000002,
+        "database_bytes": 162881536,
+        "final_rss_mb": 1658.04296875,
+        "initial_rss_mb": 174.0234375,
+        "maximum_cpu_percent": 193.46965848384812,
+        "peak_rss_mb": 1658.44140625,
+        "pid_found": true,
+        "samples": 383
+      },
+      "grid": {
+        "free_area_m2": 196.8475058665127,
+        "free_cells": 78739,
+        "free_ratio": 0.9439995204411941,
+        "known_bounding_box_m2": 414.03751233927915,
+        "mean_publish_interval_sec": 0.40057768984886377,
+        "occupied_area_m2": 11.677500348016622,
+        "occupied_cells": 4671,
+        "resolution": 0.05000000074505806,
+        "updates": 881
+      },
+      "label": "rtabmap_detection_rate_10",
+      "loop_events": {
+        "pose_graph_commits": 0,
+        "pose_graph_discards": 0,
+        "pose_graph_failures": 0,
+        "rtabmap_loop_closure_events": 0,
+        "rtabmap_proximity_events": 462
+      },
+      "note": "Only Rtabmap/DetectionRate raised to 10.0; movement gating kept at 0.10.",
+      "trajectory": {
+        "final_position_error_m": 0.0007640162686114257,
+        "final_yaw_error_deg": 0.004285891373486328,
+        "peak_position_error_m": 0.28416670866639043,
+        "peak_yaw_error_deg": 1.485511677953023,
+        "rmse_position_error_m": 0.07691305922213738,
+        "rmse_yaw_error_deg": 0.48586698909268233,
+        "trajectory_samples": 17798,
+        "truth_distance_m": 143.13544992181087,
+        "truth_messages": 18066
+      }
+    },
+    {
+      "cost": {
+        "average_cpu_percent": 107.1321627341877,
+        "cpu_seconds": 409.92,
+        "database_bytes": 325840896,
+        "final_rss_mb": 4369.484375,
+        "initial_rss_mb": 174.171875,
+        "maximum_cpu_percent": 225.22285004794603,
+        "peak_rss_mb": 4369.90625,
+        "pid_found": true,
+        "samples": 383
+      },
+      "grid": {
+        "free_area_m2": 198.74500592306262,
+        "free_cells": 79498,
+        "free_ratio": 0.9502737335341509,
+        "known_bounding_box_m2": 414.630012356937,
+        "mean_publish_interval_sec": 0.20407764007570625,
+        "occupied_area_m2": 10.400000309944154,
+        "occupied_cells": 4160,
+        "resolution": 0.05000000074505806,
+        "updates": 1771
+      },
+      "label": "rtabmap_detection_rate_10_ungated",
+      "loop_events": {
+        "pose_graph_commits": 0,
+        "pose_graph_discards": 0,
+        "pose_graph_failures": 0,
+        "rtabmap_loop_closure_events": 0,
+        "rtabmap_proximity_events": 1496
+      },
+      "note": "DetectionRate 10.0 and RGBD/Linear+AngularUpdate 0.0; two factors changed, so this row does not isolate the detection rate.",
+      "trajectory": {
+        "final_position_error_m": 0.0014796489154727387,
+        "final_yaw_error_deg": 0.04034693588329551,
+        "peak_position_error_m": 0.14846036670645923,
+        "peak_yaw_error_deg": 1.0998659755351095,
+        "rmse_position_error_m": 0.04756097881197695,
+        "rmse_yaw_error_deg": 0.3544218111731648,
+        "trajectory_samples": 17883,
+        "truth_distance_m": 143.13544992193115,
+        "truth_messages": 18082
+      }
+    }
+  ],
+  "schema_version": 1,
+  "source_revision": {
+    "commit": "898d094f761fd42d51bf15d7405345b819bbda63",
+    "dirty": true
+  }
+}

@@ -127,21 +127,46 @@ transport 会关掉内建的那套）。已经自己导出 `FASTRTPS_DEFAULT_PRO
 `global_map.voxel_leaf_size` 体素去重。回环或新关键帧在重建期间到来时只保留最新
 请求，当前重建正常完成后再开始，确保前端回调不被地图重建占用。
 
-要比较两条链路的二维投影本身产出多少可导航空间，用固定包分别回放、再比对普查
-结果。两趟消费同一份录制数据，因此轨迹、探索策略和实时率都不构成变量：
+### 自研与 RTAB-Map 的固定包对照
+
+要在同一份录制数据上比较两条链路，各回放一趟再比对。两趟消费同一份数据，因此
+轨迹、探索策略和实时率都不构成变量：
 
 ```bash
 ros2 launch slam_robot_slam_3d map_projection_comparison.launch.py \
-  stack:=custom  map_topic:=/map          output:=/tmp/census_custom.json
+  stack:=custom  map_topic:=/map \
+  output:=/tmp/census_custom.json  trajectory_output:=/tmp/traj_custom.json
 ros2 launch slam_robot_slam_3d map_projection_comparison.launch.py \
-  stack:=rtabmap map_topic:=/rtabmap/map  output:=/tmp/census_rtabmap.json
-ros2 run slam_robot_slam_3d map_projection_compare \
-  /tmp/census_rtabmap.json /tmp/census_custom.json
+  stack:=rtabmap map_topic:=/rtabmap/map \
+  output:=/tmp/census_rtabmap.json trajectory_output:=/tmp/traj_rtabmap.json \
+  database_path:=/tmp/rtabmap_comparison.db
+ros2 run slam_robot_slam_3d stack_comparison_report \
+  /tmp/traj_custom.json /tmp/traj_rtabmap.json \
+  --reference-grid /tmp/census_custom.json \
+  --candidate-grid /tmp/census_rtabmap.json
 ```
 
-普查以自由/占据格数与面积、`free/(free+occupied)`、已知包围盒和 `/map` 发布间隔
-为指标。未知格数只作记录不作判据：栅格范围随观测边界增长，建图越多的一侧包住的
-未知格子也越多。该入口需要先按本文开头录制固定包。
+每趟同时产出两份 JSON。`map_projection_census` 记录二维投影：自由/占据格数与
+面积、`free/(free+occupied)`、已知包围盒和 `/map` 发布间隔。未知格数只作记录不作
+判据，因为栅格范围随观测边界增长，建图越多的一侧包住的未知格子也越多。
+`stack_trajectory_census` 记录另外三维：相对真值的轨迹漂移、回环事件和资源开销。
+只看投影时仍可直接用 `map_projection_compare` 比两份普查。
+
+三处设计决定了两条链路是否真的可比：
+
+- **各自锚定自身首样本。** map 系与真值原点无关，不锚定得到的是原点偏移而不是
+  漂移。两侧用同一种锚定，误差才能互相对读。
+- **按真值时间戳查 TF，而不是取最新变换。** `map -> odom` 只在后端提交时更新，
+  最新变换可能比要配对的真值样本还旧。
+- **RSS 不是一条链路的全部开销。** RTAB-Map 把地图放在 sqlite 里，这部分从不出现
+  在 RSS 中，而自研链路把等价内容留在进程内存。报告因此把数据库大小列在 RSS
+  旁边；只比两个 RSS 会把 RTAB-Map 挪到磁盘上的内存算成它的优势。
+
+回环事件不给比值列：自研报告的是已提交的位姿图约束，RTAB-Map 报告的是
+proximity 检测，二者计的不是同一种东西。要单独衡量前端漂移，必须两侧都先关掉
+回环再跑一趟，否则末端误差比的是回环质量而不是前端。
+
+该入口需要先按本文开头录制固定包。
 
 自研状态使用版本化单文件快照保存，写入同目录临时文件，`fsync` 后原子替换目标，
 再 `fsync` 一次父目录。`rename` 替换的是目录项，它本身并不保证 44 MB 数据已经落到
