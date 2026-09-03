@@ -1,0 +1,145 @@
+{
+  "dataset": "bags/structured_3d_reference (two laps of structured_loop_3d)",
+  "dataset_sha256": "e2b6bda6af7bcd8c50982258ccb61b59f78288471952ec46f479bb3f2074a34a",
+  "date": "2026-09-03",
+  "findings": [
+    "All six runs retained their complete declared process set: point_cloud_preprocessor_node plus scan_to_map_odometry_node for custom, and rtabmap for RTAB-Map.",
+    "Custom full-stack mean CPU was 22.16% [22.00, 22.67], 1.33x RTAB-Map's 16.62% [16.04, 17.08]. Their sampled peak CPU was nearly equal: median 44.98% for both.",
+    "Custom final RSS was 454.7 MiB [454.1, 454.8], 53.7% of RTAB-Map's 846.3 MiB [837.3, 849.9]. RTAB-Map additionally wrote a 60.5-60.6 MiB database.",
+    "The corrected custom RSS is about 112 MiB above the superseded matcher-only measurement, confirming that omission of the preprocessor was material.",
+    "Across this batch RTAB-Map position RMSE varied from 0.0325 to 0.0500 m while custom remained 0.0113 m. Combining this independent batch with the previous three runs expands the observed RTAB-Map/custom position-RMSE ratio from 2.25-2.87x to 2.25-4.43x."
+  ],
+  "limits": [
+    "Three runs per stack are an observed range, not a confidence interval.",
+    "The stacks were run sequentially at 1.0x on the same host and input. Host load was not externally pinned or isolated at the operating-system scheduler level.",
+    "CPU is aggregate process CPU and may exceed 100% for multi-threaded workloads. Peak RSS is the maximum simultaneously sampled sum, not a sum of per-process peaks.",
+    "Disk bytes and resident memory are reported separately and must not be added as though they were the same resource.",
+    "The comparison remains specific to one closed two-lap trajectory and the shipped configurations."
+  ],
+  "method": "Three sequential 1.0x replays per stack through map_projection_comparison.launch.py. Process identity was matched only against argv[0]; ambiguous, missing or lost processes invalidate a resource row. Every trajectory consumed the byte-identical bag and recorded odometry.",
+  "playback_rate": 1.0,
+  "profiles": {
+    "custom": {
+      "process_matches": [
+        "/point_cloud_preprocessor_node",
+        "/scan_to_map_odometry_node"
+      ],
+      "runs": [
+        {
+          "average_cpu_percent": 22.158716635644023,
+          "complete_process_set": true,
+          "cpu_seconds": 84.79,
+          "final_rss_mb": 454.6640625,
+          "initial_rss_mb": 226.05078125,
+          "maximum_cpu_percent": 44.98320889265274,
+          "peak_rss_mb": 455.765625,
+          "pose_graph_commits": 10,
+          "rmse_position_error_m": 0.011296526285211836,
+          "rmse_yaw_error_deg": 0.020087207715738225,
+          "samples": 383,
+          "trajectory_samples": 18019
+        },
+        {
+          "average_cpu_percent": 21.995780349499515,
+          "complete_process_set": true,
+          "cpu_seconds": 84.17,
+          "final_rss_mb": 454.07421875,
+          "initial_rss_mb": 225.91796875,
+          "maximum_cpu_percent": 44.60884404989561,
+          "peak_rss_mb": 454.95703125,
+          "pose_graph_commits": 10,
+          "rmse_position_error_m": 0.01132453033684267,
+          "rmse_yaw_error_deg": 0.02010613756527578,
+          "samples": 383,
+          "trajectory_samples": 18044
+        },
+        {
+          "average_cpu_percent": 22.67009026226795,
+          "complete_process_set": true,
+          "cpu_seconds": 86.74,
+          "final_rss_mb": 454.78515625,
+          "initial_rss_mb": 226.19140625,
+          "maximum_cpu_percent": 44.99865422533911,
+          "peak_rss_mb": 455.7109375,
+          "pose_graph_commits": 10,
+          "rmse_position_error_m": 0.011298325425857276,
+          "rmse_yaw_error_deg": 0.020093481927186654,
+          "samples": 383,
+          "trajectory_samples": 18010
+        }
+      ],
+      "summary": {
+        "average_cpu_percent": "22.16 [22.00, 22.67]",
+        "final_rss_mb": "454.7 [454.1, 454.8]",
+        "maximum_cpu_percent": "44.98 [44.61, 45.00]",
+        "peak_rss_mb": "455.7 [455.0, 455.8]",
+        "rmse_position_error_m": "0.01130 [0.01130, 0.01132]"
+      }
+    },
+    "rtabmap": {
+      "process_matches": [
+        "/rtabmap_slam/rtabmap"
+      ],
+      "runs": [
+        {
+          "average_cpu_percent": 17.07525643843221,
+          "complete_process_set": true,
+          "cpu_seconds": 65.33,
+          "database_bytes": 63582208,
+          "final_rss_mb": 849.91015625,
+          "initial_rss_mb": 169.66015625,
+          "maximum_cpu_percent": 44.97847752858876,
+          "peak_rss_mb": 850.31640625,
+          "proximity_events": 180,
+          "rmse_position_error_m": 0.04998824916252833,
+          "rmse_yaw_error_deg": 0.2866598143795983,
+          "samples": 383,
+          "trajectory_samples": 18017
+        },
+        {
+          "average_cpu_percent": 16.616171561550956,
+          "complete_process_set": true,
+          "cpu_seconds": 63.58,
+          "database_bytes": 63578112,
+          "final_rss_mb": 846.296875,
+          "initial_rss_mb": 174.484375,
+          "maximum_cpu_percent": 41.66610388495409,
+          "peak_rss_mb": 846.72265625,
+          "proximity_events": 180,
+          "rmse_position_error_m": 0.04316873301312341,
+          "rmse_yaw_error_deg": 0.23079267162280379,
+          "samples": 383,
+          "trajectory_samples": 17964
+        },
+        {
+          "average_cpu_percent": 16.04439233185925,
+          "complete_process_set": true,
+          "cpu_seconds": 61.39,
+          "database_bytes": 63397888,
+          "final_rss_mb": 837.26171875,
+          "initial_rss_mb": 174.5,
+          "maximum_cpu_percent": 48.99663985943177,
+          "peak_rss_mb": 837.64453125,
+          "proximity_events": 181,
+          "rmse_position_error_m": 0.03247590864689605,
+          "rmse_yaw_error_deg": 0.18775189478136145,
+          "samples": 383,
+          "trajectory_samples": 18027
+        }
+      ],
+      "summary": {
+        "average_cpu_percent": "16.62 [16.04, 17.08]",
+        "database_mib": "60.6 [60.5, 60.6]",
+        "final_rss_mb": "846.3 [837.3, 849.9]",
+        "maximum_cpu_percent": "44.98 [41.67, 49.00]",
+        "peak_rss_mb": "846.7 [837.6, 850.3]",
+        "rmse_position_error_m": "0.04317 [0.03248, 0.04999]"
+      }
+    }
+  },
+  "schema_version": 1,
+  "source_revision": {
+    "commit": "8d413f14b65cb9ef19b883aa548456d97817f6af",
+    "dirty": false
+  }
+}

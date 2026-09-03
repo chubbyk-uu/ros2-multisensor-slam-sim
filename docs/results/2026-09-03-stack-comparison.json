@@ -24,7 +24,7 @@
     "Fixed input does not guarantee identical asynchronous commit ordering, so loop counts may vary between runs of the same profile.",
     "RTAB-Map was not otherwise retuned for accuracy; only the detection rate and movement gating were varied.",
     "Front-end drift is not isolated: both stacks ran with loop closure enabled, so these errors are whole-system, not front-end only.",
-    "The custom resource sampler covered scan_to_map_odometry_node only and omitted point_cloud_preprocessor_node. Custom CPU and RSS are therefore historical lower bounds, not full-stack costs; trajectory, grid and loop measurements are unaffected."
+    "The custom resource sampler covered scan_to_map_odometry_node only and omitted point_cloud_preprocessor_node. Custom CPU and RSS are historical lower bounds superseded by docs/results/2026-09-03-stack-resource-validation.json; trajectory, grid and loop measurements are unaffected."
   ],
   "method": "One replay per profile through map_projection_comparison.launch.py. Every profile consumes byte-identical sensor data and the same recorded odometry, so trajectory, exploration policy and real-time factor are not variables. Each trajectory is anchored to its own first sample and the estimate is read at the ground-truth stamp.",
   "playback_rate": 1.0,
@@ -207,6 +207,7 @@
     }
   ],
   "schema_version": 1,
+  "resource_measurements_superseded_by": "docs/results/2026-09-03-stack-resource-validation.json",
   "source_revision": {
     "commit": "898d094f761fd42d51bf15d7405345b819bbda63",
     "dirty": true

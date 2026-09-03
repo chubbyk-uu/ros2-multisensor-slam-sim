@@ -68,11 +68,14 @@ GICP 复核、后台 SE(2) 图优化和地图重建均完成，而不阻塞 10 H
 
 ## 自研与成熟基线的可比对照
 
-对照不是验收判据，但它决定“自研是否够好”能否被回答。固定包上每个配置三趟，以录制
-里程计为对照、各自关闭回环隔离前端，结论是：开回环时 RTAB-Map 的位置 RMSE 为自研的
-`2.25x`–`2.87x`，隔离前端后为 `13.42x`–`17.47x`；自研的精度不来自回环，RTAB-Map 的
+对照不是验收判据，但它决定“自研是否够好”能否被回答。固定包上开回环累计各六趟，
+以录制里程计为对照；首批还各自关闭回环三趟隔离前端。结论是：开回环时 RTAB-Map 的
+位置 RMSE 为自研的 `2.25x`–`4.43x`，隔离前端后为 `13.42x`–`17.47x`；自研的精度
+不来自回环，RTAB-Map 的
 几乎全部来自 proximity 检测。结果 JSON 为
 [`2026-09-03-stack-comparison-distribution.json`](results/2026-09-03-stack-comparison-distribution.json)，
+完整进程资源复测为
+[`2026-09-03-stack-resource-validation.json`](results/2026-09-03-stack-resource-validation.json)，
 被它取代的单次运行版本为
 [`2026-09-03-stack-comparison.json`](results/2026-09-03-stack-comparison.json)。
 
