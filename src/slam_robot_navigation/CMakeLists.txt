@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(slam_robot_navigation)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
@@ -61,6 +62,11 @@ install(TARGETS frontier_explorer_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Installed as an importable package rather than a script so the 3D
+# regression can reach the same blocked-road criteria; two copies of a safety
+# criterion would be free to drift apart unnoticed.
+ament_python_install_package(${PROJECT_NAME})
+
 install(
   PROGRAMS scripts/navigation_regression.py
   DESTINATION lib/${PROJECT_NAME}
@@ -68,6 +74,7 @@ install(
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_flake8_FOUND TRUE)
@@ -108,6 +115,8 @@ if(BUILD_TESTING)
     test_navigation_availability
     PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   )
+
+  ament_add_pytest_test(test_blocked_road test/test_blocked_road.py)
 endif()
 
 ament_package()
