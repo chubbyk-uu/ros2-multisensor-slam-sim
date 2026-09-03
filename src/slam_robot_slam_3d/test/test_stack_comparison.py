@@ -92,6 +92,13 @@ def test_percentile_uses_nearest_rank_and_handles_empty_input():
     assert TRAJECTORY.percentile(list(range(1, 101)), 0.95) == 95
 
 
+def test_stamped_message_rate_uses_message_time_not_wall_time():
+    stamps = [10.0 + index / 30.0 for index in range(301)]
+
+    assert TRAJECTORY.stamped_message_rate_hz(stamps) == pytest.approx(30.0)
+    assert TRAJECTORY.stamped_message_rate_hz([]) is None
+
+
 def test_cpu_percent_is_absent_rather_than_zero_before_two_samples():
     sampler = TRAJECTORY.ProcessSampler("/nothing_matches_this")
 
@@ -280,6 +287,7 @@ def test_the_report_is_written_during_the_run_not_only_at_teardown(tmp_path):
     census.maximum_visual_matches = 0
     census.maximum_visual_inliers = 0
     census.rtabmap_processing_times_ms = []
+    census.camera_info_stamps = []
     census.sampler = TRAJECTORY.ProcessSampler("/nothing")
 
     census.write()

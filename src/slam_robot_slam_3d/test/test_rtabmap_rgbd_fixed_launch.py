@@ -23,7 +23,8 @@ def test_fixed_replay_measures_complete_rgbd_process_set_and_map():
 
 
 def test_fixed_replay_runs_a_bounded_positive_loop_verdict_before_shutdown():
-    assert 'executable="rtabmap_rgbd_fixed_regression_check"' in LAUNCH
+    assert '"rtabmap_rgbd_fixed_regression_check"' in LAUNCH
+    assert "checker = ExecuteProcess(" in LAUNCH
     assert 'DeclareLaunchArgument("minimum_loop_closures", default_value="20")' in LAUNCH
     assert "period=20.0" in LAUNCH
     assert "actions=[checker]" in LAUNCH

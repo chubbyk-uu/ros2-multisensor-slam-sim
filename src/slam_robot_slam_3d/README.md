@@ -405,7 +405,7 @@ ros2 launch slam_robot_slam_3d rtabmap_rgbd_simulation.launch.py \
 ```
 
 短程在线冒烟只证明数据链路、视觉关键帧、数据库、TF 和深度二维栅格工作；下述
-两圈固定回放已经覆盖误差、视觉回环与资源，但完整 `30 Hz` 活动闭环仍需单独验收。
+固定回放和在线两圈入口分别覆盖可复现算法行为与完整 `30 Hz` 并发运行。
 
 录制体积受控的一圈 RGB-D 固定输入：
 
@@ -439,6 +439,16 @@ ros2 launch slam_robot_slam_3d rtabmap_rgbd_fixed_regression.launch.py \
 输入里程计明显漂移时要求 SLAM 给出实质改善。一圈包没有同向重走路段，只作为数据
 契约样本，不能拿它要求视觉回环。当前验收结果见
 [验收记录](../../docs/acceptance.md#rtab-map-rgb-d-在线基线)。
+
+完整在线活动闭环：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_rgbd_online_regression.launch.py
+```
+
+该入口无界面运行纹理世界两圈，自动记录 CameraInfo 长程频率、RTAB-Map 轨迹、视觉
+回环、地图、CPU、RSS 和数据库，并在结束后判定退出。默认要求相机至少 `9000` 帧且
+实测不低于 `27 Hz`；当前正式结果为 `11079` 帧、`30.304 Hz`，八项检查全部通过。
 
 ### 输入同步与 QoS
 

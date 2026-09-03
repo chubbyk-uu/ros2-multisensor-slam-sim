@@ -41,6 +41,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.utilities import remove_ros_args
+from sensor_msgs.msg import CameraInfo
 import tf2_ros
 
 CUSTOM_STATUS_NAME = "custom_slam_3d/scan_to_map_front_end"
@@ -104,6 +105,12 @@ def percentile(values, quantile):
     ordered = sorted(values)
     index = min(len(ordered) - 1, math.ceil(quantile * len(ordered)) - 1)
     return ordered[index]
+
+
+def stamped_message_rate_hz(stamps):
+    if len(stamps) < 2 or stamps[-1] <= stamps[0]:
+        return None
+    return (len(stamps) - 1) / (stamps[-1] - stamps[0])
 
 
 def executable_matches(executable, match_token):
@@ -329,6 +336,7 @@ class StackTrajectoryCensus(Node):
         self.maximum_visual_matches = 0
         self.maximum_visual_inliers = 0
         self.rtabmap_processing_times_ms = []
+        self.camera_info_stamps = []
 
         reliable = QoSProfile(
             depth=50,
@@ -348,6 +356,18 @@ class StackTrajectoryCensus(Node):
             10,
         )
         self.subscribe_to_rtabmap_info()
+        if arguments.camera_info_topic:
+            sensor_qos = QoSProfile(
+                depth=50,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+                durability=DurabilityPolicy.VOLATILE,
+            )
+            self.create_subscription(
+                CameraInfo,
+                arguments.camera_info_topic,
+                self.camera_info_callback,
+                sensor_qos,
+            )
 
     def subscribe_to_rtabmap_info(self):
         """Subscribe to RTAB-Map's Info topic when its messages are available.
@@ -459,6 +479,11 @@ class StackTrajectoryCensus(Node):
         if processing_time is not None and math.isfinite(processing_time):
             self.rtabmap_processing_times_ms.append(processing_time)
 
+    def camera_info_callback(self, message):
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        if math.isfinite(stamp):
+            self.camera_info_stamps.append(stamp)
+
     def sample_estimate(self):
         """Pair the newest ground-truth sample with the estimate at its stamp."""
         if not self.truth_samples:
@@ -565,6 +590,10 @@ class StackTrajectoryCensus(Node):
             "rtabmap_processing_p95_ms": percentile(
                 self.rtabmap_processing_times_ms, 0.95
             ),
+            "camera_info_messages": len(self.camera_info_stamps),
+            "camera_info_rate_hz": stamped_message_rate_hz(
+                self.camera_info_stamps
+            ),
             "process": self.sampler.report(),
             "database_bytes": self.database_bytes(),
         }
@@ -595,6 +624,11 @@ def parse_arguments(argv=None):
         ),
     )
     parser.add_argument("--info-topic", default="/rtabmap/info")
+    parser.add_argument(
+        "--camera-info-topic",
+        default="",
+        help="Optional lightweight stamped camera stream used to measure rate.",
+    )
     parser.add_argument(
         "--database-path",
         default="",

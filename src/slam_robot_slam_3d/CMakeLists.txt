@@ -477,6 +477,10 @@ if(BUILD_TESTING)
     test/test_rtabmap_rgbd_fixed_regression.py
   )
   ament_add_pytest_test(
+    test_rtabmap_rgbd_online_launch
+    test/test_rtabmap_rgbd_online_launch.py
+  )
+  ament_add_pytest_test(
     test_large_cloud_transport
     test/test_large_cloud_transport.py
   )

@@ -1,0 +1,65 @@
+{
+  "date": "2026-09-03",
+  "status": "PASS",
+  "base_commit": "f97bccc",
+  "worktree_dirty_during_validation": true,
+  "command": "ros2 launch slam_robot_slam_3d rtabmap_rgbd_online_regression.launch.py",
+  "environment": {
+    "world": "structured_loop_3d.sdf",
+    "camera": "640x480 RGB-D at 30 Hz",
+    "route_laps": 2,
+    "truth_distance_m": 143.1319972948631,
+    "trajectory_samples": 18267,
+    "camera_info_messages": 11079,
+    "camera_info_rate_hz": 30.30352766106442
+  },
+  "input_odometry": {
+    "position_rmse_m": 0.2367113169893603,
+    "position_final_m": 0.41589240919836223
+  },
+  "rtabmap": {
+    "position_rmse_m": 0.09327987216799066,
+    "position_peak_m": 0.21786935459162865,
+    "position_final_m": 0.031306453518914854,
+    "yaw_rmse_deg": 0.4411519078872267,
+    "yaw_peak_deg": 1.2804553706534734,
+    "info_messages": 554,
+    "visual_frames": 554,
+    "frames_with_visual_words": 474,
+    "visual_feature_frame_fraction": 0.855595667870036,
+    "visual_loop_closures": 134,
+    "proximity_constraints": 205,
+    "maximum_visual_inliers": 87,
+    "processing_mean_ms": 27.866158752717332,
+    "processing_p95_ms": 64.73422241210938,
+    "average_cpu_percent": 31.201763976324596,
+    "peak_rss_mib": 1085.01171875,
+    "database_bytes": 190214144
+  },
+  "map": {
+    "updates": 518,
+    "free_cells": 73027,
+    "occupied_cells": 3516,
+    "known_bounding_box_m2": 405.0000120699407
+  },
+  "checks": {
+    "complete_two_lap_input": true,
+    "visual_features_observed": true,
+    "visual_loop_closures_accepted": true,
+    "trajectory_accuracy": true,
+    "runtime_budget": true,
+    "navigation_projection": true,
+    "improves_drifted_input_odometry": true,
+    "online_camera_rate": true
+  },
+  "route_checks": {
+    "passed": 17,
+    "failed": 0
+  },
+  "limitations": [
+    "Ground truth drives and scores the deterministic regression route but is not an RTAB-Map input.",
+    "Camera rate is measured from lightweight CameraInfo message stamps to avoid duplicating RGB and depth payloads in the scorer.",
+    "Gazebo exited with the known teardown-only -11 after the verdict was written and all runtime checks passed.",
+    "The online thresholds are engineering acceptance bounds, not a statistical confidence interval."
+  ]
+}

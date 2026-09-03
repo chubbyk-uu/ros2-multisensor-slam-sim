@@ -79,3 +79,42 @@ def test_missing_drift_reference_fails_the_conditional_improvement_check():
     checks, _ = MODULE.evaluate(trajectory, grid)
 
     assert checks["improves_drifted_input_odometry"] is False
+
+
+def test_online_update_thresholds_are_explicitly_overridable():
+    trajectory, grid = valid_reports()
+    trajectory["rtabmap_info_messages"] = 520
+    grid["updates"] = 480
+
+    checks, _ = MODULE.evaluate(
+        trajectory,
+        grid,
+        minimum_info_messages=500,
+        minimum_map_updates=450,
+    )
+
+    assert checks["visual_features_observed"] is True
+    assert checks["navigation_projection"] is True
+
+
+def test_online_mode_requires_sustained_camera_rate_when_requested():
+    trajectory, grid = valid_reports()
+    trajectory["camera_info_messages"] = 10800
+    trajectory["camera_info_rate_hz"] = 30.0
+
+    checks, _ = MODULE.evaluate(
+        trajectory,
+        grid,
+        minimum_camera_info_messages=9000,
+        minimum_camera_info_rate_hz=27.0,
+    )
+
+    assert checks["online_camera_rate"] is True
+    trajectory["camera_info_rate_hz"] = 20.0
+    checks, _ = MODULE.evaluate(
+        trajectory,
+        grid,
+        minimum_camera_info_messages=9000,
+        minimum_camera_info_rate_hz=27.0,
+    )
+    assert checks["online_camera_rate"] is False

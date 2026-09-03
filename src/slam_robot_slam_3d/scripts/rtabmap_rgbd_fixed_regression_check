@@ -21,7 +21,15 @@ def finite_at_least(value, limit):
     return is_finite_number(value) and value >= limit
 
 
-def evaluate(trajectory, grid, minimum_loop_closures=20):
+def evaluate(
+    trajectory,
+    grid,
+    minimum_loop_closures=20,
+    minimum_info_messages=650,
+    minimum_map_updates=600,
+    minimum_camera_info_messages=0,
+    minimum_camera_info_rate_hz=0.0,
+):
     process = trajectory.get("process", {})
     visual_frames = trajectory.get("rtabmap_visual_frames", 0)
     frames_with_words = trajectory.get("rtabmap_frames_with_visual_words", 0)
@@ -33,7 +41,7 @@ def evaluate(trajectory, grid, minimum_loop_closures=20):
             and trajectory.get("input_odom_samples", 0) >= 17000
         ),
         "visual_features_observed": (
-            trajectory.get("rtabmap_info_messages", 0) >= 650
+            trajectory.get("rtabmap_info_messages", 0) >= minimum_info_messages
             and visual_coverage >= 0.75
             and trajectory.get("rtabmap_maximum_visual_inliers", 0) >= 25
         ),
@@ -58,7 +66,7 @@ def evaluate(trajectory, grid, minimum_loop_closures=20):
             and trajectory.get("database_bytes", 0) <= 350 * 1024 * 1024
         ),
         "navigation_projection": (
-            grid.get("updates", 0) >= 600
+            grid.get("updates", 0) >= minimum_map_updates
             and grid.get("free_cells", 0) >= 65000
             and grid.get("occupied_cells", 0) >= 2500
             and finite_at_least(grid.get("known_bounding_box_m2"), 350.0)
@@ -78,6 +86,15 @@ def evaluate(trajectory, grid, minimum_loop_closures=20):
             and slam_rmse <= 0.75 * input_rmse
             and slam_final <= 0.25 * input_final
         )
+    if minimum_camera_info_messages > 0 or minimum_camera_info_rate_hz > 0.0:
+        checks["online_camera_rate"] = (
+            trajectory.get("camera_info_messages", 0)
+            >= minimum_camera_info_messages
+            and finite_at_least(
+                trajectory.get("camera_info_rate_hz"),
+                minimum_camera_info_rate_hz,
+            )
+        )
     return checks, visual_coverage
 
 
@@ -90,13 +107,26 @@ def read_json(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--label", default="fixed replay")
     parser.add_argument("--trajectory", type=Path, required=True)
     parser.add_argument("--map", dest="map_report", type=Path, required=True)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--minimum-loop-closures", type=int, default=20)
+    parser.add_argument("--minimum-info-messages", type=int, default=650)
+    parser.add_argument("--minimum-map-updates", type=int, default=600)
+    parser.add_argument("--minimum-camera-info-messages", type=int, default=0)
+    parser.add_argument("--minimum-camera-info-rate-hz", type=float, default=0.0)
     arguments = parser.parse_args()
     if arguments.minimum_loop_closures < 1:
         parser.error("--minimum-loop-closures must be positive")
+    if arguments.minimum_info_messages < 1:
+        parser.error("--minimum-info-messages must be positive")
+    if arguments.minimum_map_updates < 1:
+        parser.error("--minimum-map-updates must be positive")
+    if arguments.minimum_camera_info_messages < 0:
+        parser.error("--minimum-camera-info-messages cannot be negative")
+    if arguments.minimum_camera_info_rate_hz < 0.0:
+        parser.error("--minimum-camera-info-rate-hz cannot be negative")
 
     try:
         trajectory = read_json(arguments.trajectory)
@@ -106,7 +136,13 @@ def main():
         return 1
 
     checks, visual_coverage = evaluate(
-        trajectory, grid, arguments.minimum_loop_closures
+        trajectory,
+        grid,
+        arguments.minimum_loop_closures,
+        arguments.minimum_info_messages,
+        arguments.minimum_map_updates,
+        arguments.minimum_camera_info_messages,
+        arguments.minimum_camera_info_rate_hz,
     )
     passed = all(checks.values())
     result = {
@@ -122,7 +158,7 @@ def main():
             json.dumps(result, indent=2, sort_keys=True) + "\n"
         )
 
-    print("RTAB-Map RGB-D fixed replay verdict")
+    print(f"RTAB-Map RGB-D {arguments.label} verdict")
     for name, successful in checks.items():
         print(f"  [{'PASS' if successful else 'FAIL'}] {name}")
     print(
@@ -131,7 +167,11 @@ def main():
         f"rmse={trajectory.get('rmse_position_error_m')} m, "
         f"input_odom_rmse={trajectory.get('input_odom_rmse_position_error_m')} m"
     )
-    print("PASS: RGB-D fixed replay accepted" if passed else "FAIL: RGB-D fixed replay rejected")
+    print(
+        f"PASS: RGB-D {arguments.label} accepted"
+        if passed
+        else f"FAIL: RGB-D {arguments.label} rejected"
+    )
     return 0 if passed else 1
 
 

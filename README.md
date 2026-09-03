@@ -63,7 +63,7 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 | 自研 3D SLAM | 已完成首版闭环 | GICP 前端、Scan Context 回环、后台 SE(2) 位姿图、全局地图与版本化快照恢复 |
 | Frontier Exploration | 已完成双链路验收 | 自研与 RTAB-Map 共用候选评分、Nav2 调度、自动快照与安全随机出生 |
 | RGB-D 基础设施 | 已完成 | 前向模型、图像/深度/内参桥接、独立大消息 DDS 保护、RViz 与数据契约回归 |
-| RTAB-Map RGB-D 基线 | 固定回放已完成 | 官方 RGB-D 同步、方向性纹理、视觉回环、深度投影地图与独立大消息 DDS 保护；完整 30 Hz 活动验收待补 |
+| RTAB-Map RGB-D 基线 | 已完成 | 官方 RGB-D 同步、方向性纹理、视觉回环、深度投影地图与独立大消息 DDS 保护；两圈固定回放与 30 Hz 在线活动验收均通过 |
 | 视觉融合 | 计划中 | 在 RGB-D 成熟基线上再研究 3D LiDAR + 相机 + IMU，不把独立 LiDAR 点云误称为已融合 |
 
 最近独立验证结果和下一项工作见[项目状态](docs/status.md)。完整系统数据流、包边界

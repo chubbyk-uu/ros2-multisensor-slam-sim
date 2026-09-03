@@ -1,3 +1,4 @@
+from functools import partial
 from pathlib import Path
 
 from launch import LaunchDescription
@@ -23,6 +24,13 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
+def running_in_wsl():
+    try:
+        return "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
+    except OSError:
+        return False
+
+
 def prepare_output_files(context):
     """Remove reports from an earlier run so they cannot satisfy this run."""
     for argument_name in (
@@ -38,68 +46,99 @@ def prepare_output_files(context):
     return []
 
 
+def finish_after_driver(event, context, checker):
+    del context
+    if event.returncode != 0:
+        return [
+            EmitEvent(
+                event=Shutdown(
+                    reason=(
+                        "online RGB-D route regression failed with exit code "
+                        f"{event.returncode}"
+                    )
+                )
+            )
+        ]
+    return [TimerAction(period=5.0, actions=[checker])]
+
+
 def generate_launch_description():
-    rtabmap_launch = PathJoinSubstitution(
-        [FindPackageShare("slam_robot_slam_3d"), "launch", "rtabmap_rgbd.launch.py"]
+    simulation_launch = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_slam_3d"),
+            "launch",
+            "rtabmap_rgbd_simulation.launch.py",
+        ]
     )
-    default_bag = str(Path.cwd() / "bags" / "structured_rgbd_reference")
+    structured_world = PathJoinSubstitution(
+        [
+            FindPackageShare("slam_robot_gazebo"),
+            "worlds",
+            "structured_loop_3d.sdf",
+        ]
+    )
     default_dds_profile = PathJoinSubstitution(
         [FindPackageShare("slam_robot_gazebo"), "config", "fastdds_rgbd.xml"]
     )
-    playback = ExecuteProcess(
-        cmd=[
-            "ros2",
-            "bag",
-            "play",
-            LaunchConfiguration("bag"),
-            "--clock",
-            "100",
-            "--rate",
-            LaunchConfiguration("rate"),
-            "--disable-keyboard-controls",
-        ],
+    driver = Node(
+        package="slam_robot_slam_3d",
+        executable="structured_loop_regression",
+        name="rtabmap_rgbd_online_route_regression",
         output="screen",
-        additional_env={
-            "FASTRTPS_DEFAULT_PROFILES_FILE": LaunchConfiguration(
-                "rgbd_dds_profiles_file"
-            )
-        },
+        arguments=["--laps", "2"],
     )
     checker = ExecuteProcess(
         cmd=[
             "ros2", "run", "slam_robot_slam_3d",
             "rtabmap_rgbd_fixed_regression_check",
+            "--label", "online active loop",
             "--trajectory", LaunchConfiguration("trajectory_output"),
             "--map", LaunchConfiguration("map_output"),
             "--output", LaunchConfiguration("verdict_output"),
             "--minimum-loop-closures",
             LaunchConfiguration("minimum_loop_closures"),
+            "--minimum-info-messages",
+            LaunchConfiguration("minimum_info_messages"),
+            "--minimum-map-updates",
+            LaunchConfiguration("minimum_map_updates"),
+            "--minimum-camera-info-messages",
+            LaunchConfiguration("minimum_camera_info_messages"),
+            "--minimum-camera-info-rate-hz",
+            LaunchConfiguration("minimum_camera_info_rate_hz"),
         ],
         output="screen",
     )
 
     return LaunchDescription(
         [
-            DeclareLaunchArgument("bag", default_value=default_bag),
-            DeclareLaunchArgument("rate", default_value="1.0"),
+            DeclareLaunchArgument("gui", default_value="false"),
+            DeclareLaunchArgument("rviz", default_value="false"),
             DeclareLaunchArgument(
                 "database_path",
-                default_value="/tmp/slam_robot_rtabmap_rgbd_fixed.db",
+                default_value="/tmp/slam_robot_rtabmap_rgbd_online.db",
             ),
             DeclareLaunchArgument(
                 "trajectory_output",
-                default_value="/tmp/rtabmap_rgbd_trajectory.json",
+                default_value="/tmp/rtabmap_rgbd_online_trajectory.json",
             ),
             DeclareLaunchArgument(
                 "map_output",
-                default_value="/tmp/rtabmap_rgbd_map.json",
+                default_value="/tmp/rtabmap_rgbd_online_map.json",
             ),
             DeclareLaunchArgument(
                 "verdict_output",
-                default_value="/tmp/rtabmap_rgbd_fixed_verdict.json",
+                default_value="/tmp/rtabmap_rgbd_online_verdict.json",
             ),
             DeclareLaunchArgument("minimum_loop_closures", default_value="20"),
-            DeclareLaunchArgument("wall_timeout", default_value="600.0"),
+            DeclareLaunchArgument("minimum_info_messages", default_value="500"),
+            DeclareLaunchArgument("minimum_map_updates", default_value="450"),
+            DeclareLaunchArgument(
+                "minimum_camera_info_messages", default_value="9000"
+            ),
+            DeclareLaunchArgument(
+                "minimum_camera_info_rate_hz", default_value="27.0"
+            ),
+            DeclareLaunchArgument("wall_timeout", default_value="900.0"),
             DeclareLaunchArgument(
                 "rgbd_dds_profiles_file",
                 default_value=EnvironmentVariable(
@@ -107,40 +146,47 @@ def generate_launch_description():
                     default_value=default_dds_profile,
                 ),
             ),
+            DeclareLaunchArgument(
+                "use_wsl_gpu",
+                default_value="true" if running_in_wsl() else "false",
+            ),
+            DeclareLaunchArgument("wsl_gpu_adapter", default_value="NVIDIA"),
             OpaqueFunction(function=prepare_output_files),
             GroupAction(
                 scoped=True,
                 actions=[
                     IncludeLaunchDescription(
-                        PythonLaunchDescriptionSource(rtabmap_launch),
+                        PythonLaunchDescriptionSource(simulation_launch),
                         launch_arguments={
+                            "world": structured_world,
+                            "gui": LaunchConfiguration("gui"),
+                            "rviz": LaunchConfiguration("rviz"),
                             "database_path": LaunchConfiguration("database_path"),
                             "reset_database": "true",
                             "rgbd_dds_profiles_file": LaunchConfiguration(
                                 "rgbd_dds_profiles_file"
                             ),
+                            "use_wsl_gpu": LaunchConfiguration("use_wsl_gpu"),
+                            "wsl_gpu_adapter": LaunchConfiguration(
+                                "wsl_gpu_adapter"
+                            ),
                         }.items(),
                     )
                 ],
             ),
-            Node(
-                package="slam_robot_slam_3d",
-                executable="recorded_odom_tf_publisher",
-                name="recorded_odom_tf_publisher",
-                output="screen",
-                parameters=[{"use_sim_time": True, "odom_topic": "/odom"}],
-            ),
+            driver,
             Node(
                 package="slam_robot_slam_3d",
                 executable="stack_trajectory_census",
-                name="rtabmap_rgbd_trajectory_census",
+                name="rtabmap_rgbd_online_trajectory_census",
                 output="screen",
                 arguments=[
-                    "--label", "rtabmap_rgbd",
+                    "--label", "rtabmap_rgbd_online",
                     "--output", LaunchConfiguration("trajectory_output"),
                     "--process-match", "/rtabmap_sync/rgbd_sync",
                     "--process-match", "/rtabmap_slam/rtabmap",
                     "--info-topic", "/rtabmap/info",
+                    "--camera-info-topic", "/camera/color/camera_info",
                     "--database-path", LaunchConfiguration("database_path"),
                     "--wall-timeout", LaunchConfiguration("wall_timeout"),
                 ],
@@ -148,25 +194,19 @@ def generate_launch_description():
             Node(
                 package="slam_robot_slam_3d",
                 executable="map_projection_census",
-                name="rtabmap_rgbd_map_census",
+                name="rtabmap_rgbd_online_map_census",
                 output="screen",
                 arguments=[
                     "--topic", "/rtabmap/map",
-                    "--label", "rtabmap_rgbd",
+                    "--label", "rtabmap_rgbd_online",
                     "--output", LaunchConfiguration("map_output"),
                     "--wall-timeout", LaunchConfiguration("wall_timeout"),
                 ],
             ),
-            TimerAction(period=6.0, actions=[playback]),
             RegisterEventHandler(
                 OnProcessExit(
-                    target_action=playback,
-                    on_exit=[
-                        TimerAction(
-                            period=20.0,
-                            actions=[checker],
-                        )
-                    ],
+                    target_action=driver,
+                    on_exit=partial(finish_after_driver, checker=checker),
                 )
             ),
             RegisterEventHandler(
@@ -175,7 +215,7 @@ def generate_launch_description():
                     on_exit=[
                         EmitEvent(
                             event=Shutdown(
-                                reason="RTAB-Map RGB-D fixed verdict completed"
+                                reason="RTAB-Map RGB-D online verdict completed"
                             )
                         )
                     ],
