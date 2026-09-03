@@ -12,6 +12,7 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.substitutions import (
+    TextSubstitution,
     Command,
     FindExecutable,
     LaunchConfiguration,
@@ -28,6 +29,20 @@ def running_in_wsl():
         return "microsoft" in Path("/proc/sys/kernel/osrelease").read_text().lower()
     except OSError:
         return False
+
+
+def entity_service(action, service_type):
+    """
+    Build a bridge argument for one world-scoped Gazebo entity service.
+
+    The world name is part of the service path, so a regression that runs in a
+    world other than slam_world needs these rebuilt rather than hardcoded.
+    """
+    return [
+        TextSubstitution(text="/world/"),
+        LaunchConfiguration("world_name"),
+        TextSubstitution(text=f"/{action}@ros_gz_interfaces/srv/{service_type}"),
+    ]
 
 
 def generate_launch_description():
@@ -254,6 +269,15 @@ def generate_launch_description():
                 description="Robot spawn yaw in radians.",
             ),
             DeclareLaunchArgument(
+                "world_name",
+                default_value="slam_world",
+                description=(
+                    "The <world name> inside the world file. Gazebo's entity "
+                    "services are namespaced by it, so it must match or the "
+                    "spawn and remove bridges point at nothing."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "world",
                 default_value=default_world_path,
                 description="Absolute path to the Gazebo Sim world file.",
@@ -471,14 +495,8 @@ def generate_launch_description():
                     )
                 ),
                 arguments=[
-                    (
-                        "/world/slam_world/create@"
-                        "ros_gz_interfaces/srv/SpawnEntity"
-                    ),
-                    (
-                        "/world/slam_world/remove@"
-                        "ros_gz_interfaces/srv/DeleteEntity"
-                    ),
+                    entity_service("create", "SpawnEntity"),
+                    entity_service("remove", "DeleteEntity"),
                 ],
                 parameters=[{"config_file": bridge_config_path}],
             ),
@@ -493,14 +511,8 @@ def generate_launch_description():
                     )
                 ),
                 arguments=[
-                    (
-                        "/world/slam_world/create@"
-                        "ros_gz_interfaces/srv/SpawnEntity"
-                    ),
-                    (
-                        "/world/slam_world/remove@"
-                        "ros_gz_interfaces/srv/DeleteEntity"
-                    ),
+                    entity_service("create", "SpawnEntity"),
+                    entity_service("remove", "DeleteEntity"),
                 ],
                 parameters=[{"config_file": wheel_imu_bridge_config_path}],
             ),

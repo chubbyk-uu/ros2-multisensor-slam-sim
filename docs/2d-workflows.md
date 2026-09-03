@@ -117,6 +117,31 @@ ros2 run slam_robot_navigation navigation_regression.py \
 会自动移除测试箱体。完整参数见
 [导航包说明](../src/slam_robot_navigation/README.md)。
 
+完全封路验收在专门的 `blocked_road_world` 中进行，一条命令带起世界、地图和回归：
+
+```bash
+ros2 launch slam_robot_navigation blocked_road_regression.launch.py
+```
+
+世界、`<world name>` 和地图必须彼此一致——Gazebo 的实体服务按世界名分命名空间，
+地图必须是由这个世界生成的那一张，其中世界名写错会静默失效（spawn 桥接指向不存在的
+服务）。因此三者在该 launch 里一起设定，调用方没有写错的机会。
+
+地图不是开车建出来的，而是由世界直接栅格化：
+
+```bash
+ros2 run slam_robot_gazebo world_to_occupancy_map \
+  src/slam_robot_gazebo/worlds/blocked_road_world.sdf \
+  maps/reference/blocked_road_map
+```
+
+建图跑一趟会让验收依赖那一趟开得好不好，世界一改还得重来；从世界读则让地图成为几何
+的函数。只有机器人真正能到达的空间被标为 free，其余保持 unknown——一张声称了解未访问
+空间的地图会让规划器穿过它从没见过的墙。
+
+判据、门限来源与三个失败设计的原因见[验证方法](methodology.md#封路与动态障碍的判据)
+与[工程事件](incidents.md#代价地图会忘记看不见的封路)。
+
 ## 自研 C++ 2D SLAM
 
 启动 Gazebo、自研前后端和专用 RViz：

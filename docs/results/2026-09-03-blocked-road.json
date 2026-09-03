@@ -1,0 +1,56 @@
+{
+  "checks": {
+    "blockage_closed_in_costmap": true,
+    "ended_within_budget": true,
+    "goal_not_reached": true,
+    "kept_clearance": true,
+    "planner_reported_no_path": true,
+    "recovery_ceiling": true,
+    "recovery_floor": true,
+    "robot_at_rest": true
+  },
+  "date": "2026-09-03",
+  "elapsed_sim_seconds": 30.7,
+  "give_up_budget_sim_seconds": 180.0,
+  "limits": [
+    "One run of each. The scenario is deterministic in geometry but Nav2's recovery count varies between runs; 15 was observed against a ceiling of 18 derived from the behaviour tree, which is not a wide margin.",
+    "blocked_road_world exists because slam_world cannot host this test: see docs/incidents.md on the costmap forgetting a blockage it cannot hold in view. The result therefore says nothing about blockages larger than the robot's sensor footprint.",
+    "2D chain only. The 3D chains have neither this scenario nor the dynamic obstacle one."
+  ],
+  "map": "maps/reference/blocked_road_map.yaml",
+  "measurements": {
+    "collision_actions": 0,
+    "final_speed_mps": 0.0,
+    "minimum_clearance_m": 1.014,
+    "planner_error_code": 208,
+    "planner_error_name": "NO_VALID_PATH",
+    "recoveries": 15,
+    "widest_doorway_gap_m": 0.0
+  },
+  "negative_control": {
+    "core_failures": [
+      "goal_not_reached",
+      "planner_reported_no_path",
+      "robot_at_rest",
+      "recovery_floor"
+    ],
+    "note": "The same run with the seal moved 1.5 m clear of the doorway, everything else unchanged. Without it a pass would not show that the criteria discriminate.",
+    "verdict": "FAIL"
+  },
+  "regression": "navigation_regression.py --scenario blocked-road",
+  "schema_version": 1,
+  "source_revision": {
+    "commit": "eaf80aab89d0c8d64714746e2d074d274b48cdfc",
+    "dirty": true
+  },
+  "thresholds": {
+    "inscribed_diameter_m": 0.31,
+    "maximum_recoveries": 18,
+    "maximum_recoveries_source": "navigate_to_pose_w_replanning_and_recovery.xml: six outer RecoveryNode retries, each able to drive one planner retry, one controller retry and one RoundRobin recovery action",
+    "minimum_clearance_m": 0.2,
+    "minimum_recoveries": 1,
+    "rest_speed_mps": 0.05
+  },
+  "verdict": "PASS",
+  "world": "blocked_road_world"
+}

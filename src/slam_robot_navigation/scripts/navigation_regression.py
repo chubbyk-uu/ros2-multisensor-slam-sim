@@ -6,13 +6,22 @@ import time
 
 import rclpy
 from lifecycle_msgs.srv import GetState
+from rclpy.action import ActionClient
 from rclpy.parameter import Parameter
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from nav2_msgs.action import ComputePathToPose
 from nav2_msgs.msg import CollisionMonitorState
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import OccupancyGrid, Odometry
 from ros_gz_interfaces.msg import Entity
 from ros_gz_interfaces.srv import DeleteEntity, SpawnEntity
+from slam_robot_navigation.blocked_road import (
+    BlockedRoadCriteria,
+    BlockedRoadObservation,
+    core_failures,
+    evaluate as evaluate_blocked_road,
+    failed_checks,
+)
 
 
 DEFAULT_ROUTE = (
@@ -28,6 +37,75 @@ DEFAULT_ROUTE = (
 )
 
 DYNAMIC_GOAL = (-4.0, -1.0, math.pi)
+
+# The blocked-road scenario runs in blocked_road_world, whose north-east
+# alcove has exactly one 1.1 m doorway; its other three sides are walls the
+# pre-built map already contains. One seal across that doorway therefore closes
+# the alcove in the costmap while the robot is looking straight at it.
+#
+# Three designs in slam_world failed first, and the reasons are why a dedicated
+# world exists.
+#
+# A single 9.8 m wall dividing the room fails because the static layer holds
+# only the pre-built map, so a spawned barrier exists only where the laser has
+# seen it. The planner threads the unobserved middle and the robot concludes
+# nothing.
+#
+# Sealing partition_a's two doorways fails differently: it leaves the goal
+# reachable round the south of the room and up through the 0.30 m gap at
+# partition_d's west end. That gap is narrower than the robot, but the
+# inflation layer marks its centre 253 rather than 254 and NavFn refuses only
+# 254, so the planner keeps routing through it.
+#
+# Sealing the north-east pocket's two openings fails for the reason recorded in
+# docs/incidents.md: they lie about 3.5 m apart, beyond obstacle_max_range
+# 2.5 m, so the obstacle layer clears whichever one the robot is not looking
+# at. Measured directly as a narrowest gap of 0.00 m during the run against
+# 0.30 m at the moment the planner was asked.
+#
+# A single doorway needs no memory at all, which is the property slam_world's
+# open plan could not provide.
+BLOCKED_ROAD_WORLD = "blocked_road_world"
+BLOCKED_ROAD_GOAL = (4.1, 3.6, math.pi / 2.0)
+# (name, centre x, centre y, size x, size y)
+BLOCKED_ROAD_SEALS = (
+    ("navigation_test_seal", 4.15, 2.0, 1.1, 0.2),
+)
+BLOCKED_ROAD_SEAL_HEIGHT = 1.2
+# Distance from the start pose after which the robot counts as committed to
+# the route, and the seal appears.
+BLOCKED_ROAD_COMMIT_DISTANCE = 1.0
+
+
+def blocked_road_seal_sdf(name, size_x, size_y):
+    size = f"{size_x} {size_y} {BLOCKED_ROAD_SEAL_HEIGHT}"
+    return f"""
+<sdf version="1.10">
+  <model name="{name}">
+    <static>true</static>
+    <link name="body">
+      <collision name="collision">
+        <geometry><box><size>{size}</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>{size}</size></box></geometry>
+        <material>
+          <ambient>0.9 0.1 0.1 1</ambient>
+          <diffuse>0.9 0.1 0.1 1</diffuse>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
+""".strip()
+
+
+def distance_to_seal(x, y, seal):
+    """Return the shortest distance from a point to a seal's surface."""
+    _, centre_x, centre_y, size_x, size_y = seal
+    dx = max(abs(x - centre_x) - size_x / 2.0, 0.0)
+    dy = max(abs(y - centre_y) - size_y / 2.0, 0.0)
+    return math.hypot(dx, dy)
 DYNAMIC_OBSTACLE_NAME = "navigation_test_obstacle"
 DYNAMIC_OBSTACLE_X = -1.35
 DYNAMIC_OBSTACLE_Y = -0.34
@@ -53,8 +131,11 @@ DYNAMIC_OBSTACLE_SDF = """
 
 
 class NavigationRegression:
-    def __init__(self, navigator):
+    def __init__(self, navigator, world_name):
         self.navigator = navigator
+        # The Gazebo entity services are namespaced by world, and the
+        # blocked-road scenario runs in a different world from the others.
+        self.world_name = world_name
         self.latest_amcl_pose = None
         self.collision_actions = 0
         self.last_collision_action = CollisionMonitorState.DO_NOTHING
@@ -66,13 +147,25 @@ class NavigationRegression:
         self.local_costmap_latency = math.nan
         self.minimum_obstacle_distance = math.inf
         self.maximum_path_deviation = 0.0
+        self.blockage_spawned = False
+        # The widest gap the costmap still shows across either doorway, and
+        # the best (narrowest) value seen: the obstacle layer can clear cells
+        # again once the robot looks away, and the criterion is whether the
+        # robot ever had the evidence, not whether it still holds it.
+        self.widest_doorway_gap = math.inf
+        self.narrowest_doorway_gap = math.inf
+        self.minimum_blockage_distance = math.inf
+        self.latest_speed = 0.0
+        self.path_client = ActionClient(
+            self.navigator, ComputePathToPose, "compute_path_to_pose"
+        )
         self.spawn_client = self.navigator.create_client(
             SpawnEntity,
-            "/world/slam_world/create",
+            f"/world/{world_name}/create",
         )
         self.delete_client = self.navigator.create_client(
             DeleteEntity,
-            "/world/slam_world/remove",
+            f"/world/{world_name}/remove",
         )
         self.navigator.create_subscription(
             PoseWithCovarianceStamped,
@@ -96,6 +189,12 @@ class NavigationRegression:
             OccupancyGrid,
             "/local_costmap/costmap",
             self._local_costmap_callback,
+            10,
+        )
+        self.navigator.create_subscription(
+            Odometry,
+            "/odom",
+            self._odometry_callback,
             10,
         )
 
@@ -133,6 +232,11 @@ class NavigationRegression:
         return stamp.sec + stamp.nanosec * 1.0e-9
 
     def _global_costmap_callback(self, message):
+        if self.blockage_spawned:
+            self.widest_doorway_gap = self._widest_doorway_gap(message)
+            self.narrowest_doorway_gap = min(
+                self.narrowest_doorway_gap, self.widest_doorway_gap
+            )
         if (
             self.obstacle_spawned
             and not self.global_costmap_observed
@@ -165,6 +269,111 @@ class NavigationRegression:
                 f"after {self.local_costmap_latency:.3f} sim s",
                 flush=True,
             )
+
+    def _odometry_callback(self, message):
+        linear = message.twist.twist.linear
+        self.latest_speed = math.hypot(linear.x, linear.y)
+
+    def _widest_doorway_gap(self, message):
+        """
+        Return the widest traversable gap left in any sealed opening.
+
+        A lethal cell somewhere in an opening does not close it. What decides
+        whether a route survives is the longest run of non-lethal cells across
+        the opening, so that is what is measured; anything narrower than the
+        robot's inscribed diameter cannot be planned through.
+        """
+        resolution = message.info.resolution
+        origin = message.info.origin.position
+        width = message.info.width
+        height = message.info.height
+        widest = 0.0
+        for seal in BLOCKED_ROAD_SEALS:
+            _, centre_x, centre_y, size_x, size_y = seal
+            along_y = size_y >= size_x
+            length = size_y if along_y else size_x
+            steps = max(1, int(round(length / resolution)))
+            longest = run = 0
+            for step in range(steps + 1):
+                offset = -length / 2.0 + step * resolution
+                x = centre_x if along_y else centre_x + offset
+                y = centre_y + offset if along_y else centre_y
+                cell_x = round((x - origin.x) / resolution)
+                cell_y = round((y - origin.y) / resolution)
+                lethal = False
+                for dx in range(-2, 3):
+                    for dy in range(-2, 3):
+                        px, py = cell_x + dx, cell_y + dy
+                        if 0 <= px < width and 0 <= py < height:
+                            if message.data[py * width + px] >= 99:
+                                lethal = True
+                                break
+                    if lethal:
+                        break
+                if lethal:
+                    run = 0
+                else:
+                    run += 1
+                    longest = max(longest, run)
+            widest = max(widest, longest * resolution)
+        return widest
+
+    def measure_rest_speed(self, seconds):
+        """
+        Return the fastest speed seen over a settling window.
+
+        A single instantaneous reading can catch a moving robot at a zero
+        crossing, which would report a robot still pushing at the wall as
+        stopped.
+        """
+        deadline = time.monotonic() + seconds
+        peak = 0.0
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self.navigator, timeout_sec=0.1)
+            peak = max(peak, self.latest_speed)
+        return peak
+
+    def planner_reports_no_path(self, goal_pose, timeout=20.0):
+        """
+        Ask the planner directly whether a path to the goal exists.
+
+        The navigation task failing is not the same statement: it also fails
+        when the controller gives up on a path that the planner did produce.
+        The criterion is about the planner, so the planner is asked.
+        """
+        if not self.path_client.wait_for_server(timeout_sec=timeout):
+            return False, "planner action server unavailable"
+        request = ComputePathToPose.Goal()
+        request.goal = goal_pose
+        request.use_start = False
+        send = self.path_client.send_goal_async(request)
+        rclpy.spin_until_future_complete(self.navigator, send, timeout_sec=timeout)
+        if not send.done() or send.result() is None:
+            return False, "planner did not accept the request"
+        handle = send.result()
+        if not handle.accepted:
+            return False, "planner rejected the request"
+        finish = handle.get_result_async()
+        rclpy.spin_until_future_complete(self.navigator, finish, timeout_sec=timeout)
+        if not finish.done() or finish.result() is None:
+            return False, "planner did not return a result"
+        result = finish.result().result
+        code = result.error_code
+        if code == ComputePathToPose.Result.NO_VALID_PATH:
+            return True, f"error_code={code}"
+        # A claimed path is the thing to look at when this criterion fails:
+        # it says which way round the seals the planner believes it can go.
+        poses = list(result.path.poses)
+        if poses:
+            step = max(1, len(poses) // 8)
+            route = " ".join(
+                f"({p.pose.position.x:.1f},{p.pose.position.y:.1f})"
+                for p in poses[::step]
+            )
+            detail = f"error_code={code} path[{len(poses)}]: {route}"
+        else:
+            detail = f"error_code={code} path is empty"
+        return False, detail
 
     def make_pose(self, x, y, yaw):
         pose = PoseStamped()
@@ -371,6 +580,161 @@ class NavigationRegression:
             self.obstacle_spawn_simulation_time = None
         return deleted
 
+    def spawn_blockage(self):
+        """Seal both doorways at once."""
+        for seal in BLOCKED_ROAD_SEALS:
+            name, centre_x, centre_y, size_x, size_y = seal
+            request = SpawnEntity.Request()
+            request.entity_factory.name = name
+            request.entity_factory.allow_renaming = False
+            request.entity_factory.sdf = blocked_road_seal_sdf(
+                name, size_x, size_y
+            )
+            request.entity_factory.pose.position.x = centre_x
+            request.entity_factory.pose.position.y = centre_y
+            request.entity_factory.pose.position.z = 0.60
+            request.entity_factory.pose.orientation.w = 1.0
+            request.entity_factory.relative_to = "world"
+            future = self.spawn_client.call_async(request)
+            rclpy.spin_until_future_complete(
+                self.navigator, future, timeout_sec=5.0
+            )
+            if not future.done() or future.result() is None:
+                return False
+            if not future.result().success:
+                return False
+        self.blockage_spawned = True
+        return True
+
+    def delete_blockage(self):
+        if not self.delete_client.service_is_ready():
+            return False
+        removed = True
+        for name, _, _, _, _ in BLOCKED_ROAD_SEALS:
+            request = DeleteEntity.Request()
+            request.entity.name = name
+            request.entity.type = Entity.MODEL
+            future = self.delete_client.call_async(request)
+            rclpy.spin_until_future_complete(
+                self.navigator, future, timeout_sec=5.0
+            )
+            if not future.done() or future.result() is None:
+                removed = False
+            elif not future.result().success:
+                removed = False
+        if removed:
+            self.blockage_spawned = False
+        return removed
+
+    def run_blocked_road(self, give_up_budget, criteria, inscribed_diameter):
+        """Seal the only route to the goal and score how the robot gives up."""
+        if not self.wait_for_gazebo_services():
+            return None, "GAZEBO_SERVICES_UNAVAILABLE"
+        self.delete_blockage()
+
+        goal_pose = self.make_pose(*BLOCKED_ROAD_GOAL)
+        start_simulation_time = self.simulation_time()
+        last_report_time = time.monotonic() - 5.0
+        recoveries = 0
+        ended_within_budget = True
+        start_position = (0.0, 0.0)
+        if self.latest_amcl_pose is not None:
+            start_position = (
+                self.latest_amcl_pose.position.x,
+                self.latest_amcl_pose.position.y,
+            )
+
+        print(
+            f"blocked-road goal: ({goal_pose.pose.position.x:.2f}, "
+            f"{goal_pose.pose.position.y:.2f}); both openings are sealed "
+            f"once the robot has committed to the route",
+            flush=True,
+        )
+        if not self.navigator.goToPose(goal_pose):
+            return None, "REJECTED"
+
+        while not self.navigator.isTaskComplete():
+            now = time.monotonic()
+            elapsed = self.simulation_time() - start_simulation_time
+            feedback = self.navigator.getFeedback()
+            if feedback is not None:
+                position = feedback.current_pose.pose.position
+                recoveries = max(recoveries, feedback.number_of_recoveries)
+
+                travelled = math.hypot(
+                    position.x - start_position[0],
+                    position.y - start_position[1],
+                )
+                if (
+                    not self.blockage_spawned
+                    and travelled >= BLOCKED_ROAD_COMMIT_DISTANCE
+                ):
+                    if not self.spawn_blockage():
+                        self.navigator.cancelTask()
+                        return None, "SPAWN_FAILED"
+                    print(
+                        f"  sealed both openings into the pocket while the "
+                        f"robot was at ({position.x:.2f}, {position.y:.2f})",
+                        flush=True,
+                    )
+
+                if self.blockage_spawned:
+                    self.minimum_blockage_distance = min(
+                        [self.minimum_blockage_distance]
+                        + [
+                            distance_to_seal(position.x, position.y, seal)
+                            for seal in BLOCKED_ROAD_SEALS
+                        ]
+                    )
+
+                if now - last_report_time >= 5.0:
+                    print(
+                        f"  progress: position=({position.x:.2f}, "
+                        f"{position.y:.2f}) recoveries={recoveries} "
+                        f"widest_gap={self.narrowest_doorway_gap:.2f} m "
+                        f"clearance={self.minimum_blockage_distance:.2f} m "
+                        f"elapsed={elapsed:.0f}/{give_up_budget:.0f} sim s",
+                        flush=True,
+                    )
+                    last_report_time = now
+
+            # The scenario's own budget, deliberately shorter than the launch
+            # timeout: a run that only ended because the launch timer fired
+            # would be charged to the environment, and unbounded recovery is
+            # exactly the defect this scenario exists to catch.
+            if elapsed > give_up_budget:
+                ended_within_budget = False
+                self.navigator.cancelTask()
+                break
+
+        goal_reached = (
+            self.navigator.getResult() == TaskResult.SUCCEEDED
+            if ended_within_budget
+            else False
+        )
+        no_path, planner_detail = self.planner_reports_no_path(goal_pose)
+        peak_speed = self.measure_rest_speed(2.0)
+
+        observation = BlockedRoadObservation(
+            goal_reached=goal_reached,
+            blockage_closed_in_costmap=(
+                self.narrowest_doorway_gap < inscribed_diameter
+            ),
+            planner_reported_no_path=no_path,
+            final_speed=peak_speed,
+            recoveries=recoveries,
+            minimum_blockage_distance=self.minimum_blockage_distance,
+            ended_within_budget=ended_within_budget,
+        )
+        verdict, checks = evaluate_blocked_road(observation, criteria)
+        return {
+            "verdict": verdict,
+            "checks": checks,
+            "observation": observation,
+            "planner_detail": planner_detail,
+            "elapsed": self.simulation_time() - start_simulation_time,
+        }, None
+
     def run_dynamic_obstacle(self, timeout):
         if not self.wait_for_gazebo_services():
             return {
@@ -524,7 +888,7 @@ def parse_arguments():
     )
     parser.add_argument(
         "--scenario",
-        choices=("multi-goal", "dynamic-obstacle"),
+        choices=("multi-goal", "dynamic-obstacle", "blocked-road"),
         default="multi-goal",
         help="Regression scenario to execute (default: multi-goal).",
     )
@@ -558,6 +922,72 @@ def parse_arguments():
             "publication (default: 0.8)."
         ),
     )
+    parser.add_argument(
+        "--world-name",
+        default=None,
+        help=(
+            "Gazebo world whose entity services are used. Defaults to "
+            "blocked_road_world for the blocked-road scenario and slam_world "
+            "otherwise."
+        ),
+    )
+    parser.add_argument(
+        "--give-up-budget",
+        type=float,
+        default=180.0,
+        help=(
+            "Simulated seconds the robot may spend before it must have given "
+            "up on a blocked goal. Sized from the route it must actually "
+            "drive -- roughly 6.5 m between the two doorways at the planner's "
+            "nominal speed -- with margin, and deliberately far shorter than "
+            "--timeout: exceeding it is the robot's failure, not the "
+            "environment's (default: 180)."
+        ),
+    )
+    parser.add_argument(
+        "--minimum-clearance",
+        type=float,
+        default=0.20,
+        help="Metres the robot must keep from the blockage (default: 0.20).",
+    )
+    parser.add_argument(
+        "--minimum-recoveries",
+        type=int,
+        default=1,
+        help=(
+            "Recovery attempts the robot must make before giving up; zero "
+            "would turn the check off rather than relax it (default: 1)."
+        ),
+    )
+    parser.add_argument(
+        "--maximum-recoveries",
+        type=int,
+        default=18,
+        help=(
+            "Recovery attempts the robot may make. Derived from the shipped "
+            "navigate_to_pose_w_replanning_and_recovery.xml: six outer "
+            "retries, each able to drive one planner retry, one controller "
+            "retry and one RoundRobin recovery action, so 6 x 3 = 18. "
+            "Exceeding it means the behaviour tree is not the one this "
+            "threshold was read from (default: 18)."
+        ),
+    )
+    parser.add_argument(
+        "--inscribed-diameter",
+        type=float,
+        default=0.31,
+        help=(
+            "Widest costmap gap the robot could still be planned through. "
+            "Twice the footprint's inscribed radius, which is what the "
+            "inflation layer marks as untraversable (default: 0.31)."
+        ),
+    )
+    parser.add_argument(
+        "--rest-speed",
+        type=float,
+        default=0.05,
+        help="Speed below which the robot counts as stopped (default: 0.05).",
+    )
     return parser.parse_args()
 
 
@@ -568,7 +998,14 @@ def main():
     navigator.set_parameters(
         [Parameter("use_sim_time", Parameter.Type.BOOL, True)]
     )
-    regression = NavigationRegression(navigator)
+    world_name = args.world_name
+    if world_name is None:
+        world_name = (
+            BLOCKED_ROAD_WORLD
+            if args.scenario == "blocked-road"
+            else "slam_world"
+        )
+    regression = NavigationRegression(navigator, world_name)
 
     try:
         print("waiting for Nav2 and the AMCL initial pose...", flush=True)
@@ -590,6 +1027,52 @@ def main():
                 f"goal_error={result['goal_error']:.3f} m",
                 flush=True,
             )
+        elif args.scenario == "blocked-road":
+            print("starting blocked-road scenario", flush=True)
+            criteria = BlockedRoadCriteria(
+                minimum_clearance=args.minimum_clearance,
+                minimum_recoveries=args.minimum_recoveries,
+                maximum_recoveries=args.maximum_recoveries,
+                rest_speed=args.rest_speed,
+            )
+            report, aborted = regression.run_blocked_road(
+                args.give_up_budget, criteria, args.inscribed_diameter
+            )
+            if report is None:
+                print(f"summary: result={aborted}", flush=True)
+                raise SystemExit(1)
+            observation = report["observation"]
+            print(
+                "summary: "
+                f"verdict={report['verdict']} "
+                f"elapsed={report['elapsed']:.1f} s "
+                f"goal_reached={observation.goal_reached} "
+                f"doorway_closed={observation.blockage_closed_in_costmap} "
+                f"(narrowest gap seen {regression.narrowest_doorway_gap:.2f} m,"
+                f" gap now {regression.widest_doorway_gap:.2f} m) "
+                f"planner_no_path={observation.planner_reported_no_path} "
+                f"({report['planner_detail']}) "
+                f"final_speed={observation.final_speed:.3f} m/s "
+                f"recoveries={observation.recoveries} "
+                f"clearance={observation.minimum_blockage_distance:.3f} m "
+                f"ended_within_budget={observation.ended_within_budget} "
+                f"collision_actions={regression.collision_actions}",
+                flush=True,
+            )
+            failed = failed_checks(report["checks"])
+            if failed:
+                print(f"  failed checks: {', '.join(failed)}", flush=True)
+                print(
+                    f"  core failures: "
+                    f"{', '.join(core_failures(report['checks'])) or 'none'}",
+                    flush=True,
+                )
+            # Printed in the form exploration_campaign already greps for, so a
+            # blocked-road run can be repeated by the same campaign driver.
+            print(f"VERDICT {report['verdict']}", flush=True)
+            if report["verdict"] != "PASS":
+                raise SystemExit(1)
+            result = {"result": "SUCCEEDED"}
         else:
             print("starting dynamic-obstacle scenario", flush=True)
             result = regression.run_dynamic_obstacle(args.timeout)
@@ -628,6 +1111,9 @@ def main():
         if regression.obstacle_spawned:
             deleted = regression.delete_obstacle()
             print(f"dynamic obstacle removed={deleted}", flush=True)
+        if regression.blockage_spawned:
+            deleted = regression.delete_blockage()
+            print(f"blockage removed={deleted}", flush=True)
         navigator.destroy_node()
         rclpy.shutdown()
 

@@ -52,7 +52,9 @@ install(
 )
 
 install(
-  PROGRAMS scripts/imu_fusion_regression
+  PROGRAMS
+    scripts/imu_fusion_regression
+    scripts/world_to_occupancy_map
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -84,6 +86,11 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_footprint_contract
     test/test_footprint_contract.py
+  )
+
+  ament_add_pytest_test(
+    test_world_to_occupancy_map
+    test/test_world_to_occupancy_map.py
   )
 endif()
 

@@ -18,9 +18,16 @@ its (class, code) pair, untouched by anything here.
 Not colliding is not evidence of having given up correctly. A robot that never
 perceived the blockage and stopped for an unrelated reason would satisfy "did
 not reach the goal and did not crash". A pass therefore requires positive
-evidence from all three of perception, planning and motion: the blockage was
-marked lethal, the planner reported it had no path, and the robot ended at
+evidence from all three of perception, planning and motion: the costmap showed
+the way closed, the planner reported it had no path, and the robot ended at
 rest.
+
+The perception evidence is that the costmap shows *no traversable gap*, not
+that some lethal cell appeared. A partly observed barrier does contain lethal
+cells while still leaving a slit the planner will thread, and a robot that goes
+on trying such a route is behaving correctly rather than failing to perceive.
+Measuring the widest remaining gap keeps the criterion tied to the thing that
+actually decides whether a route exists.
 
 The scenario also owns its own giving-up budget. `exploration_campaign` charges
 a launch timeout to the environment, on the reasoning that a hung launch says
@@ -80,7 +87,7 @@ class BlockedRoadObservation:
     def __init__(
         self,
         goal_reached,
-        blockage_marked_lethal,
+        blockage_closed_in_costmap,
         planner_reported_no_path,
         final_speed,
         recoveries,
@@ -88,7 +95,7 @@ class BlockedRoadObservation:
         ended_within_budget,
     ):
         self.goal_reached = goal_reached
-        self.blockage_marked_lethal = blockage_marked_lethal
+        self.blockage_closed_in_costmap = blockage_closed_in_costmap
         self.planner_reported_no_path = planner_reported_no_path
         self.final_speed = final_speed
         self.recoveries = recoveries
@@ -108,7 +115,7 @@ def evaluate(observation, criteria):
         # blocking, which makes the run measure nothing regardless of how
         # safely it was driven.
         "goal_not_reached": not observation.goal_reached,
-        "blockage_perceived": bool(observation.blockage_marked_lethal),
+        "blockage_perceived": bool(observation.blockage_closed_in_costmap),
         "planner_reported_no_path": bool(observation.planner_reported_no_path),
         "robot_at_rest": observation.final_speed <= criteria.rest_speed,
         "kept_clearance": (

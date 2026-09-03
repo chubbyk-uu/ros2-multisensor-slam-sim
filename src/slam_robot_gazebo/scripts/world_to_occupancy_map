@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+
+"""
+Rasterise a static Gazebo world into the occupancy map Nav2 loads.
+
+The blocked-road regression needs a map whose walls are exactly the world's
+walls. Driving a mapping run to produce one would make the acceptance depend on
+how well that particular run happened to go, and would have to be redone by
+hand every time the world changes. Reading the world instead makes the map a
+function of the geometry, so the two cannot drift apart.
+
+Only free space the robot could actually reach is marked free. Everything the
+robot could not get to -- outside the room, inside sealed structure -- stays
+unknown, because a map that claims knowledge of unvisited space would let the
+planner route through walls it has never seen.
+
+This is deliberately not a substitute for a recorded map when the point is to
+test mapping. It is for scenarios where the map is an input, not the subject.
+"""
+
+import argparse
+import math
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ElementTree
+
+FREE = 254
+OCCUPIED = 0
+UNKNOWN = 205
+
+
+def box_collisions(world_path):
+    """Yield (centre_x, centre_y, size_x, size_y, yaw) for every static box."""
+    root = ElementTree.parse(world_path).getroot()
+    world = root.find("world")
+    if world is None:
+        raise ValueError(f"{world_path} contains no <world>")
+    for model in world.findall("model"):
+        if (model.findtext("static") or "false").strip() != "true":
+            continue
+        model_pose = parse_pose(model.findtext("pose"))
+        for link in model.findall("link"):
+            link_pose = parse_pose(link.findtext("pose"))
+            for collision in link.findall("collision"):
+                size = collision.findtext("geometry/box/size")
+                if size is None:
+                    continue
+                pose = parse_pose(collision.findtext("pose"))
+                dimensions = [float(value) for value in size.split()]
+                yield (
+                    model_pose[0] + link_pose[0] + pose[0],
+                    model_pose[1] + link_pose[1] + pose[1],
+                    dimensions[0],
+                    dimensions[1],
+                    model_pose[2] + link_pose[2] + pose[2],
+                )
+
+
+def parse_pose(text):
+    """Return (x, y, yaw) from an SDF pose, defaulting to the identity."""
+    if not text:
+        return (0.0, 0.0, 0.0)
+    values = [float(value) for value in text.split()]
+    yaw = values[5] if len(values) >= 6 else 0.0
+    return (values[0], values[1], yaw)
+
+
+def rasterise(boxes, bounds, resolution):
+    minimum_x, minimum_y, maximum_x, maximum_y = bounds
+    width = int(math.ceil((maximum_x - minimum_x) / resolution))
+    height = int(math.ceil((maximum_y - minimum_y) / resolution))
+    grid = [[UNKNOWN] * width for _ in range(height)]
+    for centre_x, centre_y, size_x, size_y, yaw in boxes:
+        cosine = math.cos(yaw)
+        sine = math.sin(yaw)
+        # Walked in the box's own frame so a rotated box fills correctly
+        # rather than being approximated by its axis-aligned bounds.
+        steps_x = max(1, int(math.ceil(size_x / (resolution / 2.0))))
+        steps_y = max(1, int(math.ceil(size_y / (resolution / 2.0))))
+        for index_x in range(steps_x + 1):
+            local_x = -size_x / 2.0 + size_x * index_x / steps_x
+            for index_y in range(steps_y + 1):
+                local_y = -size_y / 2.0 + size_y * index_y / steps_y
+                x = centre_x + local_x * cosine - local_y * sine
+                y = centre_y + local_x * sine + local_y * cosine
+                column = int((x - minimum_x) / resolution)
+                row = int((y - minimum_y) / resolution)
+                if 0 <= column < width and 0 <= row < height:
+                    grid[row][column] = OCCUPIED
+    return grid, width, height
+
+
+def flood_free(grid, width, height, start_column, start_row):
+    """Mark everything reachable from the start as free, the rest unknown."""
+    if grid[start_row][start_column] == OCCUPIED:
+        raise ValueError("the flood-fill seed lies inside an obstacle")
+    stack = [(start_column, start_row)]
+    seen = {(start_column, start_row)}
+    while stack:
+        column, row = stack.pop()
+        grid[row][column] = FREE
+        for step_column, step_row in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            next_column = column + step_column
+            next_row = row + step_row
+            if not (0 <= next_column < width and 0 <= next_row < height):
+                continue
+            if (next_column, next_row) in seen:
+                continue
+            if grid[next_row][next_column] == OCCUPIED:
+                continue
+            seen.add((next_column, next_row))
+            stack.append((next_column, next_row))
+    return len(seen)
+
+
+def write_pgm(path, grid, width, height):
+    with open(path, "wb") as handle:
+        handle.write(f"P5\n{width} {height}\n255\n".encode("ascii"))
+        # PGM rows run top to bottom; the occupancy grid runs bottom to top.
+        for row in reversed(range(height)):
+            handle.write(bytes(grid[row]))
+
+
+def write_yaml(path, image_name, resolution, minimum_x, minimum_y):
+    path.write_text(
+        f"image: {image_name}\n"
+        f"mode: trinary\n"
+        f"resolution: {resolution}\n"
+        f"origin: [{minimum_x}, {minimum_y}, 0]\n"
+        f"negate: 0\n"
+        f"occupied_thresh: 0.65\n"
+        f"free_thresh: 0.196\n",
+        encoding="utf-8",
+    )
+
+
+def parse_arguments(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("world", help="World SDF to rasterise.")
+    parser.add_argument("output", help="Output map basename, without suffix.")
+    parser.add_argument("--resolution", type=float, default=0.05)
+    parser.add_argument("--margin", type=float, default=0.5)
+    parser.add_argument("--seed-x", type=float, default=0.0)
+    parser.add_argument("--seed-y", type=float, default=0.0)
+    return parser.parse_args(argv)
+
+
+def main():
+    arguments = parse_arguments(sys.argv[1:])
+    boxes = list(box_collisions(arguments.world))
+    if not boxes:
+        raise SystemExit(f"{arguments.world} contains no static box collisions")
+    extents = []
+    for centre_x, centre_y, size_x, size_y, yaw in boxes:
+        # Axis-aligned half extents of a possibly rotated box. Using the
+        # diagonal for both axes instead would inflate a long thin wall's
+        # bounding box by its own length and quadruple the map.
+        cosine = abs(math.cos(yaw))
+        sine = abs(math.sin(yaw))
+        reach_x = (size_x * cosine + size_y * sine) / 2.0
+        reach_y = (size_x * sine + size_y * cosine) / 2.0
+        extents.append((centre_x - reach_x, centre_y - reach_y,
+                        centre_x + reach_x, centre_y + reach_y))
+    bounds = (
+        min(item[0] for item in extents) - arguments.margin,
+        min(item[1] for item in extents) - arguments.margin,
+        max(item[2] for item in extents) + arguments.margin,
+        max(item[3] for item in extents) + arguments.margin,
+    )
+    grid, width, height = rasterise(boxes, bounds, arguments.resolution)
+    column = int((arguments.seed_x - bounds[0]) / arguments.resolution)
+    row = int((arguments.seed_y - bounds[1]) / arguments.resolution)
+    free_cells = flood_free(grid, width, height, column, row)
+
+    output = Path(arguments.output)
+    write_pgm(output.with_suffix(".pgm"), grid, width, height)
+    write_yaml(
+        output.with_suffix(".yaml"),
+        output.with_suffix(".pgm").name,
+        arguments.resolution,
+        round(bounds[0], 3),
+        round(bounds[1], 3),
+    )
+    occupied = sum(row.count(OCCUPIED) for row in grid)
+    print(
+        f"{output.name}: {width}x{height} cells at {arguments.resolution} m, "
+        f"{occupied} occupied, {free_cells} reachable free",
+        flush=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

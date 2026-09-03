@@ -56,6 +56,14 @@ def generate_launch_description():
                 description="Absolute path to the Gazebo world file.",
             ),
             DeclareLaunchArgument(
+                "world_name",
+                default_value="slam_world",
+                description=(
+                    "The <world name> inside the world file; Gazebo's entity "
+                    "services are namespaced by it."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "map",
                 default_value=str(Path.cwd() / "maps" / "slam_map.yaml"),
                 description="Absolute path to the saved map YAML.",
@@ -115,6 +123,7 @@ def generate_launch_description():
                         PythonLaunchDescriptionSource(simulation_launch),
                         launch_arguments={
                             "world": world,
+                            "world_name": LaunchConfiguration("world_name"),
                             "gui": gui,
                             "rviz": "false",
                             "use_wsl_gpu": use_wsl_gpu,

@@ -20,7 +20,7 @@ def observation(**overrides):
     """Build a run that recognised the blockage and stopped safely."""
     fields = {
         "goal_reached": False,
-        "blockage_marked_lethal": True,
+        "blockage_closed_in_costmap": True,
         "planner_reported_no_path": True,
         "final_speed": 0.0,
         "recoveries": 2,
@@ -53,7 +53,10 @@ def test_not_colliding_is_not_enough_on_its_own():
     # A robot that never saw the wall and stopped for an unrelated reason
     # satisfies "did not reach the goal and did not crash". All three of
     # perception, planning and motion must show positive evidence.
-    blind = observation(blockage_marked_lethal=False)
+    # "Perceived" means the costmap shows no traversable gap, not that some
+    # lethal cell appeared: a partly observed barrier leaves a slit the
+    # planner will rightly keep trying.
+    blind = observation(blockage_closed_in_costmap=False)
     unplanned = observation(planner_reported_no_path=False)
     still_moving = observation(final_speed=0.4)
 
@@ -114,7 +117,7 @@ def test_only_the_recovery_ceiling_may_be_blamed_on_a_busy_host():
     # A slow host can plausibly drive extra recovery attempts. It cannot make
     # the robot fail to perceive a wall, or drive it into one.
     for field, value in (
-        ("blockage_marked_lethal", False),
+        ("blockage_closed_in_costmap", False),
         ("planner_reported_no_path", False),
         ("final_speed", 0.4),
         ("minimum_blockage_distance", 0.05),
@@ -155,7 +158,7 @@ def test_every_criterion_is_reported_not_just_the_first_failure():
     # one does not look like a fix for the run.
     verdict, checks = evaluate(
         observation(
-            blockage_marked_lethal=False,
+            blockage_closed_in_costmap=False,
             planner_reported_no_path=False,
             recoveries=0,
         ),

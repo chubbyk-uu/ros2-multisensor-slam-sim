@@ -102,6 +102,25 @@ GICP 复核、后台 SE(2) 图优化和地图重建均完成，而不阻塞 10 H
 [large_warehouse](results/2026-08-12-verification-large_warehouse-campaign.json)。
 活动验收的设计、标定限制和门限解释见[验证方法](methodology.md)。
 
+## 动态障碍与完全封路
+
+两个场景的判据相反，必须分开读。可绕行的动态障碍要求到达目标且无碰撞；完全封路要求
+目标**不**被到达、机器人安全停下。后者通过不需要新的 verdict 类别：
+`PASS`/`FAIL`/`INFRA_UNSTABLE` 已分区完备，“正确地失败”是封路场景的通过判据。
+
+封路验收在 `blocked_road_world` 中进行，其死胡同只有一个 `1.1 m` 门洞。八项检查全部
+通过：规划器给出 `NO_VALID_PATH`（`error_code=208`）、`30.7` 秒内结束（预算 `180` 秒）、
+末速 `0.000 m/s`、最小间距 `1.014 m`、门洞缺口 `0.00 m`、恢复 15 次（下限 1、上限 18）。
+结果 JSON 为
+[`2026-09-03-blocked-road.json`](results/2026-09-03-blocked-road.json)。
+
+同一份结果记录了负向对照：把封口移开门洞 `1.5 m`、其余不变，`goal_not_reached`、
+`planner_reported_no_path`、`robot_at_rest` 和 `recovery_floor` 四项核心检查同时失败。
+没有它，通过只能说明这次跑成了，不能说明判据在区分什么。
+
+尚未覆盖：3D 链路既无封路场景也无动态障碍场景；本结论也不适用于超出机器人单次视野的
+封路，原因见[工程事件](incidents.md#代价地图会忘记看不见的封路)。
+
 ## 启动与故障注入验收
 
 五个复合 3D launch 入口均有无界面冒烟检查，验证作用域、关键节点持续在线、
