@@ -118,6 +118,7 @@ def generate_launch_description():
         arguments=[
             "--label", stack,
             "--output", LaunchConfiguration("trajectory_output"),
+            "--process-match", "/point_cloud_preprocessor_node",
             "--process-match", "/scan_to_map_odometry_node",
             "--wall-timeout", LaunchConfiguration("wall_timeout"),
         ],

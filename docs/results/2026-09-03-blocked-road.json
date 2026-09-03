@@ -1,6 +1,7 @@
 {
   "checks": {
-    "blockage_closed_in_costmap": true,
+    "blockage_perceived": true,
+    "collision_free": true,
     "ended_within_budget": true,
     "goal_not_reached": true,
     "kept_clearance": true,
@@ -10,18 +11,20 @@
     "robot_at_rest": true
   },
   "date": "2026-09-03",
-  "elapsed_sim_seconds": 30.7,
+  "elapsed_sim_seconds": 30.1,
   "give_up_budget_sim_seconds": 180.0,
   "limits": [
     "One run of each. The scenario is deterministic in geometry but Nav2's recovery count varies between runs; 15 was observed against a ceiling of 18 derived from the behaviour tree, which is not a wide margin.",
     "blocked_road_world exists because slam_world cannot host this test: see docs/incidents.md on the costmap forgetting a blockage it cannot hold in view. The result therefore says nothing about blockages larger than the robot's sensor footprint.",
-    "2D chain only. The 3D chains have neither this scenario nor the dynamic obstacle one."
+    "2D chain only. The 3D chains have neither this scenario nor the dynamic obstacle one.",
+    "Gazebo exited with SIGSEGV during teardown after the verdict and entity cleanup; no scoped process remained. This known external teardown fault did not change the run verdict."
   ],
   "map": "maps/reference/blocked_road_map.yaml",
   "measurements": {
     "collision_actions": 0,
     "final_speed_mps": 0.0,
-    "minimum_clearance_m": 1.014,
+    "minimum_base_centre_distance_m": 1.08,
+    "minimum_clearance_m": 0.744,
     "planner_error_code": 208,
     "planner_error_name": "NO_VALID_PATH",
     "recoveries": 15,
@@ -30,17 +33,19 @@
   "negative_control": {
     "core_failures": [
       "goal_not_reached",
+      "blockage_perceived",
       "planner_reported_no_path",
       "robot_at_rest",
       "recovery_floor"
     ],
-    "note": "The same run with the seal moved 1.5 m clear of the doorway, everything else unchanged. Without it a pass would not show that the criteria discriminate.",
+    "command": "ros2 launch slam_robot_navigation blocked_road_regression.launch.py seal_offset_x:=1.5",
+    "note": "The executable negative control moved the seal 1.5 m clear of the doorway, everything else unchanged. It printed VERDICT FAIL and ros2 launch returned non-zero. Without it a pass would not show that the criteria discriminate.",
     "verdict": "FAIL"
   },
   "regression": "navigation_regression.py --scenario blocked-road",
-  "schema_version": 1,
+  "schema_version": 2,
   "source_revision": {
-    "commit": "eaf80aab89d0c8d64714746e2d074d274b48cdfc",
+    "commit": "c0ac2a91c709d2f43e14086eface85a1efa51820",
     "dirty": true
   },
   "thresholds": {
@@ -49,6 +54,7 @@
     "maximum_recoveries_source": "navigate_to_pose_w_replanning_and_recovery.xml: six outer RecoveryNode retries, each able to drive one planner retry, one controller retry and one RoundRobin recovery action",
     "minimum_clearance_m": 0.2,
     "minimum_recoveries": 1,
+    "robot_circumscribed_radius_m": 0.336,
     "rest_speed_mps": 0.05
   },
   "verdict": "PASS",

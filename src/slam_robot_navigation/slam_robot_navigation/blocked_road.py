@@ -49,9 +49,9 @@ class BlockedRoadCriteria:
     """
     Thresholds for one blocked-road run.
 
-    `minimum_clearance` is a distance to the blockage, not a contact test:
-    waiting for an actual collision to be reported would accept a robot that
-    stopped by touching the wall.
+    `minimum_clearance` is the gap between the robot's conservative circular
+    envelope and the blockage. It is deliberately not the base-centre
+    distance: that quantity can remain positive after the body has collided.
     """
 
     def __init__(
@@ -91,7 +91,8 @@ class BlockedRoadObservation:
         planner_reported_no_path,
         final_speed,
         recoveries,
-        minimum_blockage_distance,
+        minimum_blockage_clearance,
+        collision_actions,
         ended_within_budget,
     ):
         self.goal_reached = goal_reached
@@ -99,7 +100,8 @@ class BlockedRoadObservation:
         self.planner_reported_no_path = planner_reported_no_path
         self.final_speed = final_speed
         self.recoveries = recoveries
-        self.minimum_blockage_distance = minimum_blockage_distance
+        self.minimum_blockage_clearance = minimum_blockage_clearance
+        self.collision_actions = collision_actions
         self.ended_within_budget = ended_within_budget
 
 
@@ -119,8 +121,11 @@ def evaluate(observation, criteria):
         "planner_reported_no_path": bool(observation.planner_reported_no_path),
         "robot_at_rest": observation.final_speed <= criteria.rest_speed,
         "kept_clearance": (
-            observation.minimum_blockage_distance >= criteria.minimum_clearance
+            observation.minimum_blockage_clearance >= criteria.minimum_clearance
         ),
+        # Collision Monitor interventions cover contacts and imminent unsafe
+        # motion anywhere on the route, not only at the test seal.
+        "collision_free": observation.collision_actions == 0,
         "recovery_floor": observation.recoveries >= criteria.minimum_recoveries,
         "recovery_ceiling": (
             observation.recoveries <= criteria.maximum_recoveries

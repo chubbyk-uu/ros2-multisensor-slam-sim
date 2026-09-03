@@ -29,6 +29,20 @@ from launch_ros.substitutions import FindPackageShare
 WORLD_NAME = "blocked_road_world"
 
 
+def shutdown_after_regression(event, _context):
+    """Propagate the scorer's result instead of turning every exit into 0."""
+    if event.returncode != 0:
+        raise RuntimeError(
+            "blocked-road regression exited with code "
+            f"{event.returncode}"
+        )
+    return [
+        EmitEvent(
+            event=Shutdown(reason="blocked-road regression passed")
+        )
+    ]
+
+
 def generate_launch_description():
     world = PathJoinSubstitution(
         [
@@ -67,6 +81,13 @@ def generate_launch_description():
             "--scenario", "blocked-road",
             "--world-name", WORLD_NAME,
             "--give-up-budget", LaunchConfiguration("give_up_budget"),
+            "--activation-timeout", LaunchConfiguration("activation_timeout"),
+            "--wall-watchdog-timeout",
+            LaunchConfiguration("wall_watchdog_timeout"),
+            "--dependency-grace", LaunchConfiguration("dependency_grace"),
+            "--robot-circumscribed-radius",
+            LaunchConfiguration("robot_circumscribed_radius"),
+            "--seal-offset-x", LaunchConfiguration("seal_offset_x"),
         ],
     )
     return LaunchDescription(
@@ -75,6 +96,17 @@ def generate_launch_description():
             DeclareLaunchArgument("gui", default_value="false"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("give_up_budget", default_value="180.0"),
+            DeclareLaunchArgument(
+                "activation_timeout", default_value="120.0"
+            ),
+            DeclareLaunchArgument(
+                "wall_watchdog_timeout", default_value="300.0"
+            ),
+            DeclareLaunchArgument("dependency_grace", default_value="15.0"),
+            DeclareLaunchArgument(
+                "robot_circumscribed_radius", default_value="0.336"
+            ),
+            DeclareLaunchArgument("seal_offset_x", default_value="0.0"),
             DeclareLaunchArgument(
                 "startup_delay",
                 default_value="50.0",
@@ -91,13 +123,7 @@ def generate_launch_description():
             RegisterEventHandler(
                 OnProcessExit(
                     target_action=regression,
-                    on_exit=[
-                        EmitEvent(
-                            event=Shutdown(
-                                reason="blocked-road regression finished"
-                            )
-                        )
-                    ],
+                    on_exit=shutdown_after_regression,
                 )
             ),
         ]

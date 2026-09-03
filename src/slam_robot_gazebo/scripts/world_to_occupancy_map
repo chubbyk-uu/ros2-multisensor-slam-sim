@@ -16,6 +16,10 @@ planner route through walls it has never seen.
 
 This is deliberately not a substitute for a recorded map when the point is to
 test mapping. It is for scenarios where the map is an input, not the subject.
+
+Only static box collisions are rasterised. Plane geometry supplies the ground
+and is intentionally omitted; worlds containing other static obstacle shapes
+need an explicit converter extension before this tool is suitable for them.
 """
 
 import argparse
@@ -40,19 +44,31 @@ def box_collisions(world_path):
             continue
         model_pose = parse_pose(model.findtext("pose"))
         for link in model.findall("link"):
-            link_pose = parse_pose(link.findtext("pose"))
+            link_pose = compose_pose(
+                model_pose, parse_pose(link.findtext("pose"))
+            )
             for collision in link.findall("collision"):
+                geometry = collision.find("geometry")
                 size = collision.findtext("geometry/box/size")
                 if size is None:
-                    continue
-                pose = parse_pose(collision.findtext("pose"))
+                    if geometry is not None and geometry.find("plane") is not None:
+                        continue
+                    raise ValueError(
+                        "unsupported static obstacle geometry in "
+                        f"{model.get('name', '<unnamed>')}/"
+                        f"{link.get('name', '<unnamed>')}/"
+                        f"{collision.get('name', '<unnamed>')}"
+                    )
+                pose = compose_pose(
+                    link_pose, parse_pose(collision.findtext("pose"))
+                )
                 dimensions = [float(value) for value in size.split()]
                 yield (
-                    model_pose[0] + link_pose[0] + pose[0],
-                    model_pose[1] + link_pose[1] + pose[1],
+                    pose[0],
+                    pose[1],
                     dimensions[0],
                     dimensions[1],
-                    model_pose[2] + link_pose[2] + pose[2],
+                    pose[2],
                 )
 
 
@@ -63,6 +79,17 @@ def parse_pose(text):
     values = [float(value) for value in text.split()]
     yaw = values[5] if len(values) >= 6 else 0.0
     return (values[0], values[1], yaw)
+
+
+def compose_pose(parent, child):
+    """Compose two planar poses using SE(2), including rotated translation."""
+    cosine = math.cos(parent[2])
+    sine = math.sin(parent[2])
+    return (
+        parent[0] + child[0] * cosine - child[1] * sine,
+        parent[1] + child[0] * sine + child[1] * cosine,
+        parent[2] + child[2],
+    )
 
 
 def rasterise(boxes, bounds, resolution):

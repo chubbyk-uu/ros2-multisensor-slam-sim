@@ -108,14 +108,16 @@ GICP 复核、后台 SE(2) 图优化和地图重建均完成，而不阻塞 10 H
 目标**不**被到达、机器人安全停下。后者通过不需要新的 verdict 类别：
 `PASS`/`FAIL`/`INFRA_UNSTABLE` 已分区完备，“正确地失败”是封路场景的通过判据。
 
-封路验收在 `blocked_road_world` 中进行，其死胡同只有一个 `1.1 m` 门洞。八项检查全部
-通过：规划器给出 `NO_VALID_PATH`（`error_code=208`）、`30.7` 秒内结束（预算 `180` 秒）、
-末速 `0.000 m/s`、最小间距 `1.014 m`、门洞缺口 `0.00 m`、恢复 15 次（下限 1、上限 18）。
+封路验收在 `blocked_road_world` 中进行，其死胡同只有一个 `1.1 m` 门洞。九项检查全部
+通过：规划器给出 `NO_VALID_PATH`（`error_code=208`）、`30.1` 秒内结束（预算 `180` 秒）、
+末速 `0.000 m/s`、中心到封口最小距离 `1.080 m`，扣除机器人 `0.336 m` 外接圆后净空
+`0.744 m`、门洞缺口 `0.00 m`、恢复 15 次（下限 1、上限 18）、碰撞监视器介入 0 次。
 结果 JSON 为
 [`2026-09-03-blocked-road.json`](results/2026-09-03-blocked-road.json)。
 
-同一份结果记录了负向对照：把封口移开门洞 `1.5 m`、其余不变，`goal_not_reached`、
-`planner_reported_no_path`、`robot_at_rest` 和 `recovery_floor` 四项核心检查同时失败。
+同一份结果记录了可执行负向对照：以 `seal_offset_x:=1.5` 把封口移开门洞、其余不变，
+launch 返回非零，且 `goal_not_reached`、`blockage_perceived`、
+`planner_reported_no_path`、`robot_at_rest` 和 `recovery_floor` 五项核心检查同时失败。
 没有它，通过只能说明这次跑成了，不能说明判据在区分什么。
 
 尚未覆盖：3D 链路既无封路场景也无动态障碍场景；本结论也不适用于超出机器人单次视野的

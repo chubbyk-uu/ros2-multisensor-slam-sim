@@ -152,6 +152,11 @@ ros2 run slam_robot_slam_3d stack_comparison_report \
 `stack_trajectory_census` 记录另外三维：相对真值的轨迹漂移、回环事件和资源开销。
 只看投影时仍可直接用 `map_projection_compare` 比两份普查。
 
+资源采样按 `/proc/<pid>/cmdline` 的可执行文件字段定位进程，不扫描参数文本；自研链路聚合
+`point_cloud_preprocessor_node` 与 `scan_to_map_odometry_node`，RTAB-Map 则采样其单一
+`rtabmap` 进程。报告若找不到唯一目标或运行中丢失任一进程，会把资源行标为缺失/部分，
+不会静默换成另一个旧实例。
+
 三处设计决定了两条链路是否真的可比：
 
 - **各自锚定自身首样本。** map 系与真值原点无关，不锚定得到的是原点偏移而不是

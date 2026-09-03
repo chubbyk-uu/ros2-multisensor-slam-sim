@@ -21,7 +21,8 @@
     "Three runs per profile. The ranges are what three replays showed, not a confidence interval.",
     "One dataset and one trajectory. structured_loop_3d is a closed two-lap loop; a route without revisits would not exercise loop closure at all.",
     "RTAB-Map was not retuned beyond the detection-rate probe recorded in the superseded result; its front end may do better under a configuration not tried here.",
-    "Turning proximity off removes RTAB-Map's only loop source but its neighbour-link refinement remains, so rtabmap_noloop is its front end as configured, not a bare scan matcher."
+    "Turning proximity off removes RTAB-Map's only loop source but its neighbour-link refinement remains, so rtabmap_noloop is its front end as configured, not a bare scan matcher.",
+    "The custom resource sampler covered scan_to_map_odometry_node only and omitted point_cloud_preprocessor_node. Custom CPU and RSS are historical lower bounds; the reported trajectory and loop distributions remain valid."
   ],
   "method": "Three replays per profile through map_projection_comparison.launch.py, all at the same revision. Every run consumes byte-identical sensor data and the same recorded odometry. Each trajectory is anchored to its own first sample and the estimate is read at the ground-truth stamp. The centre reported is the median with the observed range, because fixed input does not fix asynchronous loop verification and commit ordering.",
   "playback_rate": 1.0,

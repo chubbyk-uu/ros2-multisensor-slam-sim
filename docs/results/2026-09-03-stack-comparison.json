@@ -15,7 +15,7 @@
   "date": "2026-09-03",
   "findings": [
     "Both stacks improve on the recorded odometry: the custom stack cuts position RMSE 14.1x and RTAB-Map 4.9x.",
-    "Raising Rtabmap/DetectionRate from 1.0 to 10.0 alone makes RTAB-Map worse, not better: position RMSE 0.0325 -> 0.0769 m, RSS 818 -> 1658 MiB, mean CPU 19.9 -> 65.5%. The shipped 1 Hz configuration is therefore not a handicap, and the accuracy difference against it is not an artefact of processing rate.",
+    "Raising Rtabmap/DetectionRate from 1.0 to 10.0 alone makes RTAB-Map worse with every other tested parameter unchanged: position RMSE 0.0325 -> 0.0769 m, RSS 818 -> 1658 MiB, mean CPU 19.9 -> 65.5%. This one-factor probe does not establish that 1 Hz is optimal or rule out a higher-rate configuration with other parameters retuned.",
     "Resident memory alone understates RTAB-Map's map cost: it holds 60 MiB more on disk that never appears in RSS.",
     "The two projections agree on navigable space to within 3%, so the accuracy difference does not show up as a coverage difference."
   ],
@@ -23,7 +23,8 @@
     "One run per profile. Loop-event counts and the error ratios are single measurements, not distributions, and docs/methodology.md requires a distribution before either is treated as stable.",
     "Fixed input does not guarantee identical asynchronous commit ordering, so loop counts may vary between runs of the same profile.",
     "RTAB-Map was not otherwise retuned for accuracy; only the detection rate and movement gating were varied.",
-    "Front-end drift is not isolated: both stacks ran with loop closure enabled, so these errors are whole-system, not front-end only."
+    "Front-end drift is not isolated: both stacks ran with loop closure enabled, so these errors are whole-system, not front-end only.",
+    "The custom resource sampler covered scan_to_map_odometry_node only and omitted point_cloud_preprocessor_node. Custom CPU and RSS are therefore historical lower bounds, not full-stack costs; trajectory, grid and loop measurements are unaffected."
   ],
   "method": "One replay per profile through map_projection_comparison.launch.py. Every profile consumes byte-identical sensor data and the same recorded odometry, so trajectory, exploration policy and real-time factor are not variables. Each trajectory is anchored to its own first sample and the estimate is read at the ground-truth stamp.",
   "playback_rate": 1.0,

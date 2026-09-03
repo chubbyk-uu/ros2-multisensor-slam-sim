@@ -2,17 +2,19 @@
 
 import argparse
 import math
+import sys
 import time
 
-import rclpy
-from lifecycle_msgs.srv import GetState
-from rclpy.action import ActionClient
-from rclpy.parameter import Parameter
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
-from nav2_msgs.action import ComputePathToPose
+from lifecycle_msgs.srv import GetState
+from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav2_msgs.msg import CollisionMonitorState
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from nav_msgs.msg import OccupancyGrid, Odometry
+import rclpy
+from rclpy.action import ActionClient
+from rclpy.parameter import Parameter
+from rclpy.utilities import remove_ros_args
 from ros_gz_interfaces.msg import Entity
 from ros_gz_interfaces.srv import DeleteEntity, SpawnEntity
 from slam_robot_navigation.blocked_road import (
@@ -54,8 +56,9 @@ DYNAMIC_GOAL = (-4.0, -1.0, math.pi)
 # Sealing partition_a's two doorways fails differently: it leaves the goal
 # reachable round the south of the room and up through the 0.30 m gap at
 # partition_d's west end. That gap is narrower than the robot, but the
-# inflation layer marks its centre 253 rather than 254 and NavFn refuses only
-# 254, so the planner keeps routing through it.
+# discretised costmap and planner still admit a route through it. An earlier
+# investigation incorrectly blamed a 253/254 threshold: Jazzy NavFn treats
+# 253 as an obstacle too. The exact grid/inflation interaction was not isolated.
 #
 # Sealing the north-east pocket's two openings fails for the reason recorded in
 # docs/incidents.md: they lie about 3.5 m apart, beyond obstacle_max_range
@@ -75,6 +78,14 @@ BLOCKED_ROAD_SEAL_HEIGHT = 1.2
 # Distance from the start pose after which the robot counts as committed to
 # the route, and the seal appears.
 BLOCKED_ROAD_COMMIT_DISTANCE = 1.0
+DEPENDENCY_FAILURES = {
+    "GAZEBO_SERVICES_UNAVAILABLE",
+    "NAV2_GOAL_RESPONSE_TIMEOUT",
+    "NAV2_RUNTIME_LOST",
+    "PLANNER_UNAVAILABLE",
+    "SPAWN_FAILED",
+    "WALL_WATCHDOG_TIMEOUT",
+}
 
 
 def blocked_road_seal_sdf(name, size_x, size_y):
@@ -106,6 +117,8 @@ def distance_to_seal(x, y, seal):
     dx = max(abs(x - centre_x) - size_x / 2.0, 0.0)
     dy = max(abs(y - centre_y) - size_y / 2.0, 0.0)
     return math.hypot(dx, dy)
+
+
 DYNAMIC_OBSTACLE_NAME = "navigation_test_obstacle"
 DYNAMIC_OBSTACLE_X = -1.35
 DYNAMIC_OBSTACLE_Y = -0.34
@@ -131,11 +144,15 @@ DYNAMIC_OBSTACLE_SDF = """
 
 
 class NavigationRegression:
-    def __init__(self, navigator, world_name):
+    def __init__(self, navigator, world_name, seal_offset_x=0.0):
         self.navigator = navigator
         # The Gazebo entity services are namespaced by world, and the
         # blocked-road scenario runs in a different world from the others.
         self.world_name = world_name
+        self.blocked_road_seals = tuple(
+            (name, x + seal_offset_x, y, size_x, size_y)
+            for name, x, y, size_x, size_y in BLOCKED_ROAD_SEALS
+        )
         self.latest_amcl_pose = None
         self.collision_actions = 0
         self.last_collision_action = CollisionMonitorState.DO_NOTHING
@@ -288,6 +305,9 @@ class NavigationRegression:
         width = message.info.width
         height = message.info.height
         widest = 0.0
+        # Perception is always scored at the real doorway. The negative
+        # control moves the spawned seal, not the place whose closure the
+        # robot is supposed to perceive.
         for seal in BLOCKED_ROAD_SEALS:
             _, centre_x, centre_y, size_x, size_y = seal
             along_y = size_y >= size_x
@@ -342,21 +362,21 @@ class NavigationRegression:
         The criterion is about the planner, so the planner is asked.
         """
         if not self.path_client.wait_for_server(timeout_sec=timeout):
-            return False, "planner action server unavailable"
+            return None, "planner action server unavailable"
         request = ComputePathToPose.Goal()
         request.goal = goal_pose
         request.use_start = False
         send = self.path_client.send_goal_async(request)
         rclpy.spin_until_future_complete(self.navigator, send, timeout_sec=timeout)
         if not send.done() or send.result() is None:
-            return False, "planner did not accept the request"
+            return None, "planner did not accept the request"
         handle = send.result()
         if not handle.accepted:
-            return False, "planner rejected the request"
+            return None, "planner rejected the request"
         finish = handle.get_result_async()
         rclpy.spin_until_future_complete(self.navigator, finish, timeout_sec=timeout)
         if not finish.done() or finish.result() is None:
-            return False, "planner did not return a result"
+            return None, "planner did not return a result"
         result = finish.result().result
         code = result.error_code
         if code == ComputePathToPose.Result.NO_VALID_PATH:
@@ -374,6 +394,39 @@ class NavigationRegression:
         else:
             detail = f"error_code={code} path is empty"
         return False, detail
+
+    def start_navigation_goal(self, pose, response_timeout):
+        """Start NavigateToPose without BasicNavigator's unbounded waits."""
+        client = self.navigator.nav_to_pose_client
+        if not client.wait_for_server(timeout_sec=response_timeout):
+            return False, "NAV2_GOAL_RESPONSE_TIMEOUT"
+        request = NavigateToPose.Goal()
+        request.pose = pose
+        send = client.send_goal_async(
+            request, self.navigator._feedbackCallback
+        )
+        rclpy.spin_until_future_complete(
+            self.navigator, send, timeout_sec=response_timeout
+        )
+        if not send.done() or send.result() is None:
+            return False, "NAV2_GOAL_RESPONSE_TIMEOUT"
+        self.navigator.goal_handle = send.result()
+        if not self.navigator.goal_handle.accepted:
+            return False, "NAV2_GOAL_RESPONSE_TIMEOUT"
+        self.navigator.result_future = (
+            self.navigator.goal_handle.get_result_async()
+        )
+        return True, None
+
+    def cancel_navigation(self, timeout=5.0):
+        """Best-effort bounded cancellation for dependency-failure paths."""
+        handle = self.navigator.goal_handle
+        if handle is None:
+            return
+        future = handle.cancel_goal_async()
+        rclpy.spin_until_future_complete(
+            self.navigator, future, timeout_sec=timeout
+        )
 
     def make_pose(self, x, y, yaw):
         pose = PoseStamped()
@@ -581,8 +634,8 @@ class NavigationRegression:
         return deleted
 
     def spawn_blockage(self):
-        """Seal both doorways at once."""
-        for seal in BLOCKED_ROAD_SEALS:
+        """Seal the dedicated world's only doorway."""
+        for seal in self.blocked_road_seals:
             name, centre_x, centre_y, size_x, size_y = seal
             request = SpawnEntity.Request()
             request.entity_factory.name = name
@@ -610,7 +663,7 @@ class NavigationRegression:
         if not self.delete_client.service_is_ready():
             return False
         removed = True
-        for name, _, _, _, _ in BLOCKED_ROAD_SEALS:
+        for name, _, _, _, _ in self.blocked_road_seals:
             request = DeleteEntity.Request()
             request.entity.name = name
             request.entity.type = Entity.MODEL
@@ -626,7 +679,15 @@ class NavigationRegression:
             self.blockage_spawned = False
         return removed
 
-    def run_blocked_road(self, give_up_budget, criteria, inscribed_diameter):
+    def run_blocked_road(
+        self,
+        give_up_budget,
+        criteria,
+        inscribed_diameter,
+        robot_circumscribed_radius,
+        wall_watchdog_timeout,
+        dependency_grace,
+    ):
         """Seal the only route to the goal and score how the robot gives up."""
         if not self.wait_for_gazebo_services():
             return None, "GAZEBO_SERVICES_UNAVAILABLE"
@@ -634,7 +695,9 @@ class NavigationRegression:
 
         goal_pose = self.make_pose(*BLOCKED_ROAD_GOAL)
         start_simulation_time = self.simulation_time()
-        last_report_time = time.monotonic() - 5.0
+        start_wall_time = time.monotonic()
+        last_report_time = start_wall_time - 5.0
+        dependency_missing_since = None
         recoveries = 0
         ended_within_budget = True
         start_position = (0.0, 0.0)
@@ -646,16 +709,30 @@ class NavigationRegression:
 
         print(
             f"blocked-road goal: ({goal_pose.pose.position.x:.2f}, "
-            f"{goal_pose.pose.position.y:.2f}); both openings are sealed "
+            f"{goal_pose.pose.position.y:.2f}); the opening is sealed "
             f"once the robot has committed to the route",
             flush=True,
         )
-        if not self.navigator.goToPose(goal_pose):
-            return None, "REJECTED"
+        started, failure = self.start_navigation_goal(
+            goal_pose, dependency_grace
+        )
+        if not started:
+            return None, failure
 
         while not self.navigator.isTaskComplete():
             now = time.monotonic()
             elapsed = self.simulation_time() - start_simulation_time
+            if now - start_wall_time > wall_watchdog_timeout:
+                self.cancel_navigation()
+                return None, "WALL_WATCHDOG_TIMEOUT"
+
+            if self.navigator.nav_to_pose_client.server_is_ready():
+                dependency_missing_since = None
+            elif dependency_missing_since is None:
+                dependency_missing_since = now
+            elif now - dependency_missing_since > dependency_grace:
+                self.cancel_navigation()
+                return None, "NAV2_RUNTIME_LOST"
             feedback = self.navigator.getFeedback()
             if feedback is not None:
                 position = feedback.current_pose.pose.position
@@ -670,10 +747,10 @@ class NavigationRegression:
                     and travelled >= BLOCKED_ROAD_COMMIT_DISTANCE
                 ):
                     if not self.spawn_blockage():
-                        self.navigator.cancelTask()
+                        self.cancel_navigation()
                         return None, "SPAWN_FAILED"
                     print(
-                        f"  sealed both openings into the pocket while the "
+                        f"  sealed the opening into the pocket while the "
                         f"robot was at ({position.x:.2f}, {position.y:.2f})",
                         flush=True,
                     )
@@ -683,7 +760,7 @@ class NavigationRegression:
                         [self.minimum_blockage_distance]
                         + [
                             distance_to_seal(position.x, position.y, seal)
-                            for seal in BLOCKED_ROAD_SEALS
+                            for seal in self.blocked_road_seals
                         ]
                     )
 
@@ -692,7 +769,8 @@ class NavigationRegression:
                         f"  progress: position=({position.x:.2f}, "
                         f"{position.y:.2f}) recoveries={recoveries} "
                         f"widest_gap={self.narrowest_doorway_gap:.2f} m "
-                        f"clearance={self.minimum_blockage_distance:.2f} m "
+                        "centre_distance="
+                        f"{self.minimum_blockage_distance:.2f} m "
                         f"elapsed={elapsed:.0f}/{give_up_budget:.0f} sim s",
                         flush=True,
                     )
@@ -704,7 +782,7 @@ class NavigationRegression:
             # exactly the defect this scenario exists to catch.
             if elapsed > give_up_budget:
                 ended_within_budget = False
-                self.navigator.cancelTask()
+                self.cancel_navigation()
                 break
 
         goal_reached = (
@@ -713,7 +791,12 @@ class NavigationRegression:
             else False
         )
         no_path, planner_detail = self.planner_reports_no_path(goal_pose)
+        if no_path is None:
+            return None, "PLANNER_UNAVAILABLE"
         peak_speed = self.measure_rest_speed(2.0)
+        minimum_clearance = (
+            self.minimum_blockage_distance - robot_circumscribed_radius
+        )
 
         observation = BlockedRoadObservation(
             goal_reached=goal_reached,
@@ -723,7 +806,8 @@ class NavigationRegression:
             planner_reported_no_path=no_path,
             final_speed=peak_speed,
             recoveries=recoveries,
-            minimum_blockage_distance=self.minimum_blockage_distance,
+            minimum_blockage_clearance=minimum_clearance,
+            collision_actions=self.collision_actions,
             ended_within_budget=ended_within_budget,
         )
         verdict, checks = evaluate_blocked_road(observation, criteria)
@@ -882,7 +966,7 @@ class NavigationRegression:
         }
 
 
-def parse_arguments():
+def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(
         description="Run the project's Nav2 navigation regression scenarios."
     )
@@ -951,6 +1035,42 @@ def parse_arguments():
         help="Metres the robot must keep from the blockage (default: 0.20).",
     )
     parser.add_argument(
+        "--robot-circumscribed-radius",
+        type=float,
+        default=0.336,
+        help=(
+            "Conservative circular body envelope subtracted from the "
+            "base-centre-to-seal distance (default: 0.336)."
+        ),
+    )
+    parser.add_argument(
+        "--wall-watchdog-timeout",
+        type=float,
+        default=300.0,
+        help=(
+            "Steady-clock timeout for a blocked-road run, so a frozen /clock "
+            "cannot hang the regression (default: 300)."
+        ),
+    )
+    parser.add_argument(
+        "--dependency-grace",
+        type=float,
+        default=15.0,
+        help=(
+            "Steady-clock grace for action-server responses or loss "
+            "(default: 15)."
+        ),
+    )
+    parser.add_argument(
+        "--seal-offset-x",
+        type=float,
+        default=0.0,
+        help=(
+            "Move the test seal in x. Intended for the executable negative "
+            "control; normal acceptance uses zero (default: 0)."
+        ),
+    )
+    parser.add_argument(
         "--minimum-recoveries",
         type=int,
         default=1,
@@ -988,11 +1108,19 @@ def parse_arguments():
         default=0.05,
         help="Speed below which the robot counts as stopped (default: 0.05).",
     )
-    return parser.parse_args()
+    raw_arguments = sys.argv if argv is None else [sys.argv[0], *argv]
+    return parser.parse_args(remove_ros_args(raw_arguments)[1:])
 
 
 def main():
     args = parse_arguments()
+    for name, value in (
+        ("robot_circumscribed_radius", args.robot_circumscribed_radius),
+        ("wall_watchdog_timeout", args.wall_watchdog_timeout),
+        ("dependency_grace", args.dependency_grace),
+    ):
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be finite and positive")
     rclpy.init()
     navigator = BasicNavigator("navigation_regression")
     navigator.set_parameters(
@@ -1005,14 +1133,20 @@ def main():
             if args.scenario == "blocked-road"
             else "slam_world"
         )
-    regression = NavigationRegression(navigator, world_name)
+    regression = NavigationRegression(
+        navigator, world_name, seal_offset_x=args.seal_offset_x
+    )
 
     try:
         print("waiting for Nav2 and the AMCL initial pose...", flush=True)
         if not regression.wait_until_nav2_active(args.activation_timeout):
-            raise RuntimeError(
-                "Nav2 did not become active before the activation timeout"
+            print(
+                "summary: result=NAV2_ACTIVATION_TIMEOUT "
+                "failure_class=dependency_lost",
+                flush=True,
             )
+            print("VERDICT INFRA_UNSTABLE", flush=True)
+            raise SystemExit(2)
         if args.scenario == "multi-goal":
             print(f"sending {len(DEFAULT_ROUTE)} navigation poses", flush=True)
             result = regression.run(DEFAULT_ROUTE, args.timeout)
@@ -1036,11 +1170,32 @@ def main():
                 rest_speed=args.rest_speed,
             )
             report, aborted = regression.run_blocked_road(
-                args.give_up_budget, criteria, args.inscribed_diameter
+                args.give_up_budget,
+                criteria,
+                args.inscribed_diameter,
+                args.robot_circumscribed_radius,
+                args.wall_watchdog_timeout,
+                args.dependency_grace,
             )
             if report is None:
-                print(f"summary: result={aborted}", flush=True)
-                raise SystemExit(1)
+                failure_class = (
+                    "dependency_lost"
+                    if aborted in DEPENDENCY_FAILURES
+                    else "internal"
+                )
+                print(
+                    "summary: "
+                    f"result={aborted} "
+                    f"failure_class={failure_class}",
+                    flush=True,
+                )
+                verdict = (
+                    "INFRA_UNSTABLE"
+                    if aborted in DEPENDENCY_FAILURES
+                    else "FAIL"
+                )
+                print(f"VERDICT {verdict}", flush=True)
+                raise SystemExit(2 if verdict == "INFRA_UNSTABLE" else 1)
             observation = report["observation"]
             print(
                 "summary: "
@@ -1054,7 +1209,8 @@ def main():
                 f"({report['planner_detail']}) "
                 f"final_speed={observation.final_speed:.3f} m/s "
                 f"recoveries={observation.recoveries} "
-                f"clearance={observation.minimum_blockage_distance:.3f} m "
+                f"centre_distance={regression.minimum_blockage_distance:.3f} m "
+                f"clearance={observation.minimum_blockage_clearance:.3f} m "
                 f"ended_within_budget={observation.ended_within_budget} "
                 f"collision_actions={regression.collision_actions}",
                 flush=True,

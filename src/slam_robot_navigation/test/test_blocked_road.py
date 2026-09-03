@@ -5,6 +5,9 @@ Each test names the way a run could look correct while being wrong, because
 that is what these criteria exist to catch.
 """
 
+import importlib.util
+from pathlib import Path
+
 import pytest
 
 from slam_robot_navigation.blocked_road import (
@@ -24,7 +27,8 @@ def observation(**overrides):
         "planner_reported_no_path": True,
         "final_speed": 0.0,
         "recoveries": 2,
-        "minimum_blockage_distance": 0.45,
+        "minimum_blockage_clearance": 0.45,
+        "collision_actions": 0,
         "ended_within_budget": True,
     }
     fields.update(overrides)
@@ -72,7 +76,7 @@ def test_not_colliding_is_not_enough_on_its_own():
 
 def test_stopping_by_touching_the_wall_is_not_stopping_safely():
     verdict, checks = evaluate(
-        observation(minimum_blockage_distance=0.05),
+        observation(minimum_blockage_clearance=0.05),
         BlockedRoadCriteria(minimum_clearance=0.20),
     )
 
@@ -89,6 +93,15 @@ def test_giving_up_without_attempting_recovery_fails():
 
     assert verdict == "FAIL"
     assert "recovery_floor" in failed_checks(checks)
+
+
+def test_collision_monitor_intervention_is_a_core_failure():
+    verdict, checks = evaluate(
+        observation(collision_actions=1), BlockedRoadCriteria()
+    )
+
+    assert verdict == "FAIL"
+    assert "collision_free" in core_failures(checks)
 
 
 def test_recovering_without_end_fails():
@@ -120,7 +133,8 @@ def test_only_the_recovery_ceiling_may_be_blamed_on_a_busy_host():
         ("blockage_closed_in_costmap", False),
         ("planner_reported_no_path", False),
         ("final_speed", 0.4),
-        ("minimum_blockage_distance", 0.05),
+        ("minimum_blockage_clearance", 0.05),
+        ("collision_actions", 1),
         ("recoveries", 0),
         ("goal_reached", True),
         ("ended_within_budget", False),
@@ -171,3 +185,26 @@ def test_every_criterion_is_reported_not_just_the_first_failure():
         "planner_reported_no_path",
         "recovery_floor",
     }
+
+
+def test_navigation_regression_accepts_ros_node_arguments():
+    script = (
+        Path(__file__).parents[1] / "scripts" / "navigation_regression.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "navigation_regression_under_test", script
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    arguments = module.parse_arguments(
+        [
+            "--scenario",
+            "blocked-road",
+            "--ros-args",
+            "-r",
+            "__node:=navigation_regression",
+        ]
+    )
+
+    assert arguments.scenario == "blocked-road"

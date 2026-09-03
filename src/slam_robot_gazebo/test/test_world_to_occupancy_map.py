@@ -6,6 +6,7 @@ the ways a generated map could quietly claim more freedom than the world has.
 """
 
 from importlib.machinery import SourceFileLoader
+import math
 from pathlib import Path
 
 import pytest
@@ -102,13 +103,44 @@ def test_only_static_models_are_read():
     )) == []
 
 
+def test_unsupported_static_obstacles_are_rejected_not_silently_omitted(
+    tmp_path,
+):
+    world = tmp_path / "cylinder.sdf"
+    world.write_text(
+        """<sdf version="1.10"><world name="test">
+        <model name="m"><static>true</static><link name="l">
+          <collision name="c"><geometry><cylinder>
+            <radius>1</radius><length>1</length>
+          </cylinder></geometry></collision>
+        </link></model></world></sdf>""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsupported static obstacle"):
+        list(MODULE.box_collisions(world))
+
+
 def test_poses_compose_from_model_link_and_collision():
-    root = world_file(Path("/tmp"), [(1.0, 2.0, 0.5, 0.5, 0.0)])
+    root = Path("/tmp/world.sdf")
+    root.write_text(
+        """<sdf version="1.10"><world name="test">
+        <model name="m"><static>true</static>
+          <pose>10 20 0 0 0 1.5707963267948966</pose>
+          <link name="l"><pose>2 0 0 0 0 1.5707963267948966</pose>
+            <collision name="c"><pose>1 0 0 0 0 0.25</pose>
+              <geometry><box><size>0.5 0.5 1</size></box></geometry>
+            </collision>
+          </link>
+        </model></world></sdf>""",
+        encoding="utf-8",
+    )
     boxes = list(MODULE.box_collisions(root))
 
     assert len(boxes) == 1
-    assert boxes[0][0] == pytest.approx(1.0)
-    assert boxes[0][1] == pytest.approx(2.0)
+    assert boxes[0][0] == pytest.approx(9.0)
+    assert boxes[0][1] == pytest.approx(22.0)
+    assert boxes[0][4] == pytest.approx(math.pi + 0.25)
 
 
 def test_a_pose_with_no_rotation_fields_defaults_to_the_identity():

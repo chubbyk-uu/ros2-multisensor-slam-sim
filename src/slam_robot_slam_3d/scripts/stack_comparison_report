@@ -135,10 +135,16 @@ def warnings(reference, candidate):
             f"less of the replay."
         )
     for report in (reference, candidate):
-        if not (report.get("process") or {}).get("pid_found"):
+        process = report.get("process") or {}
+        if not process.get("pid_found"):
             lines.append(
                 f"  WARNING: {report['label']} was never located in /proc; its cost "
                 f"row is absent, not zero."
+            )
+        elif process.get("complete_process_set") is False:
+            lines.append(
+                f"  WARNING: {report['label']} did not retain its complete process "
+                f"set; its cost row is partial."
             )
     return lines
 

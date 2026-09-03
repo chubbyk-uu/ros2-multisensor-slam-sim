@@ -123,6 +123,20 @@ ros2 run slam_robot_navigation navigation_regression.py \
 ros2 launch slam_robot_navigation blocked_road_regression.launch.py
 ```
 
+正常场景要求终端打印 `VERDICT PASS` 且命令返回 0；评分进程异常或任一判据失败都会让
+launch 返回非零，不再出现“子进程失败但 ros2 launch 成功”的假绿。墙钟看门狗即使在
+`/clock` 停止时也会退出，并把 Nav2/Gazebo 依赖失活打印为 `INFRA_UNSTABLE`。
+
+判据的负向对照可直接执行，不需要临时编辑世界或脚本：
+
+```bash
+ros2 launch slam_robot_navigation blocked_road_regression.launch.py \
+  seal_offset_x:=1.5
+```
+
+它把封口移出门洞，预期打印 `VERDICT FAIL` 并返回非零；若仍然 PASS，说明验收判据没有
+真正区分封路行为。
+
 世界、`<world name>` 和地图必须彼此一致——Gazebo 的实体服务按世界名分命名空间，
 地图必须是由这个世界生成的那一张，其中世界名写错会静默失效（spawn 桥接指向不存在的
 服务）。因此三者在该 launch 里一起设定，调用方没有写错的机会。

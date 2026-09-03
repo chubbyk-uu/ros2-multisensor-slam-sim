@@ -98,18 +98,31 @@ def root_mean_square(values):
     return math.sqrt(sum(value * value for value in values) / len(values))
 
 
+def executable_matches(executable, match_token):
+    """Match only argv[0], never this sampler's command-line options."""
+    return match_token in executable
+
+
 class ProcessSampler:
-    """Sample one process's CPU and RSS out of /proc.
+    """Sample a complete process set's aggregate CPU and RSS out of /proc.
 
     `utime + stime` covers every thread, so a multi-threaded stack can and
     should report more than 100%. That is the quantity being compared: total
     CPU the stack consumes, not how well it fits on one core.
     """
 
-    def __init__(self, match_token):
-        self.match_token = match_token
+    def __init__(self, match_tokens):
+        if isinstance(match_tokens, str):
+            match_tokens = [match_tokens]
+        if not match_tokens:
+            raise ValueError("at least one process match token is required")
+        if len(set(match_tokens)) != len(match_tokens):
+            raise ValueError("process match tokens must be unique")
+        self.match_tokens = list(match_tokens)
         self.clock_ticks = os.sysconf("SC_CLK_TCK")
-        self.pid = None
+        self.pids = None
+        self.discovery_error = None
+        self.process_set_lost = False
         self.samples = 0
         self.first_cpu_seconds = None
         self.first_wall = None
@@ -120,26 +133,42 @@ class ProcessSampler:
         self.initial_rss_mb = None
         self.latest_rss_mb = None
         self.peak_rss_mb = 0.0
+        self.sum_process_peak_rss_mb = 0.0
         self.maximum_cpu_percent = 0.0
         self.next_sample_wall = 0.0
 
     def find(self):
+        candidates = {token: [] for token in self.match_tokens}
         for entry in Path("/proc").iterdir():
             if not entry.name.isdigit():
                 continue
+            pid = int(entry.name)
+            if pid == os.getpid():
+                continue
             try:
-                command = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
+                command = (entry / "cmdline").read_bytes().split(b"\0", 1)[0]
             except OSError:
                 continue
-            if self.match_token.encode() in command:
-                self.pid = int(entry.name)
-                return True
-        return False
+            executable = command.decode(errors="replace")
+            for token in self.match_tokens:
+                if executable_matches(executable, token):
+                    candidates[token].append(pid)
 
-    def read(self):
-        if self.pid is None:
-            return None
-        directory = Path("/proc") / str(self.pid)
+        problems = []
+        for token, matches in candidates.items():
+            if len(matches) != 1:
+                problems.append(f"{token}: expected 1 process, found {len(matches)}")
+        if problems:
+            self.discovery_error = "; ".join(problems)
+            return False
+        self.pids = {
+            token: matches[0] for token, matches in candidates.items()
+        }
+        self.discovery_error = None
+        return True
+
+    def read_process(self, pid):
+        directory = Path("/proc") / str(pid)
         try:
             stat_text = (directory / "stat").read_text()
             status_text = (directory / "status").read_text()
@@ -167,17 +196,26 @@ class ProcessSampler:
             return None
         return cpu_seconds, rss_mb, peak_mb
 
+    def read(self):
+        if self.pids is None:
+            return None
+        readings = [self.read_process(pid) for pid in self.pids.values()]
+        if any(reading is None for reading in readings):
+            self.process_set_lost = True
+            return None
+        return tuple(sum(values) for values in zip(*readings))
+
     def sample(self, force=False):
         now = time.monotonic()
         if not force and now < self.next_sample_wall:
             return
         self.next_sample_wall = now + 1.0
-        if self.pid is None and not self.find():
+        if self.pids is None and not self.find():
             return
         reading = self.read()
         if reading is None:
-            # The process exited; keep what was measured rather than resetting.
-            self.pid = None
+            # Keep the partial measurement but do not silently attach to a
+            # replacement process with reset CPU counters.
             return
         cpu_seconds, rss_mb, peak_mb = reading
         if self.first_cpu_seconds is None:
@@ -194,7 +232,14 @@ class ProcessSampler:
         self.latest_cpu_seconds = cpu_seconds
         self.latest_wall = now
         self.latest_rss_mb = rss_mb
-        self.peak_rss_mb = max(self.peak_rss_mb, peak_mb)
+        # The maximum of the simultaneous RSS sum is the process-set peak.
+        # Summing each process's independent VmHWM can combine peaks that did
+        # not occur together, so retain that only as an explicitly named
+        # upper bound.
+        self.peak_rss_mb = max(self.peak_rss_mb, rss_mb)
+        self.sum_process_peak_rss_mb = max(
+            self.sum_process_peak_rss_mb, peak_mb
+        )
         self.samples += 1
 
     def average_cpu_percent(self):
@@ -210,13 +255,22 @@ class ProcessSampler:
 
     def report(self):
         return {
-            "pid_found": self.pid is not None or self.samples > 0,
+            "pid_found": self.pids is not None or self.samples > 0,
+            "complete_process_set": self.pids is not None
+            and not self.process_set_lost,
+            "process_matches": self.match_tokens,
+            "pids": self.pids,
+            "discovery_error": self.discovery_error,
+            "process_set_lost": self.process_set_lost,
             "samples": self.samples,
             "average_cpu_percent": self.average_cpu_percent(),
             "maximum_cpu_percent": self.maximum_cpu_percent or None,
             "initial_rss_mb": self.initial_rss_mb,
             "final_rss_mb": self.latest_rss_mb,
             "peak_rss_mb": self.peak_rss_mb or None,
+            "sum_process_peak_rss_mb": (
+                self.sum_process_peak_rss_mb or None
+            ),
             "cpu_seconds": (
                 None
                 if self.first_cpu_seconds is None or self.latest_cpu_seconds is None
@@ -423,8 +477,11 @@ def parse_arguments(argv=None):
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--process-match",
-        default="scan_to_map_odometry_node",
-        help="Substring matched against /proc/<pid>/cmdline to find the stack.",
+        action="append",
+        help=(
+            "Substring matched against /proc/<pid>/cmdline argv[0]. Repeat "
+            "the option to aggregate every process in a multi-process stack."
+        ),
     )
     parser.add_argument("--info-topic", default="/rtabmap/info")
     parser.add_argument(
@@ -439,7 +496,10 @@ def parse_arguments(argv=None):
         default=15.0,
         help="Wall seconds without ground truth that end the replay.",
     )
-    return parser.parse_args(argv)
+    arguments = parser.parse_args(argv)
+    if arguments.process_match is None:
+        arguments.process_match = ["scan_to_map_odometry_node"]
+    return arguments
 
 
 def main():

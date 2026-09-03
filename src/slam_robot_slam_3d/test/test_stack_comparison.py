@@ -36,6 +36,7 @@ def trajectory_report(label, **overrides):
         "database_bytes": None,
         "process": {
             "pid_found": True,
+            "complete_process_set": True,
             "samples": 300,
             "average_cpu_percent": 48.2,
             "maximum_cpu_percent": 91.0,
@@ -93,6 +94,47 @@ def test_cpu_percent_is_absent_rather_than_zero_before_two_samples():
     assert sampler.report()["average_cpu_percent"] is None
 
 
+def test_process_matching_ignores_command_line_options():
+    # The census itself receives --process-match=/target. Searching the whole
+    # cmdline would therefore select the census process instead of /target.
+    assert TRAJECTORY.executable_matches("/opt/ros/lib/target", "/target")
+    assert not TRAJECTORY.executable_matches(
+        "/opt/ros/lib/stack_trajectory_census", "/target"
+    )
+
+
+def test_multi_process_sampling_sums_cpu_and_memory():
+    sampler = TRAJECTORY.ProcessSampler(["/preprocessor", "/matcher"])
+    sampler.pids = {"/preprocessor": 101, "/matcher": 202}
+    readings = {
+        101: (2.0, 100.0, 110.0),
+        202: (3.5, 220.0, 240.0),
+    }
+    sampler.read_process = readings.__getitem__
+
+    assert sampler.read() == pytest.approx((5.5, 320.0, 350.0))
+
+
+def test_repeated_process_match_options_define_the_whole_stack():
+    arguments = TRAJECTORY.parse_arguments(
+        [
+            "--output",
+            "/tmp/report.json",
+            "--process-match",
+            "/preprocessor",
+            "--process-match",
+            "/matcher",
+        ]
+    )
+
+    assert arguments.process_match == ["/preprocessor", "/matcher"]
+
+
+def test_duplicate_process_match_tokens_are_rejected():
+    with pytest.raises(ValueError, match="must be unique"):
+        TRAJECTORY.ProcessSampler(["/matcher", "/matcher"])
+
+
 def test_loop_events_are_rendered_without_a_ratio_column():
     # Committed pose-graph constraints and proximity detections count different
     # things, so a ratio between them would assert a comparison the numbers do
@@ -118,6 +160,18 @@ def test_an_unmeasured_stack_is_flagged_rather_than_scored_as_zero():
 
     assert "never located in /proc" in rendered
     assert "absent, not zero" in rendered
+
+
+def test_a_partial_process_set_is_flagged():
+    partial = trajectory_report("custom")
+    partial["process"] = dict(
+        partial["process"], complete_process_set=False
+    )
+
+    rendered = REPORT.render(partial, trajectory_report("rtabmap"))
+
+    assert "complete process set" in rendered
+    assert "cost row is partial" in rendered
 
 
 def test_a_stack_scored_over_less_of_the_replay_is_flagged():
