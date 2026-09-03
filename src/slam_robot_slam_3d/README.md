@@ -372,6 +372,41 @@ ros2 launch slam_robot_slam_3d structured_navigation_regression.launch.py
 `map -> odom` 修正，避免把局部里程计碰巧闭合误判为 SLAM 生效。后续相机
 接入用于增强全局地点识别，不是当前 3D 点云建图的启动前提。
 
+### 在线 RTAB-Map RGB-D
+
+启动 Gazebo、轮速 + IMU EKF、官方 RGB-D 同步器、RTAB-Map 和专用 RViz：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_rgbd_simulation.launch.py
+```
+
+该入口直接消费 `/camera/color/image_raw`、`/camera/depth/image_raw` 和
+`/camera/color/camera_info`，由 `rtabmap_sync/rgbd_sync` 生成原子
+`/rtabmap/rgbd_image`。RTAB-Map 订阅外部 `/odom`，不启动
+`rgbd_odometry`，因此 EKF 仍是 `odom -> base_footprint` 的唯一发布者，
+RTAB-Map 仍是 `map -> odom` 的唯一发布者。默认数据库为
+`~/.ros/rtabmap_rgbd.db`；继续已有地图时使用 `reset_database:=false`。
+
+配置使用 `Reg/Strategy=0` 的视觉注册和视觉词袋地点识别；二维导航候选图明确
+由深度图生成（`Grid/Sensor=1`）。3D LiDAR 仍随机器人生成，便于同视角检查和
+下一阶段融合，但不进入本基线的 RTAB-Map 输入。换言之，这是一条可对照的 RGB-D
+成熟链路，不是已经完成的 LiDAR—视觉融合。
+
+RGB-D 组合消息同样属于大消息，因此相机 bridge、`rgbd_sync` 和 RTAB-Map 均使用
+`fastdds_rgbd.xml`；可通过 `rgbd_dds_profiles_file:=...` 覆盖，或在启动前设置
+`FASTRTPS_DEFAULT_PROFILES_FILE`。默认不桥接 `/camera/depth/points`，避免无意义
+的稠密点云复制。
+
+无图形界面冒烟：
+
+```bash
+ros2 launch slam_robot_slam_3d rtabmap_rgbd_simulation.launch.py \
+  gui:=false rviz:=false
+```
+
+当前验收只证明在线数据链路、视觉关键帧、数据库、TF 和深度二维栅格工作；固定输入
+误差、视觉回环召回和完整活动闭环仍是下一阶段，不能由短程冒烟替代。
+
 ### 输入同步与 QoS
 
 `/odom` 和 `/lidar_3d/points` 由两条独立时钟链路打时间戳，因此配置使用

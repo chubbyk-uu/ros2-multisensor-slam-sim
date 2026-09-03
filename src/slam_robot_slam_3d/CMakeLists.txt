@@ -455,6 +455,10 @@ if(BUILD_TESTING)
     test/test_rtabmap_config.py
   )
   ament_add_pytest_test(
+    test_rtabmap_rgbd_config
+    test/test_rtabmap_rgbd_config.py
+  )
+  ament_add_pytest_test(
     test_large_cloud_transport
     test/test_large_cloud_transport.py
   )

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-03",
+  "base_commit": "642c144",
+  "dirty": true,
+  "commands": [
+    "ros2 launch slam_robot_slam_3d rtabmap_rgbd_simulation.launch.py gui:=false rviz:=false database_path:=/tmp/rtabmap_rgbd_smoke.db",
+    "ros2 launch slam_robot_slam_3d rtabmap_rgbd_simulation.launch.py gui:=false rviz:=false database_path:=/tmp/rtabmap_rgbd_grid.db"
+  ],
+  "inputs": {
+    "rgb": "/camera/color/image_raw",
+    "depth": "/camera/depth/image_raw",
+    "camera_info": "/camera/color/camera_info",
+    "odometry": "/odom",
+    "rgbd_sync_output": "/rtabmap/rgbd_image"
+  },
+  "configuration": {
+    "image_size": [640, 480],
+    "camera_rate_hz": 30.0,
+    "registration_strategy": "visual",
+    "odometry_source": "wheel_imu_ekf",
+    "occupancy_sensor": "depth",
+    "dense_pointcloud_bridge": false,
+    "independent_lidar_used_by_rtabmap": false,
+    "fastdds_profile": "slam_robot_gazebo/config/fastdds_rgbd.xml"
+  },
+  "online_pipeline_run": {
+    "rgbd_sync_rate_hz": 30.298,
+    "rtabmap_reference_id": 78,
+    "working_memory_nodes": 26,
+    "distance_travelled_m": 1.3847837448120117,
+    "loop_closure_id": 0,
+    "database_bytes": 7835648,
+    "rtabmap_total_time_ms_single_sample": 20.535707473754883,
+    "rtabmap_core_time_ms_single_sample": 19.285917282104492,
+    "map_update_time_ms_single_sample": 10.360956192016602
+  },
+  "occupancy_grid_run": {
+    "frame_id": "map",
+    "width": 178,
+    "height": 144,
+    "resolution_m": 0.05,
+    "known_cells": 9697,
+    "free_cells": 9424,
+    "occupied_cells": 273,
+    "contract": "PASS"
+  },
+  "checks": {
+    "rgbd_sync_node_alive": true,
+    "rtabmap_node_alive": true,
+    "map_to_odom_available": true,
+    "database_written": true,
+    "occupancy_grid_contract": true,
+    "residual_processes_after_shutdown": 0
+  },
+  "limits": [
+    "This is a short online smoke run, not a fixed-input accuracy or loop-closure regression.",
+    "No visual loop closure was expected or observed on the short trajectory.",
+    "The single RTAB-Map timing sample is not a latency distribution.",
+    "Gazebo Sim exited with the repository's known teardown-only -11 after shutdown."
+  ],
+  "verdict": "PASS"
+}

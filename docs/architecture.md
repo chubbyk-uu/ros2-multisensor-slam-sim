@@ -50,9 +50,9 @@ Gazebo 裸里程计和 IMU 消息不包含可用协方差。轻量适配节点�
 IMU 偏航角速度，不融合 IMU 绝对姿态或线加速度。
 
 RGB/Depth 与可选组织化点云分别由独立 bridge 承载；它们不与 `/clock`、里程计、
-IMU 或控制消息共用执行器。Fast DDS 下仅两个大消息 writer 使用 `64 MiB` SHM
-profile 并保留 UDPv4，reader 不重复承担大段分配；操作者显式提供的 DDS profile
-始终优先。
+IMU 或控制消息共用执行器。Fast DDS 下大消息 bridge 以及消费组合
+`RGBDImage` 的 `rgbd_sync`、RTAB-Map 使用 `64 MiB` SHM profile 并保留 UDPv4；
+通用小消息 bridge 不承担该配置，操作者显式提供的 DDS profile 始终优先。
 
 ## SLAM 与导航数据流
 
@@ -71,6 +71,12 @@ profile 并保留 UDPv4，reader 不重复承担大段分配；操作者显式�
   /lidar_3d/points + /odom -> RTAB-Map ICP + 回环 + 位姿图
     -> 3D MapData + /rtabmap/map + map -> odom
     -> Nav2 全局静态层
+
+RGB-D RTAB-Map 成熟链路
+  RGB + Depth + CameraInfo -> rtabmap_sync/rgbd_sync
+    -> RGBDImage + /odom -> RTAB-Map 视觉关键帧 + 词袋回环 + 位姿图
+    -> RGB-D MapData + 深度二维投影 /rtabmap/map + map -> odom
+  /lidar_3d/points -> 独立显示（本阶段不进入 RGB-D 算法输入）
 
 3D 自研链路
   /lidar_3d/points + /odom -> 预处理 + GICP 局部子图前端

@@ -41,6 +41,9 @@ ros2 launch slam_robot_bringup mapping_simulation.launch.py
 # RTAB-Map 3D 在线建图
 ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py
 
+# RTAB-Map RGB-D 在线基线（轮速 + IMU 提供局部里程计）
+ros2 launch slam_robot_slam_3d rtabmap_rgbd_simulation.launch.py
+
 # 自研 3D SLAM + Nav2 自主探索；完成后自动保存快照
 ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 ```
@@ -60,7 +63,8 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 | 自研 3D SLAM | 已完成首版闭环 | GICP 前端、Scan Context 回环、后台 SE(2) 位姿图、全局地图与版本化快照恢复 |
 | Frontier Exploration | 已完成双链路验收 | 自研与 RTAB-Map 共用候选评分、Nav2 调度、自动快照与安全随机出生 |
 | RGB-D 基础设施 | 已完成 | 前向模型、图像/深度/内参桥接、独立大消息 DDS 保护、RViz 与数据契约回归 |
-| 视觉融合 | 计划中 | 先接 RTAB-Map RGB-D 基线，再研究 3D LiDAR + 相机 + IMU |
+| RTAB-Map RGB-D 基线 | 在线链路已完成 | 官方 RGB-D 同步、视觉关键帧、深度投影地图与独立大消息 DDS 保护；固定输入和完整活动验收待补 |
+| 视觉融合 | 计划中 | 在 RGB-D 成熟基线上再研究 3D LiDAR + 相机 + IMU，不把独立 LiDAR 点云误称为已融合 |
 
 最近独立验证结果和下一项工作见[项目状态](docs/status.md)。完整系统数据流、包边界
 和 TF 拓扑以[系统架构](docs/architecture.md)为准。

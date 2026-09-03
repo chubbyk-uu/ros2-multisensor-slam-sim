@@ -156,6 +156,21 @@ RGB-D 基础验收不评价视觉 SLAM 精度，只证明后续算法收到的�
 已经定位过的“大样本分片耗尽默认 SHM 段”经验，但不把 climbot 的偶发停顿数据冒充
 成本项目的动态故障证据。
 
+## RTAB-Map RGB-D 在线基线
+
+两次短程活动冒烟使用官方 `rtabmap_sync/rgbd_sync`、外部轮速 + IMU `/odom` 和
+`rtabmap_slam/rtabmap`。同步后的 `/rtabmap/rgbd_image` 在 60 帧窗口稳定为
+`30.298 Hz`；机器人执行直行、旋转和再次直行后，RTAB-Map 到达节点 `78`，数据库
+为 `7,835,648 bytes`。`map -> odom` 可查询，且深度生成的 `/rtabmap/map` 通过
+现有栅格契约：`178 × 144 @ 0.05 m/cell`、已知 `9697`、自由 `9424`、占据
+`273` 个单元。
+
+这证明在线同步、视觉关键帧、数据库、TF 和深度投影链路已接通；短路线没有形成
+视觉回环（`loop_closure_id=0`），因此不能把本节当作回环召回、定位精度或完整
+场景覆盖验收。机器关闭阶段仍出现项目已知的 Gazebo Sim `exit -11` teardown
+现象，算法与评分节点在此之前已正常结束且无残留进程。结构化记录见
+[`2026-09-03-rtabmap-rgbd-smoke.json`](results/2026-09-03-rtabmap-rgbd-smoke.json)。
+
 ## 启动与故障注入验收
 
 五个复合 3D launch 入口均有无界面冒烟检查，验证作用域、关键节点持续在线、

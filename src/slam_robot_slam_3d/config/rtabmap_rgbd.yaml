@@ -1,0 +1,54 @@
+/**:
+  ros__parameters:
+    # The wheel+IMU EKF remains the sole odom -> base_footprint publisher.
+    # RTAB-Map consumes that local prediction and owns map -> odom.
+    use_sim_time: true
+    frame_id: base_footprint
+    map_frame_id: map
+    odom_frame_id: ""
+    publish_tf: true
+    subscribe_depth: false
+    subscribe_rgb: false
+    subscribe_rgbd: true
+    subscribe_scan: false
+    subscribe_scan_cloud: false
+    subscribe_odom_info: false
+    odom_sensor_sync: false
+    wait_for_transform: 0.20
+
+    # rgbd_sync produces one atomic RGBDImage, so RTAB-Map does not perform a
+    # second approximate synchronization step. Camera-side inputs remain
+    # best-effort sensor data; robot_localization publishes reliable odometry.
+    approx_sync: false
+    qos_image: 2
+    qos_odom: 1
+
+    # Keep the online load bounded. The camera publishes at 30 Hz, while the
+    # graph is intentionally updated at a lower keyframe rate.
+    Rtabmap/DetectionRate: "2.0"
+    RGBD/LinearUpdate: "0.10"
+    RGBD/AngularUpdate: "0.10"
+    RGBD/CreateOccupancyGrid: "true"
+    Mem/STMSize: "30"
+    Mem/NotLinkedNodesKept: "false"
+
+    # Official RGB-D registration path: visual features create neighbor and
+    # loop-closure constraints. Local motion still starts from external odom.
+    Reg/Strategy: "0"
+    Reg/Force3DoF: "true"
+    RGBD/ForceOdom3DoF: "true"
+    Kp/MaxFeatures: "500"
+    Vis/MaxFeatures: "500"
+
+    # Build the navigation projection from depth, not from the independent 3D
+    # LiDAR. The height band matches the verified 0.35 m robot plus 0.10 m.
+    Grid/Sensor: "1"
+    Grid/3D: "false"
+    Grid/DepthDecimation: "4"
+    Grid/CellSize: "0.05"
+    Grid/RangeMin: "0.20"
+    Grid/RangeMax: "6.0"
+    Grid/NormalsSegmentation: "false"
+    Grid/MaxGroundHeight: "0.05"
+    Grid/MaxObstacleHeight: "0.45"
+    Grid/RayTracing: "true"
