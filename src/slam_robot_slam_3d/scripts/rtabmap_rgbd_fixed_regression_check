@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+
+"""Judge a two-lap RTAB-Map RGB-D fixed replay from its JSON reports."""
+
+import argparse
+import json
+import math
+from pathlib import Path
+import sys
+
+
+def is_finite_number(value):
+    return isinstance(value, (int, float)) and math.isfinite(value)
+
+
+def finite_at_most(value, limit):
+    return is_finite_number(value) and value <= limit
+
+
+def finite_at_least(value, limit):
+    return is_finite_number(value) and value >= limit
+
+
+def evaluate(trajectory, grid, minimum_loop_closures=20):
+    process = trajectory.get("process", {})
+    visual_frames = trajectory.get("rtabmap_visual_frames", 0)
+    frames_with_words = trajectory.get("rtabmap_frames_with_visual_words", 0)
+    visual_coverage = frames_with_words / visual_frames if visual_frames else 0.0
+    checks = {
+        "complete_two_lap_input": (
+            trajectory.get("truth_distance_m", 0.0) >= 135.0
+            and trajectory.get("trajectory_samples", 0) >= 17000
+            and trajectory.get("input_odom_samples", 0) >= 17000
+        ),
+        "visual_features_observed": (
+            trajectory.get("rtabmap_info_messages", 0) >= 650
+            and visual_coverage >= 0.75
+            and trajectory.get("rtabmap_maximum_visual_inliers", 0) >= 25
+        ),
+        "visual_loop_closures_accepted": (
+            trajectory.get("rtabmap_loop_closure_events", 0)
+            >= minimum_loop_closures
+        ),
+        "trajectory_accuracy": (
+            finite_at_most(trajectory.get("rmse_position_error_m"), 0.50)
+            and finite_at_most(trajectory.get("peak_position_error_m"), 1.00)
+            and finite_at_most(trajectory.get("final_position_error_m"), 0.25)
+            and finite_at_most(trajectory.get("rmse_yaw_error_deg"), 2.0)
+            and finite_at_most(trajectory.get("peak_yaw_error_deg"), 5.0)
+        ),
+        "runtime_budget": (
+            process.get("complete_process_set") is True
+            and finite_at_most(
+                trajectory.get("rtabmap_processing_p95_ms"), 150.0
+            )
+            and finite_at_most(process.get("average_cpu_percent"), 150.0)
+            and finite_at_most(process.get("peak_rss_mb"), 1600.0)
+            and trajectory.get("database_bytes", 0) <= 350 * 1024 * 1024
+        ),
+        "navigation_projection": (
+            grid.get("updates", 0) >= 600
+            and grid.get("free_cells", 0) >= 65000
+            and grid.get("occupied_cells", 0) >= 2500
+            and finite_at_least(grid.get("known_bounding_box_m2"), 350.0)
+            and finite_at_most(grid.get("known_bounding_box_m2"), 480.0)
+        ),
+    }
+    input_rmse = trajectory.get("input_odom_rmse_position_error_m")
+    input_final = trajectory.get("input_odom_final_position_error_m")
+    slam_rmse = trajectory.get("rmse_position_error_m")
+    slam_final = trajectory.get("final_position_error_m")
+    if is_finite_number(input_rmse) and input_rmse > 0.20:
+        checks["improves_drifted_input_odometry"] = (
+            is_finite_number(input_final)
+            and input_final > 0.0
+            and is_finite_number(slam_rmse)
+            and is_finite_number(slam_final)
+            and slam_rmse <= 0.75 * input_rmse
+            and slam_final <= 0.25 * input_final
+        )
+    return checks, visual_coverage
+
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot read {path}: {error}") from error
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--trajectory", type=Path, required=True)
+    parser.add_argument("--map", dest="map_report", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--minimum-loop-closures", type=int, default=20)
+    arguments = parser.parse_args()
+    if arguments.minimum_loop_closures < 1:
+        parser.error("--minimum-loop-closures must be positive")
+
+    try:
+        trajectory = read_json(arguments.trajectory)
+        grid = read_json(arguments.map_report)
+    except ValueError as error:
+        print(f"FAIL: {error}", file=sys.stderr)
+        return 1
+
+    checks, visual_coverage = evaluate(
+        trajectory, grid, arguments.minimum_loop_closures
+    )
+    passed = all(checks.values())
+    result = {
+        "passed": passed,
+        "checks": checks,
+        "visual_feature_frame_fraction": visual_coverage,
+        "trajectory": trajectory,
+        "map": grid,
+    }
+    if arguments.output is not None:
+        arguments.output.parent.mkdir(parents=True, exist_ok=True)
+        arguments.output.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n"
+        )
+
+    print("RTAB-Map RGB-D fixed replay verdict")
+    for name, successful in checks.items():
+        print(f"  [{'PASS' if successful else 'FAIL'}] {name}")
+    print(
+        f"  loops={trajectory.get('rtabmap_loop_closure_events', 0)}, "
+        f"visual_coverage={visual_coverage:.3f}, "
+        f"rmse={trajectory.get('rmse_position_error_m')} m, "
+        f"input_odom_rmse={trajectory.get('input_odom_rmse_position_error_m')} m"
+    )
+    print("PASS: RGB-D fixed replay accepted" if passed else "FAIL: RGB-D fixed replay rejected")
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -155,3 +155,92 @@ ros2 launch slam_robot_slam_3d play_3d_slam_data.launch.py \
 
 参考包保留 Gazebo 点云原始字段 `x/y/z/intensity/ring`，仍没有逐点 `time`；
 因此它用于纯几何 3D SLAM、回环和地图回归，不用于声称完整 deskew/LIO 验证。
+
+## 结构化 RGB-D 多传感器参考包
+
+`structured_rgbd_reference` 固化同一结构化世界的一圈 `71.6 m` 路线，同时记录
+RGB-D、3D LiDAR、轮速、IMU、统一 `/odom`、静态外参和仅供评分的真值。它用于
+让 RGB-D、纯 LiDAR 及后续融合算法消费字节一致的运动与环境输入；任何一条算法
+只能订阅其声明的传感器，不能因为包中存在 LiDAR 就把 RGB-D 基线称为融合。
+
+相机在固定包中配置为 `640 × 480 @ 10 Hz`，低于在线默认 `30 Hz`。原因是组合
+原始 RGB + 32FC1 Depth 在 30 Hz 实测约 `65.6 MB/s`，一圈理论未压缩输入超过
+`11 GiB`；RTAB-Map 图更新仅为 `2 Hz`，10 Hz 已保留足够的时间采样余量。MCAP
+使用 `zstd_fast`：运动短测中五路 RGB/Depth/CameraInfo/LiDAR 均为 `439/439`
+帧；`zstd_small` 则在完整一圈只留下约 `6.9–7.0 Hz`，因此被数据契约拒绝。
+
+生成与检查：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_rgbd_dataset_recording.launch.py \
+  output:="${SLAM_WS}/bags/structured_rgbd_reference"
+
+ros2 run slam_robot_slam_3d rgbd_dataset_contract_check \
+  "${SLAM_WS}/bags/structured_rgbd_reference"
+```
+
+录制器只保存下列输入，不包含 `/tf`、RTAB-Map、自研位姿或地图：
+
+```text
+/clock
+/lidar_3d/points
+/camera/color/image_raw
+/camera/depth/image_raw
+/camera/color/camera_info
+/camera/depth/camera_info
+/wheel/odom
+/imu/data
+/odom
+/ground_truth/odom
+/tf_static
+/robot_description
+```
+
+当前本地基线：
+
+| 属性 | 值 |
+| --- | ---: |
+| 格式 | MCAP，`zstd_fast` |
+| 路线 | 一圈，`71.6 m`，4/4 航点 |
+| 时长 | `185.288 s` |
+| 消息总数 | `101910` |
+| RGB / Depth / 两路 CameraInfo | 各 `1853` |
+| `/lidar_3d/points` | `1853` |
+| `/imu/data` | `18529` |
+| `/wheel/odom` / `/odom` / 真值 | 各 `9264` |
+| 文件大小 | `331935023 bytes` |
+| MCAP SHA-256 | `59a5380d0a6059bb8a1bc2d3e83f25e96032e91a6a240979ef4e38877a034174` |
+
+一圈路线在终点的朝向与起点不同，也没有重复走过同一路段；它只用于数据契约和短回放。
+需要验证视觉回环时必须录制两圈。当前两圈正样本使用带方向性墙面纹理的同一物理世界：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_rgbd_dataset_recording.launch.py \
+  output:="${SLAM_WS}/bags/structured_rgbd_textured_loop_reference" laps:=2
+
+ros2 launch slam_robot_slam_3d rtabmap_rgbd_fixed_regression.launch.py \
+  bag:="${SLAM_WS}/bags/structured_rgbd_textured_loop_reference"
+```
+
+| 两圈正样本属性 | 值 |
+| --- | ---: |
+| 路线 | 两圈，`143.136 m`，8/8 航点 |
+| 时长 | `360.608 s` |
+| RGB / Depth / 3D LiDAR | 各 `3607` |
+| 文件大小 | 约 `672 MiB` |
+| MCAP SHA-256 | `710fdb2cc7b5fb3baccdd524bba53ec9bbbf512d7f3deeada1bbbc414fb00211` |
+
+元数据记录 `route_laps`，契约检查会验证所有相机与 LiDAR 流的完整性。两份包均位于
+`bags/` 且不提交 Git。
+
+从头回放：
+
+```bash
+ros2 launch slam_robot_slam_3d play_rgbd_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/structured_rgbd_reference"
+```
+
+播放器作为大消息 writer 使用与相机 bridge 相同的 Fast DDS profile。回放冒烟中
+RGB 和 Depth 均约 `10.00 Hz`，CameraInfo frame 为 `camera_optical_frame`。
+一圈包的可复核元数据见
+[`2026-09-03-structured-rgbd-dataset.json`](results/2026-09-03-structured-rgbd-dataset.json)。

@@ -47,7 +47,7 @@ target_compile_options(
 )
 
 install(
-  DIRECTORY config launch rviz worlds
+  DIRECTORY config launch materials rviz worlds
   DESTINATION share/${PROJECT_NAME}
 )
 
@@ -95,6 +95,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_rgbd_launch
     test/test_rgbd_launch.py
+  )
+  ament_add_pytest_test(
+    test_visual_textures
+    test/test_visual_textures.py
   )
 
   ament_add_pytest_test(

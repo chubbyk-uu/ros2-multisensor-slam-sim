@@ -98,6 +98,14 @@ def root_mean_square(values):
     return math.sqrt(sum(value * value for value in values) / len(values))
 
 
+def percentile(values, quantile):
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, math.ceil(quantile * len(ordered)) - 1)
+    return ordered[index]
+
+
 def executable_matches(executable, match_token):
     """Match only argv[0], never this sampler's command-line options."""
     return match_token in executable
@@ -299,6 +307,11 @@ class StackTrajectoryCensus(Node):
         self.last_estimate_stamp = None
         self.last_truth_wall = None
         self.errors = []
+        self.input_odom_by_stamp = {}
+        self.truth_by_stamp = {}
+        self.input_odom_origin = None
+        self.input_odom_truth_origin = None
+        self.input_odom_errors = []
         self.lookup_failures = 0
         self.next_write_wall = 0.0
 
@@ -311,6 +324,11 @@ class StackTrajectoryCensus(Node):
         self.loop_closure_events = 0
         self.proximity_events = 0
         self.info_messages = 0
+        self.visual_word_counts = []
+        self.maximum_dictionary_words = 0
+        self.maximum_visual_matches = 0
+        self.maximum_visual_inliers = 0
+        self.rtabmap_processing_times_ms = []
 
         reliable = QoSProfile(
             depth=50,
@@ -319,6 +337,9 @@ class StackTrajectoryCensus(Node):
         )
         self.create_subscription(
             Odometry, "/ground_truth/odom", self.truth_callback, reliable
+        )
+        self.create_subscription(
+            Odometry, "/odom", self.input_odom_callback, reliable
         )
         self.create_subscription(
             DiagnosticArray,
@@ -346,6 +367,10 @@ class StackTrajectoryCensus(Node):
     def truth_callback(self, message):
         stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
         pose = odometry_pose2d(message)
+        stamp_key = (message.header.stamp.sec, message.header.stamp.nanosec)
+        self.truth_by_stamp[stamp_key] = pose
+        self.match_input_odometry(stamp_key)
+        self.limit_pending_odometry()
         if self.previous_truth is not None:
             step = math.hypot(
                 pose[0] - self.previous_truth[0], pose[1] - self.previous_truth[1]
@@ -358,6 +383,36 @@ class StackTrajectoryCensus(Node):
         if len(self.truth_samples) > 200:
             del self.truth_samples[:100]
         self.last_truth_wall = time.monotonic()
+
+    def input_odom_callback(self, message):
+        stamp_key = (message.header.stamp.sec, message.header.stamp.nanosec)
+        self.input_odom_by_stamp[stamp_key] = odometry_pose2d(message)
+        self.match_input_odometry(stamp_key)
+        self.limit_pending_odometry()
+
+    def match_input_odometry(self, stamp_key):
+        odom = self.input_odom_by_stamp.get(stamp_key)
+        truth = self.truth_by_stamp.get(stamp_key)
+        if odom is None or truth is None:
+            return
+        if self.input_odom_origin is None:
+            self.input_odom_origin = odom
+            self.input_odom_truth_origin = truth
+        position_error, yaw_error = pose_error(
+            odom,
+            truth,
+            self.input_odom_origin,
+            self.input_odom_truth_origin,
+        )
+        stamp = stamp_key[0] + 1.0e-9 * stamp_key[1]
+        self.input_odom_errors.append((stamp, position_error, yaw_error))
+        del self.input_odom_by_stamp[stamp_key]
+        del self.truth_by_stamp[stamp_key]
+
+    def limit_pending_odometry(self):
+        for pending in (self.input_odom_by_stamp, self.truth_by_stamp):
+            while len(pending) > 500:
+                del pending[next(iter(pending))]
 
     def diagnostics_callback(self, message):
         for status in message.status:
@@ -385,6 +440,24 @@ class StackTrajectoryCensus(Node):
             self.loop_closure_events += 1
         if message.proximity_detection_id > 0:
             self.proximity_events += 1
+        statistics = dict(zip(message.stats_keys, message.stats_values))
+        words = int(statistics.get("Keypoint/Current_frame/words", 0.0))
+        self.visual_word_counts.append(words)
+        self.maximum_dictionary_words = max(
+            self.maximum_dictionary_words,
+            int(statistics.get("Keypoint/Dictionary_size/words", 0.0)),
+        )
+        self.maximum_visual_matches = max(
+            self.maximum_visual_matches,
+            int(statistics.get("Loop/Visual_matches/", 0.0)),
+        )
+        self.maximum_visual_inliers = max(
+            self.maximum_visual_inliers,
+            int(statistics.get("Loop/Visual_inliers/", 0.0)),
+        )
+        processing_time = statistics.get("RtabmapROS/TimeTotal/ms")
+        if processing_time is not None and math.isfinite(processing_time):
+            self.rtabmap_processing_times_ms.append(processing_time)
 
     def sample_estimate(self):
         """Pair the newest ground-truth sample with the estimate at its stamp."""
@@ -434,6 +507,8 @@ class StackTrajectoryCensus(Node):
             return None
         positions = [sample[1] for sample in self.errors]
         yaws = [sample[2] for sample in self.errors]
+        odom_positions = [sample[1] for sample in self.input_odom_errors]
+        odom_yaws = [sample[2] for sample in self.input_odom_errors]
         peak_index = max(range(len(positions)), key=positions.__getitem__)
         return {
             "label": self.arguments.label,
@@ -448,12 +523,48 @@ class StackTrajectoryCensus(Node):
             "peak_yaw_error_deg": math.degrees(max(yaws)),
             "rmse_position_error_m": root_mean_square(positions),
             "rmse_yaw_error_deg": math.degrees(root_mean_square(yaws)),
+            "input_odom_samples": len(self.input_odom_errors),
+            "input_odom_final_position_error_m": (
+                odom_positions[-1] if odom_positions else None
+            ),
+            "input_odom_peak_position_error_m": (
+                max(odom_positions) if odom_positions else None
+            ),
+            "input_odom_rmse_position_error_m": root_mean_square(odom_positions),
+            "input_odom_rmse_yaw_error_deg": (
+                math.degrees(root_mean_square(odom_yaws)) if odom_yaws else None
+            ),
             "pose_graph_commits": self.pose_graph_commits,
             "pose_graph_discards": self.pose_graph_discards,
             "pose_graph_failures": self.pose_graph_failures,
             "rtabmap_info_messages": self.info_messages,
             "rtabmap_loop_closure_events": self.loop_closure_events,
             "rtabmap_proximity_events": self.proximity_events,
+            "rtabmap_visual_frames": len(self.visual_word_counts),
+            "rtabmap_frames_with_visual_words": sum(
+                count > 0 for count in self.visual_word_counts
+            ),
+            "rtabmap_mean_visual_words": (
+                sum(self.visual_word_counts) / len(self.visual_word_counts)
+                if self.visual_word_counts
+                else None
+            ),
+            "rtabmap_maximum_visual_words": (
+                max(self.visual_word_counts) if self.visual_word_counts else None
+            ),
+            "rtabmap_maximum_dictionary_words": self.maximum_dictionary_words,
+            "rtabmap_maximum_visual_matches": self.maximum_visual_matches,
+            "rtabmap_maximum_visual_inliers": self.maximum_visual_inliers,
+            "rtabmap_processing_samples": len(self.rtabmap_processing_times_ms),
+            "rtabmap_processing_mean_ms": (
+                sum(self.rtabmap_processing_times_ms)
+                / len(self.rtabmap_processing_times_ms)
+                if self.rtabmap_processing_times_ms
+                else None
+            ),
+            "rtabmap_processing_p95_ms": percentile(
+                self.rtabmap_processing_times_ms, 0.95
+            ),
             "process": self.sampler.report(),
             "database_bytes": self.database_bytes(),
         }

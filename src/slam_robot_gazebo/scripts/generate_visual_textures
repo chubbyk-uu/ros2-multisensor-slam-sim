@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+
+"""Generate deterministic, non-repeating wall textures for visual SLAM tests."""
+
+from pathlib import Path
+import struct
+import zlib
+
+
+WIDTH = 1024
+HEIGHT = 128
+PALETTES = {
+    "outer_south": ((220, 224, 228), (32, 68, 112), (226, 126, 36)),
+    "inner_south": ((226, 218, 210), (82, 52, 34), (38, 116, 150)),
+    "outer_east": ((224, 222, 214), (48, 104, 72), (170, 52, 58)),
+    "inner_east": ((214, 226, 220), (28, 72, 58), (192, 88, 34)),
+    "outer_north": ((216, 222, 232), (92, 48, 116), (214, 164, 32)),
+    "inner_north": ((228, 220, 230), (58, 42, 102), (42, 126, 116)),
+    "outer_west": ((228, 218, 208), (38, 92, 102), (182, 62, 116)),
+    "inner_west": ((216, 226, 230), (28, 64, 98), (192, 82, 54)),
+}
+
+
+def chunk(kind, data):
+    payload = kind + data
+    return (
+        struct.pack(">I", len(data))
+        + payload
+        + struct.pack(">I", zlib.crc32(payload) & 0xFFFFFFFF)
+    )
+
+
+def rectangle(pixels, x0, y0, x1, y1, color):
+    for y in range(max(0, y0), min(HEIGHT, y1)):
+        row = pixels[y]
+        for x in range(max(0, x0), min(WIDTH, x1)):
+            row[x] = color
+
+
+def generate(name, palette, destination):
+    background, dark, accent = palette
+    pixels = [[background for _ in range(WIDTH)] for _ in range(HEIGHT)]
+
+    # Subtle construction joints establish long-range scale without a periodic
+    # high-contrast pattern that could create ambiguous places.
+    for x in range(0, WIDTH, 64):
+        rectangle(pixels, x, 0, x + 1, HEIGHT, (184, 188, 190))
+    rectangle(pixels, 0, HEIGHT - 10, WIDTH, HEIGHT, dark)
+
+    # Each direction gets a different deterministic sequence of landmarks.
+    state = 0x9E3779B9 ^ sum(ord(character) for character in name)
+    for index in range(34):
+        state = (1664525 * state + 1013904223) & 0xFFFFFFFF
+        x = 12 + state % (WIDTH - 54)
+        state = (1664525 * state + 1013904223) & 0xFFFFFFFF
+        y = 8 + state % 82
+        width = 9 + (state >> 8) % 31
+        height = 8 + (state >> 16) % 25
+        color = accent if index % 3 == 0 else dark
+        rectangle(pixels, x, y, x + width, y + height, color)
+        # A light inset turns every landmark into four stable corners.
+        if width > 14 and height > 13:
+            rectangle(
+                pixels,
+                x + 4,
+                y + 4,
+                x + width - 4,
+                y + height - 4,
+                background,
+            )
+
+    # Non-uniform large markers survive distance and camera downsampling.
+    offsets = (45, 238, 517, 811)
+    for index, x in enumerate(offsets):
+        size = 14 + index * 4
+        rectangle(pixels, x, 18, x + size, 18 + size, dark)
+        rectangle(pixels, x + 5, 23, x + size - 5, 18 + size - 5, accent)
+
+    raw = b"".join(
+        b"\x00" + bytes(channel for pixel in row for channel in pixel)
+        for row in pixels
+    )
+    png = b"\x89PNG\r\n\x1a\n"
+    png += chunk(b"IHDR", struct.pack(">IIBBBBB", WIDTH, HEIGHT, 8, 2, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(raw, level=9))
+    png += chunk(b"IEND", b"")
+    destination.write_bytes(png)
+
+
+def main():
+    output = Path(__file__).resolve().parents[1] / "materials" / "textures"
+    output.mkdir(parents=True, exist_ok=True)
+    for name, palette in PALETTES.items():
+        generate(name, palette, output / f"structured_rgbd_{name}.png")
+
+
+if __name__ == "__main__":
+    main()

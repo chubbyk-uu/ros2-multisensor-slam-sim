@@ -86,6 +86,12 @@ def test_root_mean_square_is_not_the_mean():
     assert TRAJECTORY.root_mean_square([]) is None
 
 
+def test_percentile_uses_nearest_rank_and_handles_empty_input():
+    assert TRAJECTORY.percentile([], 0.95) is None
+    assert TRAJECTORY.percentile([3.0, 1.0, 2.0, 4.0], 0.5) == 2.0
+    assert TRAJECTORY.percentile(list(range(1, 101)), 0.95) == 95
+
+
 def test_cpu_percent_is_absent_rather_than_zero_before_two_samples():
     sampler = TRAJECTORY.ProcessSampler("/nothing_matches_this")
 
@@ -259,6 +265,7 @@ def test_the_report_is_written_during_the_run_not_only_at_teardown(tmp_path):
         ["--label", "custom", "--output", str(output)]
     )
     census.errors = [(1.0, 0.02, 0.01), (2.0, 0.03, 0.02)]
+    census.input_odom_errors = []
     census.truth_messages = 2
     census.truth_distance = 1.0
     census.lookup_failures = 0
@@ -268,6 +275,11 @@ def test_the_report_is_written_during_the_run_not_only_at_teardown(tmp_path):
     census.info_messages = 0
     census.loop_closure_events = 0
     census.proximity_events = 0
+    census.visual_word_counts = []
+    census.maximum_dictionary_words = 0
+    census.maximum_visual_matches = 0
+    census.maximum_visual_inliers = 0
+    census.rtabmap_processing_times_ms = []
     census.sampler = TRAJECTORY.ProcessSampler("/nothing")
 
     census.write()

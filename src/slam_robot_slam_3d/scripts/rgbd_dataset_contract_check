@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+
+"""Validate the fixed RGB-D and 3D LiDAR rosbag input contract."""
+
+import argparse
+from pathlib import Path
+import sys
+
+from rclpy.serialization import deserialize_message
+import rosbag2_py
+from rosidl_runtime_py.utilities import get_message
+import yaml
+
+
+EXPECTED_TOPICS = {
+    "/clock": "rosgraph_msgs/msg/Clock",
+    "/lidar_3d/points": "sensor_msgs/msg/PointCloud2",
+    "/camera/color/image_raw": "sensor_msgs/msg/Image",
+    "/camera/depth/image_raw": "sensor_msgs/msg/Image",
+    "/camera/color/camera_info": "sensor_msgs/msg/CameraInfo",
+    "/camera/depth/camera_info": "sensor_msgs/msg/CameraInfo",
+    "/wheel/odom": "nav_msgs/msg/Odometry",
+    "/imu/data": "sensor_msgs/msg/Imu",
+    "/odom": "nav_msgs/msg/Odometry",
+    "/ground_truth/odom": "nav_msgs/msg/Odometry",
+    "/tf_static": "tf2_msgs/msg/TFMessage",
+    "/robot_description": "std_msgs/msg/String",
+}
+COLOR_TOPIC = "/camera/color/image_raw"
+DEPTH_TOPIC = "/camera/depth/image_raw"
+COLOR_INFO_TOPIC = "/camera/color/camera_info"
+DEPTH_INFO_TOPIC = "/camera/depth/camera_info"
+
+
+def topic_table(information):
+    topics = {}
+    for entry in information.get("topics_with_message_count", []):
+        metadata = entry.get("topic_metadata", {})
+        topics[metadata.get("name", "")] = {
+            "type": metadata.get("type", ""),
+            "count": entry.get("message_count", 0),
+        }
+    return topics
+
+
+def validate_metadata(
+    metadata,
+    minimum_duration,
+    minimum_images,
+    minimum_clouds,
+    minimum_image_rate,
+    maximum_image_rate,
+):
+    errors = []
+    information = metadata.get("rosbag2_bagfile_information", {})
+    if information.get("storage_identifier") != "mcap":
+        errors.append("storage identifier must be mcap")
+    duration = information.get("duration", {}).get("nanoseconds", 0) * 1.0e-9
+    if duration < minimum_duration:
+        errors.append(
+            f"duration {duration:.3f} s is below {minimum_duration:.3f} s"
+        )
+
+    custom_data = information.get("custom_data", {})
+    if custom_data.get("dataset") != "structured_rgbd_reference":
+        errors.append("dataset custom_data must be structured_rgbd_reference")
+    if str(custom_data.get("contract_version")) != "1":
+        errors.append("contract_version custom_data must be 1")
+    if str(custom_data.get("camera_rate_hz")) != "10.0":
+        errors.append("camera_rate_hz custom_data must be 10.0")
+    if custom_data.get("storage_profile") != "zstd_fast":
+        errors.append("storage_profile custom_data must be zstd_fast")
+    route_laps = custom_data.get("route_laps")
+    if route_laps is not None:
+        try:
+            if int(route_laps) < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors.append("route_laps custom_data must be a positive integer")
+
+    topics = topic_table(information)
+    missing = sorted(set(EXPECTED_TOPICS) - set(topics))
+    unexpected = sorted(set(topics) - set(EXPECTED_TOPICS))
+    if missing:
+        errors.append(f"missing topics: {', '.join(missing)}")
+    if unexpected:
+        errors.append(f"unexpected topics: {', '.join(unexpected)}")
+    for name, expected_type in EXPECTED_TOPICS.items():
+        if name not in topics:
+            continue
+        if topics[name]["type"] != expected_type:
+            errors.append(f"{name} type {topics[name]['type']} != {expected_type}")
+        if topics[name]["count"] <= 0:
+            errors.append(f"{name} contains no messages")
+
+    color_count = topics.get(COLOR_TOPIC, {}).get("count", 0)
+    depth_count = topics.get(DEPTH_TOPIC, {}).get("count", 0)
+    cloud_count = topics.get("/lidar_3d/points", {}).get("count", 0)
+    if color_count < minimum_images or depth_count < minimum_images:
+        errors.append(
+            "RGB-D image counts are too low: "
+            f"color={color_count}, depth={depth_count}, minimum={minimum_images}"
+        )
+    if cloud_count < minimum_clouds:
+        errors.append(f"point cloud count {cloud_count} is below {minimum_clouds}")
+    if max(color_count, depth_count) > 0:
+        paired_count_fraction = min(color_count, depth_count) / max(
+            color_count, depth_count
+        )
+        if paired_count_fraction < 0.99:
+            errors.append(
+                f"RGB/depth count ratio {paired_count_fraction:.4f} is below 0.99"
+            )
+    if duration > 0.0:
+        for name, count in (("color", color_count), ("depth", depth_count)):
+            rate = count / duration
+            if not minimum_image_rate <= rate <= maximum_image_rate:
+                errors.append(
+                    f"{name} image rate {rate:.3f} Hz is outside "
+                    f"[{minimum_image_rate:.3f}, {maximum_image_rate:.3f}] Hz"
+                )
+
+    return errors, duration, topics
+
+
+def stamp_tuple(message):
+    return (message.header.stamp.sec, message.header.stamp.nanosec)
+
+
+def inspect_camera_messages(bag_path, maximum_images=20):
+    errors = []
+    reader = rosbag2_py.SequentialReader()
+    reader.open(
+        rosbag2_py.StorageOptions(uri=str(bag_path), storage_id="mcap"),
+        rosbag2_py.ConverterOptions("", ""),
+    )
+    type_by_topic = {
+        topic.name: get_message(topic.type)
+        for topic in reader.get_all_topics_and_types()
+    }
+    image_stamps = {COLOR_TOPIC: set(), DEPTH_TOPIC: set()}
+    camera_info = {}
+    while reader.has_next():
+        topic, data, _ = reader.read_next()
+        if topic not in image_stamps and topic not in (
+            COLOR_INFO_TOPIC,
+            DEPTH_INFO_TOPIC,
+        ):
+            continue
+        message = deserialize_message(data, type_by_topic[topic])
+        if topic in image_stamps:
+            if len(image_stamps[topic]) < maximum_images:
+                image_stamps[topic].add(stamp_tuple(message))
+            if topic == COLOR_TOPIC:
+                if message.width != 640 or message.height != 480:
+                    errors.append("color image dimensions must be 640x480")
+                if message.encoding.lower() not in ("rgb8", "bgr8"):
+                    errors.append(f"unexpected color encoding {message.encoding}")
+            else:
+                if message.width != 640 or message.height != 480:
+                    errors.append("depth image dimensions must be 640x480")
+                if message.encoding != "32FC1":
+                    errors.append(f"unexpected depth encoding {message.encoding}")
+            if message.header.frame_id != "camera_optical_frame":
+                errors.append(f"unexpected {topic} frame {message.header.frame_id}")
+        elif topic not in camera_info:
+            camera_info[topic] = message
+
+        if (
+            all(len(stamps) >= maximum_images for stamps in image_stamps.values())
+            and len(camera_info) == 2
+        ):
+            break
+
+    for topic, stamps in image_stamps.items():
+        if not stamps:
+            errors.append(f"no sample messages read from {topic}")
+    if not image_stamps[COLOR_TOPIC].intersection(image_stamps[DEPTH_TOPIC]):
+        errors.append("sampled RGB and depth messages have no exact common timestamp")
+    for topic in (COLOR_INFO_TOPIC, DEPTH_INFO_TOPIC):
+        message = camera_info.get(topic)
+        if message is None:
+            errors.append(f"no sample message read from {topic}")
+            continue
+        if message.width != 640 or message.height != 480:
+            errors.append(f"{topic} dimensions must be 640x480")
+        if message.header.frame_id != "camera_optical_frame":
+            errors.append(f"unexpected {topic} frame {message.header.frame_id}")
+        if message.k[0] <= 0.0 or message.k[4] <= 0.0:
+            errors.append(f"{topic} focal lengths must be positive")
+    return errors
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("bag", type=Path)
+    parser.add_argument("--minimum-duration", type=float, default=150.0)
+    parser.add_argument("--minimum-images", type=int, default=1500)
+    parser.add_argument("--minimum-clouds", type=int, default=1500)
+    parser.add_argument("--minimum-image-rate", type=float, default=9.0)
+    parser.add_argument("--maximum-image-rate", type=float, default=11.0)
+    arguments = parser.parse_args()
+
+    bag_path = arguments.bag.expanduser().resolve()
+    metadata_path = bag_path / "metadata.yaml"
+    if not metadata_path.is_file():
+        print(f"FAIL: missing rosbag metadata: {metadata_path}", file=sys.stderr)
+        return 1
+    try:
+        metadata = yaml.safe_load(metadata_path.read_text()) or {}
+    except (OSError, yaml.YAMLError) as error:
+        print(f"FAIL: cannot read metadata: {error}", file=sys.stderr)
+        return 1
+
+    errors, duration, topics = validate_metadata(
+        metadata,
+        arguments.minimum_duration,
+        arguments.minimum_images,
+        arguments.minimum_clouds,
+        arguments.minimum_image_rate,
+        arguments.maximum_image_rate,
+    )
+    if not errors:
+        try:
+            errors.extend(inspect_camera_messages(bag_path))
+        except Exception as error:  # noqa: B902 - report malformed bag cleanly.
+            errors.append(f"cannot inspect camera messages: {error}")
+
+    print(
+        f"RGB-D dataset: duration={duration:.3f} s, "
+        f"color={topics.get(COLOR_TOPIC, {}).get('count', 0)}, "
+        f"depth={topics.get(DEPTH_TOPIC, {}).get('count', 0)}, "
+        f"clouds={topics.get('/lidar_3d/points', {}).get('count', 0)}"
+    )
+    if errors:
+        for error in errors:
+            print(f"FAIL: {error}", file=sys.stderr)
+        return 1
+    print("PASS: fixed RGB-D dataset contract is valid")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

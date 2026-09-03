@@ -1,0 +1,69 @@
+{
+  "date": "2026-09-03",
+  "status": "PASS",
+  "base_commit": "b1d8f7f",
+  "worktree_dirty_during_validation": true,
+  "dataset": {
+    "path": "bags/structured_rgbd_textured_loop_reference",
+    "mcap_sha256": "710fdb2cc7b5fb3baccdd524bba53ec9bbbf512d7f3deeada1bbbc414fb00211",
+    "duration_sec": 360.608,
+    "truth_distance_m": 143.13565503682648,
+    "route_laps": 2,
+    "rgb_messages": 3607,
+    "depth_messages": 3607,
+    "lidar_messages": 3607,
+    "camera_rate_hz": 10.0,
+    "world": "src/slam_robot_gazebo/worlds/structured_loop_3d.sdf",
+    "world_sha256": "55209527f67654254042b3f31c3d474c8e23fb646bb547e8192eeb27c60d0954"
+  },
+  "input_odometry": {
+    "samples": 18030,
+    "position_rmse_m": 0.6421468442815065,
+    "position_peak_m": 1.2650249961070748,
+    "position_final_m": 1.263313594477629,
+    "yaw_rmse_deg": 3.212763198877558
+  },
+  "rtabmap": {
+    "trajectory_samples": 18004,
+    "position_rmse_m": 0.2712744552445755,
+    "position_peak_m": 0.6989483015107385,
+    "position_final_m": 0.06176482273726852,
+    "yaw_rmse_deg": 1.235795201693788,
+    "yaw_peak_deg": 3.106508517885705,
+    "info_messages": 721,
+    "frames_with_visual_words": 626,
+    "visual_loop_closures": 178,
+    "proximity_constraints": 280,
+    "maximum_visual_matches": 107,
+    "maximum_visual_inliers": 96,
+    "maximum_dictionary_words": 15696,
+    "processing_mean_ms": 32.12267458968692,
+    "processing_p95_ms": 82.7729721069336,
+    "average_cpu_percent": 30.903736674018653,
+    "peak_rss_mib": 1272.80078125,
+    "database_bytes": 248410112
+  },
+  "map": {
+    "updates": 675,
+    "free_cells": 72805,
+    "occupied_cells": 3650,
+    "known_bounding_box_m2": 404.25001204758894
+  },
+  "checks": {
+    "complete_two_lap_input": true,
+    "visual_features_observed": true,
+    "visual_loop_closures_accepted": true,
+    "trajectory_accuracy": true,
+    "runtime_budget": true,
+    "navigation_projection": true,
+    "improves_drifted_input_odometry": true
+  },
+  "limitations": [
+    "The bag is intentionally excluded from Git because it is about 672 MiB.",
+    "This is a 10 Hz fixed replay, not the pending 30 Hz online active-loop acceptance.",
+    "The thresholds are engineering bounds validated by one formal run, not a statistical distribution.",
+    "Ground truth is used only by the scorer and never as an RTAB-Map input.",
+    "Textures change visual materials only; collision and LiDAR geometry are unchanged.",
+    "Accuracy comparisons between separately recorded textured and untextured bags are confounded by different input odometry drift."
+  ]
+}

@@ -98,6 +98,10 @@
           <material>
             <ambient>0.82 0.84 0.88 1</ambient>
             <diffuse>0.82 0.84 0.88 1</diffuse>
+            <pbr><metal>
+              <albedo_map>../materials/textures/structured_rgbd_outer_south.png</albedo_map>
+              <roughness>0.9</roughness><metalness>0.0</metalness>
+            </metal></pbr>
           </material>
         </visual>
 
@@ -111,6 +115,10 @@
           <material>
             <ambient>0.82 0.84 0.88 1</ambient>
             <diffuse>0.82 0.84 0.88 1</diffuse>
+            <pbr><metal>
+              <albedo_map>../materials/textures/structured_rgbd_outer_north.png</albedo_map>
+              <roughness>0.9</roughness><metalness>0.0</metalness>
+            </metal></pbr>
           </material>
         </visual>
 
@@ -124,6 +132,10 @@
           <material>
             <ambient>0.82 0.84 0.88 1</ambient>
             <diffuse>0.82 0.84 0.88 1</diffuse>
+            <pbr><metal>
+              <albedo_map>../materials/textures/structured_rgbd_outer_west.png</albedo_map>
+              <roughness>0.9</roughness><metalness>0.0</metalness>
+            </metal></pbr>
           </material>
         </visual>
 
@@ -137,6 +149,10 @@
           <material>
             <ambient>0.82 0.84 0.88 1</ambient>
             <diffuse>0.82 0.84 0.88 1</diffuse>
+            <pbr><metal>
+              <albedo_map>../materials/textures/structured_rgbd_outer_east.png</albedo_map>
+              <roughness>0.9</roughness><metalness>0.0</metalness>
+            </metal></pbr>
           </material>
         </visual>
 
@@ -151,6 +167,10 @@
           <material>
             <ambient>0.76 0.78 0.82 1</ambient>
             <diffuse>0.76 0.78 0.82 1</diffuse>
+            <pbr><metal>
+              <albedo_map>../materials/textures/structured_rgbd_inner_south.png</albedo_map>
+              <roughness>0.9</roughness><metalness>0.0</metalness>
+            </metal></pbr>
           </material>
         </visual>
 
@@ -164,6 +184,10 @@
           <material>
             <ambient>0.76 0.78 0.82 1</ambient>
             <diffuse>0.76 0.78 0.82 1</diffuse>
+            <pbr><metal>
+              <albedo_map>../materials/textures/structured_rgbd_inner_north.png</albedo_map>
+              <roughness>0.9</roughness><metalness>0.0</metalness>
+            </metal></pbr>
           </material>
         </visual>
 
@@ -177,6 +201,10 @@
           <material>
             <ambient>0.76 0.78 0.82 1</ambient>
             <diffuse>0.76 0.78 0.82 1</diffuse>
+            <pbr><metal>
+              <albedo_map>../materials/textures/structured_rgbd_inner_west.png</albedo_map>
+              <roughness>0.9</roughness><metalness>0.0</metalness>
+            </metal></pbr>
           </material>
         </visual>
 
@@ -190,6 +218,10 @@
           <material>
             <ambient>0.76 0.78 0.82 1</ambient>
             <diffuse>0.76 0.78 0.82 1</diffuse>
+            <pbr><metal>
+              <albedo_map>../materials/textures/structured_rgbd_inner_east.png</albedo_map>
+              <roughness>0.9</roughness><metalness>0.0</metalness>
+            </metal></pbr>
           </material>
         </visual>
 

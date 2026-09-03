@@ -277,6 +277,8 @@ install(
     scripts/preprocessing_regression
     scripts/recorded_odom_tf_publisher
     scripts/recorded_static_tf_publisher
+    scripts/rgbd_dataset_contract_check
+    scripts/rtabmap_rgbd_fixed_regression_check
     scripts/snapshot_localization_regression
     scripts/snapshot_resume_probe
     scripts/snapshot_resume_regression
@@ -302,6 +304,14 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_dataset_contract
     test/test_dataset_contract.py
+  )
+  ament_add_pytest_test(
+    test_rgbd_dataset_contract
+    test/test_rgbd_dataset_contract.py
+  )
+  ament_add_pytest_test(
+    test_rgbd_dataset_launch
+    test/test_rgbd_dataset_launch.py
   )
   ament_add_gtest(
     test_point_cloud_preprocessor
@@ -457,6 +467,14 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_rtabmap_rgbd_config
     test/test_rtabmap_rgbd_config.py
+  )
+  ament_add_pytest_test(
+    test_rtabmap_rgbd_fixed_launch
+    test/test_rtabmap_rgbd_fixed_launch.py
+  )
+  ament_add_pytest_test(
+    test_rtabmap_rgbd_fixed_regression
+    test/test_rtabmap_rgbd_fixed_regression.py
   )
   ament_add_pytest_test(
     test_large_cloud_transport

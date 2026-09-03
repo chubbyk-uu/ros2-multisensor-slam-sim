@@ -89,6 +89,13 @@ def transform_to_pose(transform):
     )
 
 
+def starting_poses(truth_pose, odom_pose, map_to_odom, drive_only):
+    starts = {"truth": truth_pose, "odom": odom_pose}
+    if not drive_only:
+        starts["slam"] = compose_pose(map_to_odom, odom_pose)
+    return starts
+
+
 class StructuredLoopRegression(Node):
     def __init__(self):
         super().__init__(
@@ -277,17 +284,18 @@ class StructuredLoopRegression(Node):
             self.publish_command()
             self.spin_once(0.02)
 
-    def wait_for_inputs(self, timeout):
+    def wait_for_inputs(self, timeout, require_rtabmap=True):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self.spin_once(0.1)
-            if (
-                self.truth_pose is not None
-                and self.odom_pose is not None
-                and self.map_to_odom is not None
+            if self.truth_pose is not None and self.odom_pose is not None and (
+                self.map_to_odom is not None or not require_rtabmap
             ):
                 return
-        raise RuntimeError("timed out waiting for truth, odometry and RTAB-Map graph")
+        required = "truth and odometry"
+        if require_rtabmap:
+            required += " and RTAB-Map graph"
+        raise RuntimeError(f"timed out waiting for {required}")
 
     def settle(self, duration):
         started = self.simulation_time()
@@ -632,13 +640,17 @@ class StructuredLoopRegression(Node):
         return all(checks.values())
 
     def run(self, arguments):
-        self.wait_for_inputs(arguments.startup_timeout)
+        self.wait_for_inputs(
+            arguments.startup_timeout,
+            require_rtabmap=not arguments.drive_only,
+        )
         self.settle(arguments.initial_settle_time)
-        starts = {
-            "truth": self.truth_pose,
-            "odom": self.odom_pose,
-            "slam": self.map_pose(),
-        }
+        starts = starting_poses(
+            self.truth_pose,
+            self.odom_pose,
+            self.map_to_odom,
+            arguments.drive_only,
+        )
         self.previous_truth_pose = self.truth_pose
         self.measuring = True
         route = self.build_route(arguments.laps)
@@ -659,6 +671,14 @@ class StructuredLoopRegression(Node):
 
         self.stop()
         self.settle(arguments.final_settle_time)
+        if arguments.drive_only:
+            print(
+                "PASS: structured route recording drive completed: "
+                f"distance={self.truth_distance:.1f} m, "
+                f"waypoints={self.completed_waypoints}/{len(route)}",
+                flush=True,
+            )
+            return True
         if self.latest_grid is None:
             raise RuntimeError("RTAB-Map did not publish /rtabmap/map")
         mapping_passed = self.evaluate(arguments, starts, route)
@@ -671,6 +691,11 @@ class StructuredLoopRegression(Node):
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--laps", type=int, default=2)
+    parser.add_argument(
+        "--drive-only",
+        action="store_true",
+        help="Drive the truth-referenced route without requiring SLAM outputs.",
+    )
     parser.add_argument("--startup-timeout", type=float, default=60.0)
     parser.add_argument("--initial-settle-time", type=float, default=5.0)
     parser.add_argument("--final-settle-time", type=float, default=8.0)

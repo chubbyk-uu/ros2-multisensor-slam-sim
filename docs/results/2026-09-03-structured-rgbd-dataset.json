@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-03",
+  "base_commit": "b1d8f7f",
+  "dirty": true,
+  "dataset": "bags/structured_rgbd_reference",
+  "world": "structured_loop_3d.sdf",
+  "route": {
+    "laps": 1,
+    "distance_m": 71.6,
+    "waypoints_completed": 4,
+    "waypoints_total": 4
+  },
+  "storage": {
+    "identifier": "mcap",
+    "preset_profile": "zstd_fast",
+    "duration_s": 185.288,
+    "message_count": 101910,
+    "file_bytes": 331935023,
+    "sha256": "59a5380d0a6059bb8a1bc2d3e83f25e96032e91a6a240979ef4e38877a034174"
+  },
+  "message_counts": {
+    "/camera/color/image_raw": 1853,
+    "/camera/depth/image_raw": 1853,
+    "/camera/color/camera_info": 1853,
+    "/camera/depth/camera_info": 1853,
+    "/lidar_3d/points": 1853,
+    "/imu/data": 18529,
+    "/wheel/odom": 9264,
+    "/odom": 9264,
+    "/ground_truth/odom": 9264,
+    "/tf_static": 1,
+    "/robot_description": 1,
+    "/clock": 46322
+  },
+  "camera_contract": {
+    "configured_rate_hz": 10.0,
+    "recorded_color_rate_hz": 10.001,
+    "recorded_depth_rate_hz": 10.001,
+    "width": 640,
+    "height": 480,
+    "color_encoding": "rgb8",
+    "depth_encoding": "32FC1",
+    "frame_id": "camera_optical_frame",
+    "sampled_exact_stamp_pair": true,
+    "playback_color_rate_hz": 10.002,
+    "playback_depth_rate_hz": 9.998
+  },
+  "compression_evidence": {
+    "stationary_zstd_fast_bytes": 1980149,
+    "stationary_zstd_fast_duration_s": 11.596,
+    "stationary_zstd_small_bytes": 458184,
+    "stationary_zstd_small_duration_s": 11.696,
+    "moving_zstd_fast_duration_s": 43.856,
+    "moving_zstd_fast_frames_per_high_bandwidth_topic": 439,
+    "rejected_full_zstd_small_color_rate_hz": 6.892,
+    "rejected_full_zstd_small_depth_rate_hz": 7.048,
+    "rejected_full_zstd_small_pair_count_fraction": 0.9778
+  },
+  "input_only": true,
+  "ground_truth_is_scoring_only": true,
+  "algorithm_outputs_recorded": false,
+  "contract": "PASS",
+  "limits": [
+    "The fixed bag uses 10 Hz RGB-D to bound storage; the online baseline remains 30 Hz.",
+    "LiDAR is present for byte-identical future comparisons but is not consumed by the RGB-D baseline.",
+    "The bag itself is intentionally excluded from Git."
+  ]
+}

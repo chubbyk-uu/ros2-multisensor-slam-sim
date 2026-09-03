@@ -404,8 +404,41 @@ ros2 launch slam_robot_slam_3d rtabmap_rgbd_simulation.launch.py \
   gui:=false rviz:=false
 ```
 
-当前验收只证明在线数据链路、视觉关键帧、数据库、TF 和深度二维栅格工作；固定输入
-误差、视觉回环召回和完整活动闭环仍是下一阶段，不能由短程冒烟替代。
+短程在线冒烟只证明数据链路、视觉关键帧、数据库、TF 和深度二维栅格工作；下述
+两圈固定回放已经覆盖误差、视觉回环与资源，但完整 `30 Hz` 活动闭环仍需单独验收。
+
+录制体积受控的一圈 RGB-D 固定输入：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_rgbd_dataset_recording.launch.py \
+  output:="${SLAM_WS}/bags/structured_rgbd_reference"
+
+ros2 run slam_robot_slam_3d rgbd_dataset_contract_check \
+  "${SLAM_WS}/bags/structured_rgbd_reference"
+
+ros2 launch slam_robot_slam_3d play_rgbd_slam_data.launch.py \
+  bag:="${SLAM_WS}/bags/structured_rgbd_reference"
+```
+
+固定包相机为 `10 Hz`、MCAP 为 `zstd_fast`，在线入口仍保持 `30 Hz`。包中保留
+RGB-D 与 3D LiDAR 是为了后续使用字节一致输入做三路对照，不代表当前 RGB-D
+基线消费了 LiDAR。话题白名单、计数、哈希和压缩 A/B 见
+[数据集说明](../../docs/datasets.md#结构化-rgb-d-多传感器参考包)。
+
+视觉回环正向回归必须使用两圈纹理包：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_rgbd_dataset_recording.launch.py \
+  output:="${SLAM_WS}/bags/structured_rgbd_textured_loop_reference" laps:=2
+
+ros2 launch slam_robot_slam_3d rtabmap_rgbd_fixed_regression.launch.py \
+  bag:="${SLAM_WS}/bags/structured_rgbd_textured_loop_reference"
+```
+
+该入口自动检查两圈输入、视觉特征覆盖、视觉回环、轨迹误差、资源、二维地图，且在
+输入里程计明显漂移时要求 SLAM 给出实质改善。一圈包没有同向重走路段，只作为数据
+契约样本，不能拿它要求视觉回环。当前验收结果见
+[验收记录](../../docs/acceptance.md#rtab-map-rgb-d-在线基线)。
 
 ### 输入同步与 QoS
 

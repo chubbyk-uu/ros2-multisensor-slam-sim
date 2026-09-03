@@ -37,6 +37,20 @@ def test_default_regression_requires_two_laps_and_real_loop_evidence():
     assert arguments.maximum_map_to_odom_height <= 0.02
     assert arguments.maximum_map_to_odom_tilt_degrees <= 0.5
     assert not arguments.navigation_acceptance
+    assert not arguments.drive_only
+
+
+def test_drive_only_mode_is_explicit_and_keeps_route_defaults():
+    arguments = MODULE.parse_arguments(["--drive-only", "--laps", "1"])
+
+    assert arguments.drive_only
+    assert arguments.laps == 1
+
+
+def test_drive_only_start_does_not_require_map_to_odom():
+    starts = MODULE.starting_poses((1.0, 2.0, 0.1), (0.5, 0.2, -0.1), None, True)
+
+    assert starts == {"truth": (1.0, 2.0, 0.1), "odom": (0.5, 0.2, -0.1)}
 
 
 def test_height_aware_navigation_thresholds_exceed_robot_outline():
