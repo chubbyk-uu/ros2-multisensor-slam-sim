@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-04",
+  "stack": "RTAB-Map RGB-D online SLAM + Nav2 + 3D LiDAR obstacle sensing",
+  "source_revision": {
+    "base_commit": "5fe4d57",
+    "dirty": true
+  },
+  "command": "ros2 launch slam_robot_slam_3d rtabmap_rgbd_navigation_safety_regression.launch.py",
+  "verdict": "PASS",
+  "mapping_warmup": {
+    "reason": "The forward-facing RGB-D camera must expand known free space incrementally before Nav2 can accept the final goal.",
+    "waypoints": [
+      [0.0, 0.0, 3.141593],
+      [-2.0, -0.5, 3.141593],
+      [0.0, 0.0, 0.0]
+    ],
+    "completed_waypoints": 3,
+    "segment_sim_seconds": [4.6, 6.2, 11.5]
+  },
+  "dynamic_obstacle": {
+    "goal": [-4.0, -1.0, 3.141593],
+    "elapsed_sim_seconds": 15.1,
+    "global_costmap_latency_seconds": 0.320,
+    "local_costmap_latency_seconds": 0.160,
+    "minimum_base_centre_distance_m": 0.999,
+    "minimum_body_clearance_m": 0.239,
+    "maximum_obstacle_local_path_deviation_m": 1.133,
+    "obstacle_on_nominal_route": true,
+    "crossed_obstacle_station": true,
+    "goal_error_m": 0.137,
+    "recoveries": 0,
+    "collision_actions": 0
+  },
+  "tf_contract": {
+    "rtabmap_detection_rate_hz": 2.0,
+    "tf_tolerance_seconds": 0.60,
+    "derivation": "One 0.5 s graph-update interval plus 0.1 s scheduling margin."
+  },
+  "limitations": [
+    "This is one end-to-end positive run; the shared dynamic-obstacle scorer has a separate executable negative control on the custom 3D stack.",
+    "Gazebo exited with SIGSEGV during teardown after VERDICT PASS and clean algorithm shutdown; no scoped process remained."
+  ]
+}

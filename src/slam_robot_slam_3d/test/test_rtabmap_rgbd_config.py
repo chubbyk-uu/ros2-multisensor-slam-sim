@@ -20,6 +20,7 @@ def test_rgbd_mode_uses_external_odometry_and_visual_registration():
     assert parameters["subscribe_scan_cloud"] is False
     assert parameters["odom_frame_id"] == ""
     assert parameters["publish_tf"] is True
+    assert parameters["tf_tolerance"] == 0.60
     assert parameters["Reg/Strategy"] == "0"
     assert parameters["Reg/Force3DoF"] == "true"
     assert parameters["RGBD/ForceOdom3DoF"] == "true"

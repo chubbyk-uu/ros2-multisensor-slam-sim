@@ -228,8 +228,10 @@ def test_navigation_regression_can_skip_amcl_for_online_slam():
             "online-slam",
             "--obstacle-offset-y",
             "3.0",
+            "--pre-map-dynamic-route",
         ]
     )
 
     assert arguments.localization_mode == "online-slam"
     assert arguments.obstacle_offset_y == 3.0
+    assert arguments.pre_map_dynamic_route

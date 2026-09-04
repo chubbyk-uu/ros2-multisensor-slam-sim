@@ -71,6 +71,11 @@ PROFILES = (
         ),
     ),
     LaunchProfile(
+        "rtabmap_rgbd_navigation_safety",
+        "rtabmap_rgbd_navigation_safety_regression.launch.py",
+        ("/bt_navigator", "/ekf_filter_node", "/rtabmap/rtabmap"),
+    ),
+    LaunchProfile(
         "structured_dataset",
         "structured_dataset_recording.launch.py",
         ("/ekf_filter_node", "/rtabmap/rtabmap"),

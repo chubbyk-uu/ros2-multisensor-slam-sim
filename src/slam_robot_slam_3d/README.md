@@ -467,6 +467,17 @@ ros2 launch slam_robot_slam_3d rtabmap_rgbd_navigation_simulation.launch.py
 RViz 提供 `Nav2 Goal`，并同时显示 RGB、深度、彩色累计点云、实时 LiDAR、代价地图
 和路径。目标必须落在当前地图已经观测到的自由区域。
 
+无界面的最终组合动态障碍验收：
+
+```bash
+ros2 launch slam_robot_slam_3d \
+  rtabmap_rgbd_navigation_safety_regression.launch.py
+```
+
+前向 RGB-D 会先通过三个可达目标渐进扩展已知自由区并返回原点，再执行公共动态
+障碍判据；3D LiDAR 只负责障碍层和碰撞监视。成功时终端输出 `VERDICT PASS` 并
+自动退出。
+
 ### 输入同步与 QoS
 
 `/odom` 和 `/lidar_3d/points` 由两条独立时钟链路打时间戳，因此配置使用

@@ -49,3 +49,31 @@ def test_custom_navigation_exposes_the_gazebo_world_name_contract():
 
     assert "world" in names
     assert "world_name" in names
+
+
+def test_rgbd_lidar_safety_launch_reuses_the_final_combined_stack():
+    module = load_launch(
+        "rtabmap_rgbd_navigation_safety_regression.launch.py"
+    )
+    description = module.generate_launch_description()
+    arguments = {
+        entity.name
+        for entity in description.entities
+        if isinstance(entity, DeclareLaunchArgument)
+    }
+    content = (
+        Path(__file__).parents[1]
+        / "launch"
+        / "rtabmap_rgbd_navigation_safety_regression.launch.py"
+    ).read_text()
+
+    assert {
+        "smoke",
+        "database_path",
+        "rgbd_dds_profiles_file",
+        "wall_watchdog_timeout",
+    } <= arguments
+    assert '"rtabmap_rgbd_navigation_simulation.launch.py"' in content
+    assert '"--scenario", "dynamic-obstacle"' in content
+    assert '"--localization-mode", "online-slam"' in content
+    assert '"--pre-map-dynamic-route"' in content

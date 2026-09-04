@@ -428,6 +428,17 @@ EKF、RGB-D 同步、RTAB-Map、Nav2 和导航 RViz。全局规划消费由深�
 顶部 `Nav2 Goal`
 在已知自由区设置目标，不需要 `2D Pose Estimate`。
 
+最终组合的无界面动态障碍验收使用：
+
+```bash
+ros2 launch slam_robot_slam_3d \
+  rtabmap_rgbd_navigation_safety_regression.launch.py
+```
+
+它先让前向 RGB-D 在已知自由区内渐进扩图，再复用公共动态障碍评分器验证 3D LiDAR
+的局部/全局代价地图时延、车体净空、实际绕行、终点误差与零碰撞；成功时输出
+`VERDICT PASS` 并自动退出。
+
 专用 RViz 同时显示 RGB、固定 `0.2–4.0 m` 灰度范围的深度图、RGB-D 累计彩色点云、
 实时 3D LiDAR、二维地图、代价地图和路径。继续已有数据库时传
 `reset_database:=false`；默认 `true` 会开始一张新图。

@@ -7,6 +7,11 @@
     map_frame_id: map
     odom_frame_id: ""
     publish_tf: true
+    # RTAB-Map publishes map -> odom at the latest processed RGB-D stamp.
+    # DetectionRate is 2 Hz, so consecutive map -> odom estimates can be
+    # separated by 0.5 s. Future-date by one full update period plus 0.1 s of
+    # scheduling margin so Nav2 cannot request the transform between updates.
+    tf_tolerance: 0.60
     subscribe_depth: false
     subscribe_rgb: false
     subscribe_rgbd: true

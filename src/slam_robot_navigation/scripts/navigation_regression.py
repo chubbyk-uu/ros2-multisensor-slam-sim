@@ -27,9 +27,9 @@ from slam_robot_navigation.blocked_road import (
 from slam_robot_navigation.dynamic_obstacle import (
     DynamicObstacleCriteria,
     DynamicObstacleObservation,
-    NominalRouteDetour,
     evaluate as evaluate_dynamic_obstacle,
     failed_checks as failed_dynamic_checks,
+    NominalRouteDetour,
 )
 
 
@@ -1036,6 +1036,15 @@ def parse_arguments(argv=None):
         ),
     )
     parser.add_argument(
+        "--pre-map-dynamic-route",
+        action="store_true",
+        help=(
+            "Map the dynamic route incrementally and return to the origin "
+            "before injecting the obstacle. Intended for directional online "
+            "mapping sensors (default: disabled)."
+        ),
+    )
+    parser.add_argument(
         "--minimum-dynamic-clearance",
         type=float,
         default=0.15,
@@ -1337,6 +1346,27 @@ def main():
                 raise SystemExit(1)
             result = {"result": "SUCCEEDED"}
         else:
+            if args.pre_map_dynamic_route:
+                print(
+                    "mapping the directional sensor route before navigation...",
+                    flush=True,
+                )
+                mapping_turn = regression.run(
+                    (
+                        (0.0, 0.0, math.pi),
+                        (-2.0, -0.5, math.pi),
+                        (0.0, 0.0, 0.0),
+                    ),
+                    min(args.timeout, 120.0),
+                )
+                if mapping_turn["result"] != "SUCCEEDED":
+                    print(
+                        "summary: result=INITIAL_MAPPING_ROUTE_"
+                        f"{mapping_turn['result']}",
+                        flush=True,
+                    )
+                    print("VERDICT FAIL", flush=True)
+                    raise SystemExit(1)
             print("starting dynamic-obstacle scenario", flush=True)
             result = regression.run_dynamic_obstacle(
                 args.timeout, minimum_path_deviation
