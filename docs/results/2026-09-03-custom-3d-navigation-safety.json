@@ -91,6 +91,7 @@
   },
   "limits": [
     "One positive and one negative-control run per scenario; this closes functional coverage but is not a statistical campaign.",
+    "This historical run used the former whole-route 0.35 m detour threshold. The recorded 1.146 m exceeds the later 0.760 m geometry threshold, but the old log cannot reconstruct the later obstacle-local observation window.",
     "The blocked-road conclusion applies to a single blockage retained within one sensor view, not a multi-part blockage larger than the costmap observation footprint.",
     "Gazebo exited with SIGSEGV during teardown after each verdict and entity cleanup; no scoped process remained. This known external teardown fault did not change the run verdict."
   ],

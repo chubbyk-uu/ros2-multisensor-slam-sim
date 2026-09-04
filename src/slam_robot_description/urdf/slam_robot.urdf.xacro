@@ -81,9 +81,10 @@
   <xacro:property name="imu_mass" value="0.02"/>
 
   <!--
-    The RGB-D optical centre is flush with the chassis front face. The housing
-    extends rearward, so enabling the camera does not enlarge the existing
-    Nav2 footprint. Its top remains below the lowest -15 degree 3D LiDAR ray.
+    The RGB-D optical centre is aligned with the front edge of the asymmetric
+    Nav2 footprint, not the chassis front face at x=0.225 m. The housing extends
+    rearward, so enabling the camera does not enlarge that footprint. Its top
+    remains below the lowest -15 degree 3D LiDAR ray.
   -->
   <xacro:property name="camera_x" value="0.155"/>
   <xacro:property name="camera_z" value="0.09"/>

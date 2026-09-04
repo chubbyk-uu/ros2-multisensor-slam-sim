@@ -123,13 +123,22 @@ launch 返回非零，且 `goal_not_reached`、`blockage_perceived`、
 `planner_reported_no_path`、`robot_at_rest` 和 `recovery_floor` 五项核心检查同时失败。
 没有它，通过只能说明这次跑成了，不能说明判据在区分什么。
 
-自研 3D 使用同一个单门洞世界和同一套评分器完成 online-SLAM + Nav2 验收：动态箱体在
+自研 3D 使用同一套评分器、但在两个不同世界完成 online-SLAM + Nav2 验收：动态箱体在
+`slam_world` 中运行，完全封路在专用单门洞 `blocked_road_world` 中运行。动态箱体在
 局部/全局代价地图中的标记时延为 `0.280 / 1.544 s`，机器人 `14.9 s` 到达，障碍净空
 `0.309 m`、绕行偏移 `1.146 m`、终点误差 `0.174 m`，零恢复、零碰撞；完全封路在
 `30.9 s` 内自行结束，规划器返回 `NO_VALID_PATH`，末速为零，恢复 16 次，封口净空
 `1.629 m`，零碰撞。把动态障碍横移 `3.0 m` 或把封口横移 `1.5 m` 时，两条负向对照
 均按预期 `FAIL` 并非零退出。结果见
 [`2026-09-03-custom-3d-navigation-safety.json`](results/2026-09-03-custom-3d-navigation-safety.json)。
+
+该结果记录使用旧的全程最大偏移 `0.35 m` 判据；代码随后改为障碍局部 `0.760 m`
+几何判据。记录中的 `1.146 m` 数值超过新门限，但旧日志无法还原局部观察窗口，因此它
+仍是历史验收而不是新判据的独立运行证据。新判据的正向运行得到障碍局部偏移
+`1.159 m` 并通过；障碍横移 `3.0 m` 后偏移仅 `0.240 m`，且
+`obstacle_on_nominal_route=false`，因此 `detour_observed` 与两项局部感知检查一起失败。
+结果见
+[`2026-09-04-custom-3d-dynamic-detour.json`](results/2026-09-04-custom-3d-dynamic-detour.json)。
 
 结论仍不适用于超出机器人单次视野的封路，原因见
 [工程事件](incidents.md#代价地图会忘记看不见的封路)。

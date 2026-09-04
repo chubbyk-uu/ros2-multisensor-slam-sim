@@ -1,8 +1,9 @@
 {
+  "schema_version": 1,
   "date": "2026-09-03",
   "status": "PASS",
   "base_commit": "b1d8f7f",
-  "worktree_dirty_during_validation": true,
+  "dirty": true,
   "dataset": {
     "path": "bags/structured_rgbd_textured_loop_reference",
     "mcap_sha256": "710fdb2cc7b5fb3baccdd524bba53ec9bbbf512d7f3deeada1bbbc414fb00211",

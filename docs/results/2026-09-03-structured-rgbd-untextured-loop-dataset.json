@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-03",
+  "dataset": "bags/structured_rgbd_loop_reference",
+  "purpose": "Historical untextured two-lap negative observation; not the formal visual-loop positive sample and not a texture accuracy A/B.",
+  "recording_command": "ros2 launch slam_robot_slam_3d structured_rgbd_dataset_recording.launch.py output:=${SLAM_WS}/bags/structured_rgbd_loop_reference laps:=2",
+  "recording": {
+    "duration_seconds": 360.596,
+    "message_count": 198332,
+    "route_laps": 2,
+    "camera_rate_hz": 10.0,
+    "storage_profile": "zstd_fast",
+    "rgb_messages": 3606,
+    "depth_messages": 3606,
+    "color_camera_info_messages": 3607,
+    "depth_camera_info_messages": 3607,
+    "lidar_messages": 3606,
+    "wheel_odometry_messages": 18030,
+    "fused_odometry_messages": 18029,
+    "ground_truth_messages": 18030,
+    "imu_messages": 36060,
+    "mcap_bytes": 653339364,
+    "mcap_sha256": "16207e2e196d00e316d8b4c1d862c45c4903106573ebd03962283a785b122cf8",
+    "metadata_sha256": "5c097444d57819991edf34f23e2361e4feeabf019412534743766fc59f3574b2"
+  },
+  "source_revision": {
+    "base_commit": "b1d8f7f",
+    "dirty": true,
+    "world": "src/slam_robot_gazebo/worlds/structured_loop_3d.sdf",
+    "world_sha256": "9fba4a68aba8e7a82a81d94805cba06c1d15a12451ab98e9c4a8074eb5e95173"
+  },
+  "limitations": [
+    "The dataset is ignored by Git and must be transferred separately.",
+    "The current world contains visual textures, so current HEAD cannot reproduce this bag without restoring the recorded world revision.",
+    "Its input odometry drift differs from the textured recording, so cross-bag trajectory accuracy is not evidence of a texture improvement."
+  ]
+}

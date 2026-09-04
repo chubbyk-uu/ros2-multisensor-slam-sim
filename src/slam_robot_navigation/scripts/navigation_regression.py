@@ -27,6 +27,7 @@ from slam_robot_navigation.blocked_road import (
 from slam_robot_navigation.dynamic_obstacle import (
     DynamicObstacleCriteria,
     DynamicObstacleObservation,
+    NominalRouteDetour,
     evaluate as evaluate_dynamic_obstacle,
     failed_checks as failed_dynamic_checks,
 )
@@ -182,6 +183,7 @@ class NavigationRegression:
         self.local_costmap_latency = math.nan
         self.minimum_obstacle_distance = math.inf
         self.maximum_path_deviation = 0.0
+        self.detour_monitor = None
         self.blockage_spawned = False
         # The widest gap the costmap still shows across either doorway, and
         # the best (narrowest) value seen: the obstacle layer can clear cells
@@ -844,7 +846,7 @@ class NavigationRegression:
             "elapsed": self.simulation_time() - start_simulation_time,
         }, None
 
-    def run_dynamic_obstacle(self, timeout):
+    def run_dynamic_obstacle(self, timeout, minimum_path_deviation):
         if not self.wait_for_gazebo_services():
             return {
                 "result": "GAZEBO_SERVICES_UNAVAILABLE",
@@ -887,6 +889,13 @@ class NavigationRegression:
             if feedback is not None:
                 self.latest_navigation_pose = feedback.current_pose.pose
                 position = feedback.current_pose.pose.position
+                if self.detour_monitor is None:
+                    self.detour_monitor = NominalRouteDetour(
+                        (position.x, position.y),
+                        DYNAMIC_GOAL[:2],
+                        (self.dynamic_obstacle_x, self.dynamic_obstacle_y),
+                        minimum_path_deviation,
+                    )
                 max_recoveries = max(
                     max_recoveries,
                     feedback.number_of_recoveries,
@@ -919,13 +928,9 @@ class NavigationRegression:
                         self.minimum_obstacle_distance,
                         obstacle_distance,
                     )
-                    # Perpendicular distance from the original straight path
-                    # y = 0.25 x between the start and the dynamic goal.
-                    path_deviation = abs(position.y - 0.25 * position.x)
-                    path_deviation /= math.sqrt(1.0 + 0.25**2)
-                    self.maximum_path_deviation = max(
-                        self.maximum_path_deviation,
-                        path_deviation,
+                    self.detour_monitor.observe((position.x, position.y))
+                    self.maximum_path_deviation = (
+                        self.detour_monitor.maximum_local_deviation
                     )
 
                 if now - last_report_time >= 5.0:
@@ -991,6 +996,14 @@ class NavigationRegression:
             "goal_error": goal_error,
             "global_costmap_latency": self.global_costmap_latency,
             "local_costmap_latency": self.local_costmap_latency,
+            "obstacle_on_nominal_route": (
+                self.detour_monitor is not None
+                and self.detour_monitor.obstacle_on_nominal_route
+            ),
+            "crossed_obstacle_station": (
+                self.detour_monitor is not None
+                and self.detour_monitor.crossed_obstacle_station
+            ),
         }
 
 
@@ -1031,8 +1044,11 @@ def parse_arguments(argv=None):
     parser.add_argument(
         "--minimum-path-deviation",
         type=float,
-        default=0.35,
-        help="Minimum observed detour from the original route (default: 0.35).",
+        default=None,
+        help=(
+            "Minimum obstacle-local detour from the nominal route. Defaults "
+            "to the robot plus obstacle circumscribed radii."
+        ),
     )
     parser.add_argument(
         "--maximum-goal-error",
@@ -1184,8 +1200,14 @@ def parse_arguments(argv=None):
 
 def main():
     args = parse_arguments()
+    minimum_path_deviation = args.minimum_path_deviation
+    if minimum_path_deviation is None:
+        minimum_path_deviation = (
+            args.robot_circumscribed_radius + DYNAMIC_OBSTACLE_RADIUS
+        )
     for name, value in (
         ("robot_circumscribed_radius", args.robot_circumscribed_radius),
+        ("minimum_path_deviation", minimum_path_deviation),
         ("wall_watchdog_timeout", args.wall_watchdog_timeout),
         ("dependency_grace", args.dependency_grace),
     ):
@@ -1316,7 +1338,9 @@ def main():
             result = {"result": "SUCCEEDED"}
         else:
             print("starting dynamic-obstacle scenario", flush=True)
-            result = regression.run_dynamic_obstacle(args.timeout)
+            result = regression.run_dynamic_obstacle(
+                args.timeout, minimum_path_deviation
+            )
             minimum_clearance = (
                 regression.minimum_obstacle_distance
                 - args.robot_circumscribed_radius
@@ -1334,6 +1358,12 @@ def main():
                 ),
                 minimum_obstacle_clearance=minimum_clearance,
                 maximum_path_deviation=regression.maximum_path_deviation,
+                obstacle_on_nominal_route=result.get(
+                    "obstacle_on_nominal_route", False
+                ),
+                crossed_obstacle_station=result.get(
+                    "crossed_obstacle_station", False
+                ),
                 goal_error=result["goal_error"],
                 recoveries=result["recoveries"],
                 collision_actions=regression.collision_actions,
@@ -1344,7 +1374,7 @@ def main():
                 ),
                 maximum_local_costmap_latency=args.maximum_local_costmap_latency,
                 minimum_clearance=args.minimum_dynamic_clearance,
-                minimum_path_deviation=args.minimum_path_deviation,
+                minimum_path_deviation=minimum_path_deviation,
                 maximum_goal_error=args.maximum_goal_error,
                 maximum_recoveries=args.maximum_dynamic_recoveries,
             )
@@ -1369,6 +1399,10 @@ def main():
                 f"clearance={minimum_clearance:.3f} m "
                 f"maximum_path_deviation="
                 f"{regression.maximum_path_deviation:.3f} m "
+                f"obstacle_on_nominal_route="
+                f"{result.get('obstacle_on_nominal_route', False)} "
+                f"crossed_obstacle_station="
+                f"{result.get('crossed_obstacle_station', False)} "
                 f"goal_error={result['goal_error']:.3f} m",
                 flush=True,
             )

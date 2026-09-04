@@ -230,7 +230,35 @@ ros2 launch slam_robot_slam_3d rtabmap_rgbd_fixed_regression.launch.py \
 | 文件大小 | 约 `672 MiB` |
 | MCAP SHA-256 | `710fdb2cc7b5fb3baccdd524bba53ec9bbbf512d7f3deeada1bbbc414fb00211` |
 
-元数据记录 `route_laps`，契约检查会验证所有相机与 LiDAR 流的完整性。两份包均位于
+在加入方向性墙面纹理前还录制过一份无纹理两圈包
+`bags/structured_rgbd_loop_reference`。它不是正式视觉回环正样本，也不能与纹理包组成
+精度 A/B：两次独立仿真的输入里程计漂移不同。保留它是为了复核“缺少稳定视觉结构时
+RTAB-Map 得到了什么输入与结果”这一负向观察，而不是证明纹理提升了多少精度。
+
+| 无纹理两圈历史包属性 | 值 |
+| --- | ---: |
+| 录制基线 | `b1d8f7f` 后的未提交工作区 |
+| 路线 | 两圈，`route_laps=2` |
+| 时长 | `360.596 s` |
+| RGB / Depth / 3D LiDAR | `3606 / 3606 / 3606` |
+| 两路 CameraInfo | 各 `3607` |
+| `/wheel/odom` / `/odom` / 真值 | `18030 / 18029 / 18030` |
+| 文件大小 | `653339364 bytes` |
+| MCAP SHA-256 | `16207e2e196d00e316d8b4c1d862c45c4903106573ebd03962283a785b122cf8` |
+| 当时世界 SHA-256 | `9fba4a68aba8e7a82a81d94805cba06c1d15a12451ab98e9c4a8074eb5e95173` |
+
+录制所用入口和参数为：
+
+```bash
+ros2 launch slam_robot_slam_3d structured_rgbd_dataset_recording.launch.py \
+  output:="${SLAM_WS}/bags/structured_rgbd_loop_reference" laps:=2
+```
+
+当前 `structured_loop_3d.sdf` 已含纹理，同一命令不会重新生成字节相同的无纹理包；要
+复核其世界内容必须结合上表的提交与世界哈希。可机器读取的清单见
+[`2026-09-03-structured-rgbd-untextured-loop-dataset.json`](results/2026-09-03-structured-rgbd-untextured-loop-dataset.json)。
+
+元数据记录 `route_laps`，契约检查会验证所有相机与 LiDAR 流的完整性。上述三份包均位于
 `bags/` 且不提交 Git。
 
 从头回放：

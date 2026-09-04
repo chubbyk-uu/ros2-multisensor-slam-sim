@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-04",
+  "stack": "custom 3D online SLAM + Nav2 + /lidar_3d/points",
+  "source_revision": {
+    "base_commit": "992d013",
+    "dirty": true
+  },
+  "criterion": {
+    "measurement": "maximum cross-track displacement inside an obstacle-centred along-track window, using the first navigation feedback and goal to define the nominal route",
+    "robot_circumscribed_radius_m": 0.336,
+    "dynamic_obstacle_circumscribed_radius_m": 0.424264,
+    "minimum_obstacle_local_path_deviation_m": 0.760264
+  },
+  "positive": {
+    "command": "ros2 launch slam_robot_slam_3d custom_3d_navigation_safety_regression.launch.py scenario:=dynamic-obstacle gui:=false rviz:=false",
+    "verdict": "PASS",
+    "elapsed_sim_seconds": 14.9,
+    "global_costmap_latency_seconds": 0.916,
+    "local_costmap_latency_seconds": 0.644,
+    "minimum_base_centre_distance_m": 1.081,
+    "minimum_body_clearance_m": 0.321,
+    "maximum_obstacle_local_path_deviation_m": 1.159,
+    "obstacle_on_nominal_route": true,
+    "crossed_obstacle_station": true,
+    "goal_error_m": 0.159,
+    "recoveries": 0,
+    "collision_actions": 0
+  },
+  "negative_control": {
+    "command": "ros2 launch slam_robot_slam_3d custom_3d_navigation_safety_regression.launch.py scenario:=dynamic-obstacle obstacle_offset_y:=3.0 gui:=false rviz:=false",
+    "verdict": "FAIL",
+    "elapsed_sim_seconds": 13.7,
+    "failed_checks": [
+      "local_costmap_observed",
+      "local_costmap_latency",
+      "detour_observed"
+    ],
+    "maximum_obstacle_local_path_deviation_m": 0.240,
+    "obstacle_on_nominal_route": false,
+    "crossed_obstacle_station": true,
+    "goal_error_m": 0.249,
+    "recoveries": 0,
+    "collision_actions": 0
+  },
+  "limitations": [
+    "One positive and one negative-control run validate criterion sensitivity, not a statistical navigation distribution.",
+    "Gazebo required SIGKILL during positive teardown and exited with SIGSEGV during negative teardown after each verdict; no scoped process remained."
+  ]
+}

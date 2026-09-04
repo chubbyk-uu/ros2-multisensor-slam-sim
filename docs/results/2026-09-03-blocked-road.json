@@ -16,7 +16,7 @@
   "limits": [
     "One run of each. The scenario is deterministic in geometry but Nav2's recovery count varies between runs; 15 was observed against a ceiling of 18 derived from the behaviour tree, which is not a wide margin.",
     "blocked_road_world exists because slam_world cannot host this test: see docs/incidents.md on the costmap forgetting a blockage it cannot hold in view. The result therefore says nothing about blockages larger than the robot's sensor footprint.",
-    "2D chain only. The 3D chains have neither this scenario nor the dynamic obstacle one.",
+    "At base commit 3a2cdd5 this result covered only the 2D chain; custom 3D coverage for both safety scenarios was added later in 3dac1e3.",
     "Gazebo exited with SIGSEGV during teardown after the verdict and entity cleanup; no scoped process remained. This known external teardown fault did not change the run verdict."
   ],
   "map": "maps/reference/blocked_road_map.yaml",
