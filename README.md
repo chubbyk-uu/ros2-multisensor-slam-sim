@@ -108,6 +108,22 @@ colcon test && colcon test-result --all   # gtest、pytest 与静态检查
 按任务查找文档、验收证据、故障归因、方法说明和历史档案，请从
 [文档索引](docs/README.md)进入。
 
+## 后续可选改进
+
+以下项目是 `v1.0.0` 已知且接受的能力边界，不影响当前验收结论；若继续维护，可按
+实际使用需求逐项推进：
+
+- [ ] 为自研 3D `localization` 增加任意初始位置的全局重定位；当前只支持从快照
+  末端位姿附近恢复，详见[自研 3D 快照定位](src/slam_robot_slam_3d/README.md#从末端位姿继续建图)。
+- [ ] 为自研 2D SLAM 序列化关键帧、约束和位姿图，使其能够恢复后继续建图；当前
+  只保存供 AMCL/Nav2 使用的 YAML/PGM，详见[自研 2D 地图保存](docs/2d-workflows.md#保存自研地图并交给-nav2)。
+- [ ] 为超出单次 LiDAR 视野的临时封路增加持久语义，例如 Nav2 keepout filter；
+  当前障碍层可能在射线清除后遗忘视野外封口，详见[代价地图边界](docs/incidents.md#代价地图会忘记看不见的封路)。
+- [ ] 继续定位 Gazebo 在全部 verdict 与快照完成后的偶发退出段错误；当前将其与运行期
+  算法失败、清理失败和残留进程分别记录，详见[已知外部边界](docs/incidents.md#已知外部边界)。
+- [ ] 将安全随机出生采样器扩展到真正的多层可行驶世界；当前仅支持单层共面支撑面，
+  非共面支撑结构按障碍处理，详见[3D 探索工作流](docs/3d-workflows.md#自主-frontier-exploration)。
+
 ## License
 
 本项目采用 [Apache License 2.0](LICENSE)。
