@@ -145,7 +145,7 @@ launch 返回非零，且 `goal_not_reached`、`blockage_perceived`、
 
 ## RGB-D 传感器数据契约
 
-RGB-D 基础验收不评价视觉 SLAM 精度，只证明后续算法收到的数据在时间、空间和
+RGB-D 基础验收不评价视觉 SLAM 精度，只证明 RGB-D 链路收到的数据在时间、空间和
 消息层面可用。默认无界面回归检查 RGB/Depth 尺寸与编码、两路 CameraInfo、平均
 与中位节拍、P95 间隔、同时间戳配对、有限深度范围、optical TF 和点云开关语义。
 
@@ -212,7 +212,8 @@ Depth 与 LiDAR 均为 `3607` 帧。RTAB-Map 的 `721` 帧诊断中，`626` 帧�
 交互式组合入口另做了启动与动作冒烟：`bt_navigator` 到达 `active`，RTAB-Map 地图
 保持唯一发布者，3D LiDAR 同时被局部/全局障碍层与碰撞监视器消费；向 `map` 中
 `(2.0, 0.0)` 发送 `NavigateToPose` 后目标被接受并以 `SUCCEEDED / error_code=0`
-结束。该检查证明单一 launch 的点击导航链路可用，但不替代上面的两圈精度与资源验收。
+结束。该检查证明最终采用的“RGB-D 建图/定位 + 3D LiDAR 避障”松耦合入口可用，
+但不替代上面的两圈精度与资源验收。
 
 ## 启动与故障注入验收
 

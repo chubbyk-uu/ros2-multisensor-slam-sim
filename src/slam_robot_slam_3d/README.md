@@ -128,9 +128,9 @@ ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py
 它不启动 RTAB-Map、Map Server 或 AMCL：自研 SLAM 独占 `map -> odom`，Nav2
 订阅 `/map`，局部代价地图继续订阅实时 `/lidar_3d/points` 高度带避障。
 
-自研状态默认原子保存到 `~/.ros/custom_slam_3d.snapshot`。版本 4 快照包含每个
+自研状态默认原子保存到 `~/.ros/custom_slam_3d.snapshot`。版本 5 快照包含每个
 关键帧的注册/占据两份扫描、传感器外参、前端/轮速位姿、协方差、已提交回环约束
-和优化位姿；版本 1/2 不再兼容，加载时 FATAL 退出并要求重新建图。降级读取本可
+和优化位姿；版本 1–4 不再兼容，加载时 FATAL 退出并要求重新建图。降级读取本可
 实现（旧文件的 `0.10 m` 点云同时充当两份即可），拒绝是因为不值得为个位数的存量
 快照维护兼容分支——**升级即作废全部已有快照**。快照不依赖
 启动目录，也不会提交到 Git。正常退出在线导航入口时自动保存：
@@ -148,25 +148,26 @@ ros2 launch slam_robot_slam_3d custom_3d_navigation_simulation.launch.py \
   mode:=localization load_snapshot:=true save_on_shutdown:=false
 ```
 
-只定位首版要求仿真机器人从保存时的末端位姿恢复，随后使用只读全局点云作
-scan-to-map 匹配。它还不支持在地图任意位置启动后的全局重定位；这需要后续
-Scan Context 初始位姿搜索，不能用“成功加载地图”冒充已经完成。
+只定位模式要求仿真机器人从保存时的末端位姿恢复，随后使用只读全局点云作
+scan-to-map 匹配。它不支持在地图任意位置启动后的全局重定位；该能力不在当前
+收口范围，不能用“成功加载地图”冒充已经完成。
 
-快照当前为版本 4。版本 1/2 只保存一份关键帧点云，无法恢复当前注册/占据点云
+快照当前为版本 5。版本 1/2 只保存一份关键帧点云，无法恢复当前注册/占据点云
 分工，因此明确拒绝并要求重新建图；项目目前没有需要维护的外部旧快照用户。版本 3
 另有原因：它以两种不兼容的字节布局发布过，旧文件在新布局下会把关键帧数当成占据
-投影契约读，并报出误导性的"契约无效"，因此版本号递增而不是复用。
+投影契约读，并报出误导性的“契约无效”，因此版本号递增而不是复用；版本 4 没有
+当前要求的完整性校验，也明确拒绝。
 占据点云只持久化当前投影真正可用的地面自由射线和高度带内障碍点，高于障碍带
 或超出投影距离的点不会写入。v4 同时保存输入体素、障碍高度带、最大射线距离和
-平面运动模式；恢复时任一项与当前配置不一致都会明确失败，避免历史 8 m 数据在
-新配置下被静默当成 10 m 数据。
+平面运动模式；v5 保留这些投影契约并增加写后回读校验和与持久化保证。恢复时任一
+配置不一致都会明确失败，避免历史 8 m 数据在新配置下被静默当成 10 m 数据。
 
 恢复时会把全部历史关键帧的前端位姿刚体变换到地图系。关键帧存的是前端自身
 坐标系下的位姿，而恢复后新建的关键帧在地图系；不做这一步，跨越接缝的第一条
 位姿图边会把整个累积修正当成一次测量写进图里。刚体变换保持所有相对位姿不变，
 而位姿图的边正是由相对位姿构造的。整条链路由
-`snapshot_resume_regression` 端到端验收（见下文回归章节），当前只覆盖
-`mapping` 模式；`localization` 模式的恢复走另一条分支，尚无端到端回归。
+`snapshot_resume_regression` 端到端验收（见下文回归章节）；`localization`
+恢复另由固定包 v5 回归覆盖，当前 `11/11` 判据通过。
 
 ### 在线自主探索
 
@@ -293,7 +294,7 @@ RTAB-Map 启动器默认使用 `odometry_mode:=wheel_imu`：轮速与 IMU 偏航
 先由 `robot_localization` EKF 融合成 `/odom`，再作为 RTAB-Map 的局部运动
 预测。RTAB-Map 不启动 `icp_odometry`；因此 EKF 唯一发布
 `odom -> base_footprint`，RTAB-Map 唯一发布 `map -> odom`。这既避免 TF
-冲突，也把“成熟全局 SLAM 基线”与下一阶段“替换局部前端”的实验分开。若需
+冲突，也让成熟 RTAB-Map 与自研 3D 前端保持为可独立验证的链路。若需
 纯轮式对照，可传入 `odometry_mode:=wheel`。
 
 EKF 提供相邻关键帧的初始运动预测，但它本身不是激光里程计。配置因此按照
@@ -369,14 +370,14 @@ ros2 launch slam_robot_slam_3d structured_navigation_regression.launch.py
 纯 LiDAR 模式仍是一条完整可运行的 RTAB-Map SLAM 基线，但没有相机时视觉
 词袋回环和基于图像的重定位会被禁用，只保留空间邻近预测加 3D ICP 验证。
 因此单圈末端漂移较大时可能错过重访；两圈回归会显式要求 proximity 约束和
-`map -> odom` 修正，避免把局部里程计碰巧闭合误判为 SLAM 生效。后续相机
-接入用于增强全局地点识别，不是当前 3D 点云建图的启动前提。
+`map -> odom` 修正，避免把局部里程计碰巧闭合误判为 SLAM 生效。该纯 LiDAR
+链路保持独立，不再接入相机约束。
 
 ### 在线 RTAB-Map RGB-D
 
-本节是独立视觉 SLAM 基线，用于验证 RGB-D 里程计、回环、深度地图和后续融合的
-对照输入。项目最终路线仍以 3D LiDAR SLAM 负责主定位、主几何地图和导航坐标，
-RGB-D 负责地点识别、语义与障碍补充；不要把本节入口理解成最终主从架构。
+本节是项目采用的 RGB-D 建图与定位链路，用于验证视觉注册、视觉回环和深度地图。
+组合导航时由独立 3D LiDAR 负责 Nav2 障碍感知；两类传感器按任务松耦合分工，
+不构成联合 SLAM。
 
 启动 Gazebo、轮速 + IMU EKF、官方 RGB-D 同步器、RTAB-Map 和专用 RViz：
 
@@ -392,9 +393,8 @@ RTAB-Map 仍是 `map -> odom` 的唯一发布者。默认数据库为
 `~/.ros/rtabmap_rgbd.db`；继续已有地图时使用 `reset_database:=false`。
 
 配置使用 `Reg/Strategy=0` 的视觉注册和视觉词袋地点识别；二维导航候选图明确
-由深度图生成（`Grid/Sensor=1`）。3D LiDAR 仍随机器人生成，便于同视角检查和
-下一阶段融合，但不进入本基线的 RTAB-Map 输入。换言之，这是一条可对照的 RGB-D
-成熟链路，不是已经完成的 LiDAR—视觉融合。
+由深度图生成（`Grid/Sensor=1`）。3D LiDAR 仍随机器人生成，用于 RViz 检查及
+组合导航的障碍感知，但不进入 RTAB-Map 输入。
 
 RGB-D 组合消息同样属于大消息，因此相机 bridge、`rgbd_sync` 和 RTAB-Map 均使用
 `fastdds_rgbd.xml`；可通过 `rgbd_dds_profiles_file:=...` 覆盖，或在启动前设置
@@ -425,8 +425,8 @@ ros2 launch slam_robot_slam_3d play_rgbd_slam_data.launch.py \
 ```
 
 固定包相机为 `10 Hz`、MCAP 为 `zstd_fast`，在线入口仍保持 `30 Hz`。包中保留
-RGB-D 与 3D LiDAR 是为了后续使用字节一致输入做三路对照，不代表当前 RGB-D
-基线消费了 LiDAR。话题白名单、计数、哈希和压缩 A/B 见
+RGB-D 与 3D LiDAR 是为了让独立链路在需要时使用字节一致输入做对照，不代表
+RGB-D 链路消费了 LiDAR。话题白名单、计数、哈希和压缩 A/B 见
 [数据集说明](../../docs/datasets.md#结构化-rgb-d-多传感器参考包)。
 
 视觉回环正向回归必须使用两圈纹理包：
@@ -461,7 +461,7 @@ ros2 launch slam_robot_slam_3d rtabmap_rgbd_navigation_simulation.launch.py
 ```
 
 该组合入口只负责编排：内部仍复用独立 RGB-D SLAM 与通用在线 Nav2 launch，不复制
-算法参数。它刻意构成“RGB-D 视觉建图 + 3D LiDAR 避障”的对照：RTAB-Map 的深度
+算法参数。它是最终的“RGB-D 视觉建图 + 3D LiDAR 避障”松耦合导航架构：RTAB-Map 的深度
 二维投影用于全局规划，独立 3D LiDAR 用于局部体素避障和碰撞监视。LiDAR 没有进入
 视觉 SLAM，RGB-D 也没有约束 LiDAR 位姿图，因此不能称为 LiDAR—视觉融合。导航
 RViz 提供 `Nav2 Goal`，并同时显示 RGB、深度、彩色累计点云、实时 LiDAR、代价地图
@@ -533,8 +533,8 @@ TF 发布职责保持唯一：MOLA 只发布 `map -> odom`，Gazebo 里程计发
 
 默认 `use_imu_gravity:=false`，因此算法不会订阅真实 IMU。设置
 `use_imu_gravity:=true` 只会把 `/imu/data_raw` 用作 ICP 重力方向先验，
-仍然没有逐点 IMU 去畸变，不应称为完整 LIO。后续 LIO 回归将使用包含
-厂家逐点时间字段的真实 rosbag 或 PCAP。
+仍然没有逐点 IMU 去畸变，不应称为完整 LIO。完整 LIO 不在当前项目范围；若未来
+重新评估，必须先使用包含厂家逐点时间字段的真实 rosbag 或 PCAP。
 
 对于平面轮式机器人，可按需传入 `enforce_planar_motion:=true`。默认保持
 MOLA 官方 GICP 的六自由度估计，以便先建立不额外裁剪能力的基线。

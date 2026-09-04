@@ -160,8 +160,9 @@ ros2 launch slam_robot_slam_3d play_3d_slam_data.launch.py \
 
 `structured_rgbd_reference` 固化同一结构化世界的一圈 `71.6 m` 路线，同时记录
 RGB-D、3D LiDAR、轮速、IMU、统一 `/odom`、静态外参和仅供评分的真值。它用于
-让 RGB-D、纯 LiDAR 及后续融合算法消费字节一致的运动与环境输入；任何一条算法
-只能订阅其声明的传感器，不能因为包中存在 LiDAR 就把 RGB-D 基线称为融合。
+让 RGB-D 与纯 LiDAR 独立链路在需要时消费字节一致的运动与环境输入；任何一条
+算法只能订阅其声明的传感器，不能因为包中同时存在 LiDAR 就把 RGB-D 链路称为
+融合。
 
 相机在固定包中配置为 `640 × 480 @ 10 Hz`，低于在线默认 `30 Hz`。原因是组合
 原始 RGB + 32FC1 Depth 在 30 Hz 实测约 `65.6 MB/s`，一圈理论未压缩输入超过

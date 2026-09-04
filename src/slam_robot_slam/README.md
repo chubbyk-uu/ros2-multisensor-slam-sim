@@ -448,7 +448,7 @@ ros2 launch slam_robot_slam play_slam_data.launch.py \
 椭圆沿弱观测方向增大；拒配和运动不足期间则按相邻里程计增量累计过程
 噪声。未估计的三维自由度和速度标为高不确定度。当前仓库没有把
 `/custom_slam/laser_odom` 作为 EKF 输入，这份各向异性协方差用于诊断、
-回归和后续融合接口，不改变现有 `map -> odom` 的发布职责。
+回归，不改变现有 `map -> odom` 的发布职责。
 
 录制算法输入和真值：
 

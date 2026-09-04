@@ -3,8 +3,9 @@
 ## 项目目标
 
 本项目基于 ROS 2 Jazzy 和 Gazebo Sim，构建轮式机器人 SLAM 仿真系统。
-2D 激光 SLAM 基线已经完成并冻结，当前进入 3D 激光仿真阶段；后续再扩展
-视觉 SLAM 和多传感器融合。
+2D/3D LiDAR、自研 SLAM、RGB-D 建图、Nav2 导航和自主探索链路均已完成阶段性
+验收。RGB-D 最终负责 RTAB-Map 建图与定位，3D LiDAR 独立负责 Nav2 障碍感知；
+当前范围不再扩展 LiDAR—视觉融合或双目链路。
 
 ## 开发原则
 

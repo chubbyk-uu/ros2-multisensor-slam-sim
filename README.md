@@ -3,7 +3,8 @@
 基于 ROS 2 Jazzy 与 Gazebo Sim 的差速轮式机器人 SLAM 仿真项目。项目按“成熟算法
 基线 → 自动回归 → 自研模块替换”的路线，已完成 2D LiDAR 建图与导航、自研 2D
 SLAM、轮速 + IMU EKF、RTAB-Map 3D 基线，以及自研 3D SLAM、在线导航、快照恢复和
-Frontier Exploration。
+Frontier Exploration；最终还提供 RTAB-Map RGB-D 建图/定位与 3D LiDAR 避障的
+松耦合导航入口。
 
 ![Gazebo 中的差速机器人和室内 SLAM 测试环境](docs/images/gazebo-simulation.png)
 
@@ -44,7 +45,7 @@ ros2 launch slam_robot_slam_3d rtabmap_3d_simulation.launch.py
 # RTAB-Map RGB-D 在线基线（轮速 + IMU 提供局部里程计）
 ros2 launch slam_robot_slam_3d rtabmap_rgbd_simulation.launch.py
 
-# RTAB-Map RGB-D 视觉基线 + Nav2 对照，可在 RViz 点击目标
+# RTAB-Map RGB-D 建图 + 3D LiDAR 避障，可在 RViz 点击目标
 ros2 launch slam_robot_slam_3d rtabmap_rgbd_navigation_simulation.launch.py
 
 # 自研 3D SLAM + Nav2 自主探索；完成后自动保存快照
@@ -67,17 +68,18 @@ ros2 launch slam_robot_slam_3d custom_3d_exploration_simulation.launch.py
 | Frontier Exploration | 已完成双链路验收 | 自研与 RTAB-Map 共用候选评分、Nav2 调度、自动快照与安全随机出生 |
 | RGB-D 基础设施 | 已完成 | 前向模型、图像/深度/内参桥接、独立大消息 DDS 保护、RViz 与数据契约回归 |
 | RTAB-Map RGB-D 基线 | 已完成 | 官方 RGB-D 同步、方向性纹理、视觉回环、深度投影地图与独立大消息 DDS 保护；两圈固定回放与 30 Hz 在线活动验收均通过 |
-| LiDAR—视觉融合 | 计划中 | 3D LiDAR 主导 SLAM、定位和几何导航；RGB-D 补充地点识别、语义与视场内障碍，轮速 + IMU 提供高频预测 |
+| RGB-D 建图 + 3D LiDAR 避障 | 已完成并收口 | RTAB-Map 使用 RGB-D 建图/定位，Nav2 使用其二维地图规划；独立 3D LiDAR 为代价地图和碰撞监视器提供障碍数据 |
 
-最近独立验证结果和下一项工作见[项目状态](docs/status.md)。完整系统数据流、包边界
+最近独立验证结果和项目范围见[项目状态](docs/status.md)。完整系统数据流、包边界
 和 TF 拓扑以[系统架构](docs/architecture.md)为准。
 
 项目约束：2D 与 3D LiDAR 模型互斥；同一时间仅一条链路发布 `map -> odom`；
 `/ground_truth/odom` 仅用于测试与评分，绝不进入 SLAM、EKF 或导航估计。
 
-最终工程路线以 3D LiDAR 几何链路为主，不把当前 RTAB-Map RGB-D 独立基线误写成
-主导航架构。RGB-D 基线用于验证视觉里程计、视觉回环和深度投影能力，并为后续与
-3D LiDAR 主链做受控对照；融合完成前，视觉和 LiDAR 各自的结果仍需明确标注来源。
+RGB-D 导航入口采用明确的松耦合职责分工：RTAB-Map 只消费 RGB-D 与轮速 + IMU
+里程计，负责建图、定位及 `map -> odom`；3D LiDAR 不进入 RTAB-Map，只进入 Nav2
+障碍层和碰撞监视器。自研 3D LiDAR SLAM 仍作为另一条独立算法链路保留；当前项目
+不再计划视觉辅助回环、视觉约束 LiDAR 位姿图、RGB-D 补充障碍或双目扩展。
 
 ## 如何验证
 
